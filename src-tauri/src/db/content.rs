@@ -27,6 +27,99 @@ fn map_post_row(json: String, preview: Option<String>) -> Result<Post, String> {
     Ok(post)
 }
 
+pub const AUTO_PROVIDER_ID: &str = "auto";
+
+pub fn concrete_provider_id(value: Option<&serde_json::Value>) -> Option<&str> {
+    value
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty() && *id != AUTO_PROVIDER_ID)
+}
+
+fn first_concrete_provider_id(provider_ids: Option<&serde_json::Value>) -> Option<&str> {
+    provider_ids
+        .and_then(|v| v.as_array())
+        .and_then(|ids| ids.iter().find_map(|id| concrete_provider_id(Some(id))))
+}
+
+pub fn creator_provider_hint<'a>(
+    provider_id: Option<&'a serde_json::Value>,
+    provider_ids: Option<&'a serde_json::Value>,
+) -> Option<&'a str> {
+    concrete_provider_id(provider_id).or_else(|| first_concrete_provider_id(provider_ids))
+}
+
+fn creator_identity_complete(snapshot: &serde_json::Value) -> bool {
+    concrete_provider_id(snapshot.get("provider_id")).is_some()
+        && first_concrete_provider_id(snapshot.get("provider_ids")).is_some()
+}
+
+/// Keeps the stored provider identity when `snapshot` lacks one; `auto` is never persisted.
+fn merge_creator_identity(
+    connection: &Connection,
+    service: &str,
+    creator_id: &str,
+    snapshot: &mut serde_json::Value,
+) -> Result<(), String> {
+    if creator_identity_complete(snapshot) {
+        return Ok(());
+    }
+    let stored: Option<String> = connection
+        .prepare_cached("SELECT snapshot_json FROM creators WHERE service = ?1 AND creator_id = ?2")
+        .and_then(|mut stmt| {
+            stmt.query_row(params![service, creator_id], |r| r.get(0))
+                .optional()
+        })
+        .map_err(|e| e.to_string())?;
+    let previous = match stored
+        .as_deref()
+        .map(serde_json::from_str::<serde_json::Value>)
+    {
+        Some(Ok(value)) => Some(value),
+        Some(Err(error)) => {
+            tracing::warn!(%error, service, creator_id, "Stored creator snapshot is not valid JSON; replacing it");
+            None
+        }
+        None => None,
+    };
+    let Some(map) = snapshot.as_object_mut() else {
+        return Err(format!(
+            "Creator snapshot for {service}:{creator_id} is not a JSON object"
+        ));
+    };
+
+    if first_concrete_provider_id(map.get("provider_ids")).is_none() {
+        match previous
+            .as_ref()
+            .and_then(|p| p.get("provider_ids"))
+            .filter(|ids| first_concrete_provider_id(Some(*ids)).is_some())
+        {
+            Some(ids) => {
+                map.insert("provider_ids".to_string(), ids.clone());
+            }
+            None => {
+                map.remove("provider_ids");
+            }
+        }
+    }
+    if concrete_provider_id(map.get("provider_id")).is_none() {
+        let fallback = previous
+            .as_ref()
+            .and_then(|p| concrete_provider_id(p.get("provider_id")))
+            .or_else(|| first_concrete_provider_id(map.get("provider_ids")))
+            .map(str::to_string);
+        match fallback {
+            Some(id) => {
+                map.insert("provider_id".to_string(), serde_json::Value::String(id));
+            }
+            None => {
+                map.remove("provider_id");
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct CreatorsQuery {
     pub query: Option<String>,
@@ -532,11 +625,19 @@ impl ContentRepository {
         for post in posts {
             let mut clean_post = post.clone();
             clean_post.clean_extra();
+            let mut stub = serde_json::json!({
+                "id": clean_post.user,
+                "name": clean_post.user,
+                "service": clean_post.service,
+            });
+            if let Some(pid) = concrete_provider_id(post.extra.get("provider_id")) {
+                stub["provider_id"] = serde_json::Value::String(pid.to_string());
+            }
             tx.execute(
                 "INSERT INTO creators(service, creator_id, name, snapshot_json)
-                 VALUES(?1, ?2, ?2, json_object('id', ?2, 'name', ?2, 'service', ?1))
+                 VALUES(?1, ?2, ?2, ?3)
                  ON CONFLICT(service, creator_id) DO NOTHING",
-                params![clean_post.service, clean_post.user],
+                params![clean_post.service, clean_post.user, stub.to_string()],
             )
             .map_err(|e| e.to_string())?;
             let snapshot = serde_json::to_string(&clean_post).map_err(|e| e.to_string())?;
@@ -1025,6 +1126,7 @@ impl ContentRepository {
             id: String,
             name: String,
             snapshot: String,
+            needs_identity: Option<serde_json::Value>,
             favorited: i64,
             updated_at: i64,
             indexed_at: i64,
@@ -1033,7 +1135,12 @@ impl ContentRepository {
 
         let mut prepared = Vec::with_capacity(creators.len());
         for c in creators {
-            let snapshot = crate::db::storage::snapshot_json(c)?;
+            let value = serde_json::to_value(c).map_err(|e| e.to_string())?;
+            let (snapshot, needs_identity) = if creator_identity_complete(&value) {
+                (crate::db::storage::snapshot_json(&value)?, None)
+            } else {
+                (String::new(), Some(value))
+            };
             let favorited = Self::extract_creator_favorited(c);
             let updated_at = Self::extract_creator_timestamp(c.updated);
             let indexed_at = Self::extract_creator_timestamp(c.indexed);
@@ -1044,6 +1151,7 @@ impl ContentRepository {
                 id: c.id.clone(),
                 name: c.name.clone(),
                 snapshot,
+                needs_identity,
                 favorited,
                 updated_at,
                 indexed_at,
@@ -1070,7 +1178,11 @@ impl ContentRepository {
                 )
                 .map_err(|e| e.to_string())?;
 
-            for p in &prepared {
+            for p in &mut prepared {
+                if let Some(mut value) = p.needs_identity.take() {
+                    merge_creator_identity(&tx, &p.service, &p.id, &mut value)?;
+                    p.snapshot = crate::db::storage::snapshot_json(&value)?;
+                }
                 stmt.execute(params![
                     &p.service,
                     &p.id,
@@ -1335,8 +1447,10 @@ impl ContentRepository {
         name: &str,
         creator: &T,
     ) -> Result<(), String> {
-        let snapshot = crate::db::storage::snapshot_json(creator)?;
+        let mut value = serde_json::to_value(creator).map_err(|e| e.to_string())?;
         let connection = self.connection.lock().map_err(|e| e.to_string())?;
+        merge_creator_identity(&connection, service, id, &mut value)?;
+        let snapshot = crate::db::storage::snapshot_json(&value)?;
         connection.execute(
             "INSERT INTO creators(service,creator_id,name,snapshot_json,last_checked_at)
              VALUES(?1,?2,?3,?4,CURRENT_TIMESTAMP)
@@ -2361,5 +2475,87 @@ mod tests {
             })
             .unwrap();
         assert_eq!(page_nonexistent.total, 0);
+    }
+
+    #[test]
+    fn creator_save_keeps_provider_identity_and_never_stores_auto() {
+        let repo = ContentRepository::in_memory(512).unwrap();
+        let mut extra = HashMap::new();
+        extra.insert("provider_id".to_string(), serde_json::json!("onlyhaven"));
+        extra.insert(
+            "provider_ids".to_string(),
+            serde_json::json!(["onlyhaven", "coomer"]),
+        );
+        repo.save_creators(&[Creator {
+            id: "oh1".into(),
+            name: "OnlyHaven Creator".into(),
+            service: "fansly".into(),
+            extra,
+            ..Default::default()
+        }])
+        .unwrap();
+
+        let only_onlyhaven = CreatorsQuery {
+            providers: Some(vec!["onlyhaven".to_string()]),
+            ..Default::default()
+        };
+        assert_eq!(repo.query_creators(&only_onlyhaven).unwrap().total, 1);
+
+        let mut auto_extra = HashMap::new();
+        auto_extra.insert("provider_id".to_string(), serde_json::json!("auto"));
+        auto_extra.insert("post_count".to_string(), serde_json::json!(12));
+        repo.save_creator(&CreatorProfile {
+            id: "oh1".into(),
+            name: "OnlyHaven Creator".into(),
+            service: "fansly".into(),
+            extra: auto_extra.clone(),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let stored = repo.get_creator("fansly", "oh1").unwrap().unwrap();
+        assert_eq!(
+            stored.extra.get("provider_id"),
+            Some(&serde_json::json!("onlyhaven"))
+        );
+        assert_eq!(
+            stored.extra.get("provider_ids"),
+            Some(&serde_json::json!(["onlyhaven", "coomer"]))
+        );
+        assert_eq!(stored.extra.get("post_count"), Some(&serde_json::json!(12)));
+        let page = repo.query_creators(&only_onlyhaven).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].id, "oh1");
+
+        let mut explicit = HashMap::new();
+        explicit.insert("provider_id".to_string(), serde_json::json!("coomer"));
+        repo.save_creator(&CreatorProfile {
+            id: "oh1".into(),
+            name: "OnlyHaven Creator".into(),
+            service: "fansly".into(),
+            extra: explicit,
+            ..Default::default()
+        })
+        .unwrap();
+        let stored = repo.get_creator("fansly", "oh1").unwrap().unwrap();
+        assert_eq!(
+            stored.extra.get("provider_id"),
+            Some(&serde_json::json!("coomer"))
+        );
+        assert_eq!(
+            stored.extra.get("provider_ids"),
+            Some(&serde_json::json!(["onlyhaven", "coomer"]))
+        );
+
+        repo.save_creator(&CreatorProfile {
+            id: "fresh".into(),
+            name: "Fresh".into(),
+            service: "fansly".into(),
+            extra: auto_extra,
+            ..Default::default()
+        })
+        .unwrap();
+        let fresh = repo.get_creator("fansly", "fresh").unwrap().unwrap();
+        assert!(!fresh.extra.contains_key("provider_id"));
     }
 }

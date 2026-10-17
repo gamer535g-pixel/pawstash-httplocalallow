@@ -55,6 +55,7 @@
 
   import type { FilterMap } from '$lib/types/filter';
   import { countActiveFilters, toggleFilterKey } from '$lib/types/filter';
+  import { ctrlWheel } from '$lib/utils/ctrlWheel';
 
   let filtersOpen = $state(false);
   let stickyFiltersOpen = $state(false);
@@ -341,49 +342,27 @@
     })));
   }
 
-  async function batchSubscribe() {
-    const items = selectionState.getItems<any>();
+  function batchSubscribe() {
+    const items = selectionState.getItems<Creator>();
     if (items.length === 0) return;
-    try {
-      for (const creator of items) {
-        await subscriptionState.save({
-          service: creator.service,
-          creator_id: creator.id,
-          creator_name: creator.name || creator.id,
-          initial_import: 'none',
-          auto_download: false,
-          download_scope: 'primary',
-          poll_interval_minutes: 30
-        });
-      }
-      notify.success(
-        i18n.t('selection.subscribe'),
-        `${items.length} ${items.length === 1 ? 'creator' : 'creators'}`
-      );
-      selectionState.exit();
-    } catch (err) {
-      notify.error(i18n.t('subscriptions.action_error'), err);
-    }
+    subscriptionState.openDialog({
+      service: items[0].service,
+      creatorId: items[0].id,
+      creatorName: items[0].name || items[0].id,
+      batch: items.map((c) => ({ service: c.service, id: c.id, name: c.name || c.id }))
+    });
+    selectionState.exit();
   }
 
-  async function batchUnsubscribe() {
-    const items = selectionState.getItems<any>();
+  function batchUnsubscribe() {
+    const items = selectionState.getItems<Creator>();
     if (items.length === 0) return;
-    try {
-      for (const creator of items) {
-        const sub = subscriptionState.forCreator(creator.service, creator.id);
-        if (sub) {
-          await subscriptionState.remove(sub.id);
-        }
-      }
-      notify.success(
-        i18n.t('selection.unsubscribe'),
-        `${items.length} ${items.length === 1 ? 'creator' : 'creators'}`
-      );
-      selectionState.exit();
-    } catch (err) {
-      notify.error(i18n.t('subscriptions.action_error'), err);
-    }
+    const subs = items
+      .map((c) => subscriptionState.forCreator(c.service, c.id))
+      .filter((s): s is NonNullable<typeof s> => Boolean(s));
+    if (subs.length === 0) return;
+    subscriptionState.promptUnsubscribeBatch(subs);
+    selectionState.exit();
   }
 
   async function batchFavoriteCreators(isFav: boolean) {
@@ -429,34 +408,15 @@
     }
   }
 
-  async function toggleCreatorSubscription(event: MouseEvent, creator: Creator) {
+  function handleSubscriptionClick(event: MouseEvent, creator: Creator) {
     event.stopPropagation();
     event.preventDefault();
-    const key = `sub:${creator.service}:${creator.id}`;
-    if (tilePending[key]) return;
-    tilePending[key] = true;
-    try {
-      const existing = subscriptionState.forCreator(creator.service, creator.id);
-      if (existing) {
-        await subscriptionState.remove(existing.id);
-        notify.success(i18n.t('subscriptions.removed'), { description: creator.name, glyph: 'removed' });
-      } else {
-        await subscriptionState.save({
-          service: creator.service,
-          creator_id: creator.id,
-          creator_name: creator.name || creator.id,
-          initial_import: 'none',
-          auto_download: false,
-          download_scope: 'primary',
-          poll_interval_minutes: 30
-        });
-        notify.success(i18n.t('subscriptions.saved'), creator.name);
-      }
-    } catch (err) {
-      notify.error(i18n.t('subscriptions.action_error'), err);
-    } finally {
-      tilePending[key] = false;
-    }
+    subscriptionState.openDialog({
+      service: creator.service,
+      creatorId: creator.id,
+      creatorName: creator.name || creator.id,
+      avatarUrl: creator.avatar_url
+    });
   }
 
   function toggleProvider(providerId: string) {
@@ -469,7 +429,10 @@
 
 {#snippet filterInnerContent()}
   {#if enabledProviders.length > 1}
-    <span class="filter-label">{i18n.t('providers.title')}</span>
+    <div class="filter-section-title">
+      <div class="filter-section-icon"><IconGlobe class="w-3.5 h-3.5" /></div>
+      <span>{i18n.t('providers.title')}</span>
+    </div>
     <div class="service-options">
       {#each enabledProviders as provider}
         {@const state = creatorsState.providerFilters[provider.id] ?? 'neutral'}
@@ -489,13 +452,15 @@
         </Button>
       {/each}
     </div>
-    <div class="floating-divider"></div>
   {/if}
 
-  <span class="filter-label">{i18n.t('feed.platform')}</span>
+  <div class="filter-section-title">
+    <div class="filter-section-icon"><IconGlobe class="w-3.5 h-3.5" /></div>
+    <span>{i18n.t('feed.platform')}</span>
+  </div>
   <div class="service-options">
     <Button
-      variant={Object.keys(creatorsState.serviceFilters).length === 0 ? 'accent' : 'ghost'}
+      variant="ghost"
       size="sm"
       onclick={() => {
         creatorsState.serviceFilters = {};
@@ -527,8 +492,10 @@
 
   {#if !configState.settings.pawchive_hide_ai}
     {@const state = creatorsState.aiFilter}
-    <div class="floating-divider"></div>
-    <span class="filter-label">{i18n.t('feed.format')}</span>
+    <div class="filter-section-title">
+      <div class="filter-section-icon"><IconSparkle class="w-3.5 h-3.5" /></div>
+      <span>{i18n.t('feed.format')}</span>
+    </div>
     <div class="service-options">
       <Button
         variant="ghost"
@@ -693,7 +660,7 @@
     <div class="grid-stack">
       <div
         class="creators-grid"
-        onwheel={handleWheel}
+        {@attach ctrlWheel(handleWheel)}
         style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}
       >
       {#each creatorsList as creator, index (creator.service + ':' + creator.id)}
@@ -762,15 +729,12 @@
                   type="button"
                   class="grid-tile-action"
                   class:is-selected={Boolean(creatorSub)}
-                  disabled={subPending}
-                  onclick={(e) => toggleCreatorSubscription(e, creator)}
+                  onclick={(e) => handleSubscriptionClick(e, creator)}
                   use:ripple
-                  use:tooltip={i18n.t(creatorSub ? 'subscriptions.unsubscribe' : 'subscriptions.subscribe')}
-                  aria-label={i18n.t(creatorSub ? 'subscriptions.unsubscribe' : 'subscriptions.subscribe')}
+                  use:tooltip={i18n.t(creatorSub ? 'subscriptions.subscription' : 'subscriptions.subscribe')}
+                  aria-label={i18n.t(creatorSub ? 'subscriptions.subscription' : 'subscriptions.subscribe')}
                 >
-                  {#if subPending}
-                    <IconLoading />
-                  {:else if creatorSub}
+                  {#if creatorSub}
                     <IconPersonSubscribed />
                   {:else}
                     <IconPersonAdd />

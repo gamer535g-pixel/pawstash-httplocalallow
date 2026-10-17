@@ -8,6 +8,7 @@ use super::traits::{
 };
 use crate::api::models::*;
 use crate::api::reconciliation::{reconcile_post_snapshots, ReconciledPost};
+use crate::db::content::{concrete_provider_id, creator_provider_hint, AUTO_PROVIDER_ID};
 use crate::db::storage::{content_cache_path, sanitize_cache_key, thumbs_cache_path};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -212,6 +213,15 @@ fn provider_errors(operation: &str, errors: Vec<String>) -> String {
             "All providers failed to fetch {operation}: {}",
             errors.join("; ")
         )
+    }
+}
+
+fn tag_answering_provider(extra: &mut HashMap<String, serde_json::Value>, provider_id: &str) {
+    if concrete_provider_id(extra.get("provider_id")).is_none() {
+        extra.insert(
+            "provider_id".to_string(),
+            serde_json::Value::String(provider_id.to_string()),
+        );
     }
 }
 
@@ -594,9 +604,11 @@ impl ProviderManager {
         provider_id: Option<&str>,
     ) -> Result<Creator, String> {
         if let Some(pid) = provider_id {
-            if pid != "auto" {
+            if pid != AUTO_PROVIDER_ID {
                 if let Some(p) = self.get_provider_by_id(pid).await {
-                    return p.fetch_creator_profile(service, creator_id).await;
+                    let mut creator = p.fetch_creator_profile(service, creator_id).await?;
+                    tag_answering_provider(&mut creator.extra, pid);
+                    return Ok(creator);
                 } else {
                     return Err(format!("Provider '{pid}' not found"));
                 }
@@ -617,9 +629,28 @@ impl ProviderManager {
         if !results.any_success() {
             return Err(provider_errors("creator profile", results.into_errors()));
         }
-        let mut profiles: Vec<Creator> = results.ok.into_iter().map(|(_, p)| p).collect();
+        let mut responders: Vec<String> = Vec::with_capacity(results.ok.len());
+        let mut profiles: Vec<Creator> = Vec::with_capacity(results.ok.len());
+        for (prov_id, mut profile) in results.ok {
+            tag_answering_provider(&mut profile.extra, &prov_id);
+            if !responders.contains(&prov_id) {
+                responders.push(prov_id);
+            }
+            profiles.push(profile);
+        }
 
         let mut base = profiles.remove(0);
+        if creator_provider_hint(None, base.extra.get("provider_ids")).is_none() {
+            base.extra.insert(
+                "provider_ids".to_string(),
+                serde_json::Value::Array(
+                    responders
+                        .into_iter()
+                        .map(serde_json::Value::String)
+                        .collect(),
+                ),
+            );
+        }
         let mut candidate_avatars: Vec<String> = Vec::new();
         if let Some(ref av) = base.avatar_url {
             if !av.trim().is_empty() {
@@ -1080,8 +1111,9 @@ impl ProviderManager {
 
         let mut all_favorites = Vec::new();
         let mut seen_keys = HashSet::new();
-        for (_, favs) in results.ok {
-            for fav in favs {
+        for (prov_id, favs) in results.ok {
+            for mut fav in favs {
+                tag_answering_provider(&mut fav.extra, &prov_id);
                 let srv = fav.service.as_deref().unwrap_or("").to_lowercase();
                 let id = fav.id.to_lowercase();
                 if seen_keys.insert((srv, id)) {
@@ -1688,11 +1720,11 @@ impl ProviderManager {
     }
 
     pub async fn enrich_creator(&self, creator: &mut Creator) {
-        let prov_id = creator
-            .extra
-            .get("provider_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let prov_id = creator_provider_hint(
+            creator.extra.get("provider_id"),
+            creator.extra.get("provider_ids"),
+        )
+        .map(str::to_string);
 
         if creator.avatar_url.as_deref().unwrap_or("").is_empty() {
             let url = self
@@ -1738,11 +1770,11 @@ impl ProviderManager {
     }
 
     pub async fn enrich_creator_profile(&self, profile: &mut CreatorProfile) {
-        let prov_id = profile
-            .extra
-            .get("provider_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let prov_id = creator_provider_hint(
+            profile.extra.get("provider_id"),
+            profile.extra.get("provider_ids"),
+        )
+        .map(str::to_string);
 
         if profile.avatar_url.as_deref().unwrap_or("").is_empty() {
             let url = self
@@ -1773,7 +1805,7 @@ impl ProviderManager {
 
         let s = sanitize_cache_key(&profile.service);
         let id = sanitize_cache_key(&profile.id);
-        let specific_provider = prov_id.as_deref().filter(|pid| *pid != "auto");
+        let specific_provider = prov_id.as_deref();
 
         for kind in ["avatar", "banner"] {
             let current = if kind == "banner" {

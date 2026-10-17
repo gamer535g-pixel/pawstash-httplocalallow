@@ -176,9 +176,7 @@ class MainActivity : TauriActivity() {
     }
     val path = uri?.let { resolveTreeUriToPath(it) }
     if (path != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-      val isPublicDownload = path.startsWith("/storage/emulated/0/Download", ignoreCase = true) ||
-                             path.contains("/Android/data/", ignoreCase = true)
-      if (!isPublicDownload && !Environment.isExternalStorageManager()) {
+      if (!isPublicDownloadPath(path) && !Environment.isExternalStorageManager()) {
         requestAllFilesAccess()
       }
     }
@@ -198,9 +196,7 @@ class MainActivity : TauriActivity() {
     }
     val path = uri?.let { resolveDocumentUriToPath(it) }
     if (path != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-      val isPublicDownload = path.startsWith("/storage/emulated/0/Download", ignoreCase = true) ||
-                             path.contains("/Android/data/", ignoreCase = true)
-      if (!isPublicDownload && !Environment.isExternalStorageManager()) {
+      if (!isPublicDownloadPath(path) && !Environment.isExternalStorageManager()) {
         requestAllFilesAccess()
       }
     }
@@ -210,6 +206,11 @@ class MainActivity : TauriActivity() {
   private val requestNotificationPermissionLauncher = registerForActivityResult(
     ActivityResultContracts.RequestPermission()
   ) { _ ->
+  }
+
+  private fun isPublicDownloadPath(path: String): Boolean {
+    val downloads = File(Environment.getExternalStorageDirectory(), Environment.DIRECTORY_DOWNLOADS).absolutePath
+    return path.startsWith(downloads, ignoreCase = true) || path.contains("/Android/data/", ignoreCase = true)
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -496,10 +497,9 @@ class MainActivity : TauriActivity() {
         }
       } catch (_: Throwable) {}
 
-      val relPath = if (cleanPath.startsWith("/storage/emulated/0/")) {
-        cleanPath.removePrefix("/storage/emulated/0/")
-      } else if (cleanPath.startsWith("/storage/emulated/0")) {
-        cleanPath.removePrefix("/storage/emulated/0")
+      val storageRoot = Environment.getExternalStorageDirectory().absolutePath.trimEnd('/')
+      val relPath = if (cleanPath == storageRoot || cleanPath.startsWith("$storageRoot/")) {
+        cleanPath.removePrefix(storageRoot)
       } else {
         cleanPath
       }.trimStart('/')

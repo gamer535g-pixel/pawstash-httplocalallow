@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { downloadState, type DownloadFilter } from '$lib/state/downloadState.svelte';
+  import { countDownloadPosts, downloadPostKey, downloadState, type DownloadFilter } from '$lib/state/downloadState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { resolveLocalMediaUrl } from '$lib/utils/media';
   import { configState } from '$lib/state/configState.svelte';
@@ -16,7 +16,7 @@
   import HeaderActions from '$lib/components/layout/HeaderActions.svelte';
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import Checkbox from '$lib/components/ui/Checkbox.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
@@ -56,6 +56,7 @@
   import IconRetry from '~icons/fluent/arrow-counterclockwise-20-regular';
   import IconDelete from '~icons/fluent/delete-20-regular';
   import { notify } from '$lib/utils/toast';
+  import { ctrlWheel } from '$lib/utils/ctrlWheel';
 
   interface DownloadIdentity {
     service: string;
@@ -100,31 +101,28 @@
   let targetCardWidth = $derived((layoutState.isMobile ? 155 : 245) * scale);
 
   let activeFilterCount = $derived((groupByPosts ? 1 : 0) + countActiveFilters([formatFilters]));
-  let completedCount = $derived(downloadState.downloads.filter((item) => item.status === 'completed').length);
+  const isCompleted = (item: DownloadItem) => item.status === 'completed';
+  let completedCount = $derived(downloadState.downloads.filter(isCompleted).length);
+  let completedPostsCount = $derived(countDownloadPosts(downloadState.downloads, isCompleted));
   let totalCount = $derived(downloadState.downloads.length);
+  let totalPostsCount = $derived(countDownloadPosts(downloadState.downloads));
   let currentSortLabel = $derived(i18n.t(`downloads.sort_${sortBy}`) || i18n.t('common.sort'));
 
+  function tabOption(value: DownloadFilter, label: string, posts: number, files: number): ChoiceOption<DownloadFilter> {
+    return { value, label, count: posts, title: i18n.t('downloads.tab_count_title', { posts, files }) };
+  }
+
   let downloadTabOptions = $derived<ChoiceOption<DownloadFilter>[]>([
-    {
-      value: 'all',
-      label: i18n.t('downloads.all'),
-      count: totalCount
-    },
-    ...(downloadState.activeDownloadsCount > 0 ? [{
-      value: 'active' as DownloadFilter,
-      label: i18n.t('downloads.active'),
-      count: downloadState.activeDownloadsCount
-    }] : []),
-    ...(completedCount < totalCount ? [{
-      value: 'completed' as DownloadFilter,
-      label: i18n.t('downloads.completed'),
-      count: completedCount
-    }] : []),
-    ...(downloadState.failedDownloadsCount > 0 ? [{
-      value: 'failed' as DownloadFilter,
-      label: i18n.t('downloads.failed'),
-      count: downloadState.failedDownloadsCount
-    }] : [])
+    tabOption('all', i18n.t('downloads.all'), totalPostsCount, totalCount),
+    ...(downloadState.activeDownloadsCount > 0
+      ? [tabOption('active', i18n.t('downloads.active'), downloadState.activePostsCount, downloadState.activeDownloadsCount)]
+      : []),
+    ...(completedCount < totalCount
+      ? [tabOption('completed', i18n.t('downloads.completed'), completedPostsCount, completedCount)]
+      : []),
+    ...(downloadState.failedDownloadsCount > 0
+      ? [tabOption('failed', i18n.t('downloads.failed'), downloadState.failedPostsCount, downloadState.failedDownloadsCount)]
+      : [])
   ]);
 
   let anyRunning = $derived(downloadState.queueStats.downloading + downloadState.queueStats.queued > 0);
@@ -238,7 +236,7 @@
     const groups = new Map<string, DownloadGroup>();
     for (const item of sortedDownloads) {
       const identity = parseIdentity(item);
-      const key = identity?.key || `file:${item.id}`;
+      const key = downloadPostKey(item);
       const current = groups.get(key);
       if (current) current.items.push(item);
       else groups.set(key, { key, identity, items: [item] });
@@ -248,7 +246,7 @@
 
   function parseIdentity(item: DownloadItem): DownloadIdentity | undefined {
     if (!item.service || !item.creator_id || !item.post_id) return undefined;
-    return { service: item.service, creatorId: item.creator_id, postId: item.post_id, key: `${item.service}:${item.creator_id}:${item.post_id}` };
+    return { service: item.service, creatorId: item.creator_id, postId: item.post_id, key: downloadPostKey(item) };
   }
 
   let viewerIndex = $state<number | null>(null);
@@ -565,24 +563,43 @@
 {/snippet}
 
 {#snippet downloadFilterInnerContent()}
-  <button
-    type="button"
-    class="view-option"
-    class:active={groupByPosts}
-    use:ripple
-    onclick={() => groupByPosts = !groupByPosts}
-  >
-    <Checkbox checked={groupByPosts} onchange={(checked) => groupByPosts = checked} />
-    <span>
-      <strong>{i18n.t('downloads.group_by_posts')}</strong>
-      <small>{i18n.t('downloads.group_by_posts_desc')}</small>
-    </span>
-    <IconStack class="view-option-icon" />
-  </button>
+  <div class="filter-section-title">
+    <div class="filter-section-icon"><IconOptions class="w-3.5 h-3.5" /></div>
+    <span>{i18n.t('feed.filters')}</span>
+  </div>
+  <div class="settings-list">
+    <div
+      role="switch"
+      aria-checked={groupByPosts}
+      tabindex="0"
+      class="view-option"
+      class:active={groupByPosts}
+      use:ripple
+      onclick={() => (groupByPosts = !groupByPosts)}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          groupByPosts = !groupByPosts;
+        }
+      }}
+    >
+      <IconStack class="view-option-icon" />
+      <span>
+        <strong>{i18n.t('downloads.group_by_posts')}</strong>
+        <small>{i18n.t('downloads.group_by_posts_desc')}</small>
+      </span>
+      <Toggle
+        checked={groupByPosts}
+        tabindex={-1}
+        class="pointer-events-none"
+      />
+    </div>
+  </div>
 
-  <div class="floating-divider"></div>
-
-  <span class="filter-label section-label">{i18n.t('feed.format')}</span>
+  <div class="filter-section-title">
+    <div class="filter-section-icon"><IconDocument class="w-3.5 h-3.5" /></div>
+    <span>{i18n.t('feed.format')}</span>
+  </div>
   <div class="service-options">
     {#each formatList as fmt}
       {@const state = formatFilters[fmt.id] ?? 'neutral'}
@@ -703,7 +720,7 @@
   {#if sortedDownloads.length > 0 || handoff.skeletonMounted}
     {#if scaleVisible}<div class="scale-indicator">{configState.settings.grid_scale}%</div>{/if}
     <div class="grid-stack">
-      <div class="downloads-grid" onwheel={handleGridWheel} style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
+      <div class="downloads-grid" {@attach ctrlWheel(handleGridWheel)} style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
         {#if showQueueTile}
           <DownloadQueueTile onshowfailed={() => (downloadState.filter = 'failed')} />
         {/if}

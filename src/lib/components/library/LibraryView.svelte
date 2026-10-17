@@ -16,7 +16,7 @@
   import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Input from '$lib/components/ui/Input.svelte';
-  import Checkbox from '$lib/components/ui/Checkbox.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import CountBadge from '$lib/components/ui/CountBadge.svelte';
@@ -54,7 +54,7 @@
 
   import type { FilterMap } from '$lib/types/filter';
   import { countActiveFilters, matchesTriStateFilter, toggleFilterKey } from '$lib/types/filter';
-  import { getPostFormats } from '$lib/utils/media';
+  import { matchesPostFormatFilter } from '$lib/utils/media';
 
   const savedState = navigationState.getViewState<{
     searchQuery?: string;
@@ -418,7 +418,7 @@
     }
 
     if (Object.keys(formatFilters).length > 0) {
-      list = list.filter(post => matchesTriStateFilter(getPostFormats(post), formatFilters));
+      list = list.filter(post => matchesPostFormatFilter(post, formatFilters));
     }
 
     if (onlyWithAttachments) {
@@ -569,10 +569,13 @@
 {/snippet}
 
 {#snippet filterInnerContent()}
-  <span class="filter-label">{i18n.t('feed.platform')}</span>
+  <div class="filter-section-title">
+    <div class="filter-section-icon"><IconGlobe class="w-3.5 h-3.5" /></div>
+    <span>{i18n.t('feed.platform')}</span>
+  </div>
   <div class="service-options">
     <Button
-      variant={Object.keys(serviceFilters).length === 0 ? 'accent' : 'ghost'}
+      variant="ghost"
       size="sm"
       onclick={() => serviceFilters = {}}
       class="filter-chip chip-all {Object.keys(serviceFilters).length === 0 ? 'state-include' : ''}"
@@ -599,9 +602,10 @@
     {/each}
   </div>
 
-  <div class="floating-divider"></div>
-
-  <span class="filter-label">{i18n.t('feed.format')}</span>
+  <div class="filter-section-title">
+    <div class="filter-section-icon"><IconDocument class="w-3.5 h-3.5" /></div>
+    <span>{i18n.t('feed.format')}</span>
+  </div>
   <div class="service-options">
     {#each formatList as fmt}
       {@const state = formatFilters[fmt.id] ?? 'neutral'}
@@ -623,44 +627,65 @@
     {/each}
   </div>
 
-  <div class="floating-divider"></div>
+  <div class="filter-section-title">
+    <div class="filter-section-icon"><IconOptions class="w-3.5 h-3.5" /></div>
+    <span>{i18n.t('feed.filters')}</span>
+  </div>
+  <div class="settings-list">
+    <div
+      role="switch"
+      aria-checked={onlyWithAttachments}
+      tabindex="0"
+      class="view-option"
+      class:active={onlyWithAttachments}
+      use:ripple
+      onclick={() => (onlyWithAttachments = !onlyWithAttachments)}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onlyWithAttachments = !onlyWithAttachments;
+        }
+      }}
+    >
+      <IconDocument class="view-option-icon" />
+      <span>
+        <strong>{i18n.t('feed.with_attachments')}</strong>
+        <small>{i18n.t('feed.with_attachments_desc')}</small>
+      </span>
+      <Toggle
+        checked={onlyWithAttachments}
+        tabindex={-1}
+        class="pointer-events-none"
+      />
+    </div>
 
-  <span class="filter-label section-label">{i18n.t('feed.filters')}</span>
-  <button
-    type="button"
-    class="view-option"
-    class:active={onlyWithAttachments}
-    use:ripple
-    onclick={() => onlyWithAttachments = !onlyWithAttachments}
-  >
-    <Checkbox
-      checked={onlyWithAttachments}
-      onchange={(v) => onlyWithAttachments = v}
-    />
-    <span>
-      <strong>{i18n.t('feed.with_attachments')}</strong>
-      <small>{i18n.t('feed.with_attachments_desc')}</small>
-    </span>
-    <IconDocument class="view-option-icon" />
-  </button>
-
-  <button
-    type="button"
-    class="view-option"
-    class:active={onlyDownloaded}
-    use:ripple
-    onclick={() => onlyDownloaded = !onlyDownloaded}
-  >
-    <Checkbox
-      checked={onlyDownloaded}
-      onchange={(v) => onlyDownloaded = v}
-    />
-    <span>
-      <strong>{i18n.t('library.only_downloaded')}</strong>
-      <small>{i18n.t('library.only_downloaded_desc')}</small>
-    </span>
-    <IconArrowDownload class="view-option-icon" />
-  </button>
+    <div
+      role="switch"
+      aria-checked={onlyDownloaded}
+      tabindex="0"
+      class="view-option"
+      class:active={onlyDownloaded}
+      use:ripple
+      onclick={() => (onlyDownloaded = !onlyDownloaded)}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onlyDownloaded = !onlyDownloaded;
+        }
+      }}
+    >
+      <IconArrowDownload class="view-option-icon" />
+      <span>
+        <strong>{i18n.t('library.only_downloaded')}</strong>
+        <small>{i18n.t('library.only_downloaded_desc')}</small>
+      </span>
+      <Toggle
+        checked={onlyDownloaded}
+        tabindex={-1}
+        class="pointer-events-none"
+      />
+    </div>
+  </div>
 {/snippet}
 
 {#snippet libraryTabs()}

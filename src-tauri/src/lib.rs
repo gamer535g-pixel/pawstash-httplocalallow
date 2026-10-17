@@ -4,6 +4,7 @@ pub mod commands;
 pub mod config;
 pub mod db;
 pub mod downloader;
+pub mod linux_open;
 pub mod logging;
 pub mod net;
 pub mod server;
@@ -82,6 +83,8 @@ pub fn run() {
     let subscription_repository = Arc::new(
         SubscriptionRepository::new().expect("Failed to initialize creator subscriptions"),
     );
+    let axum_port = Arc::new(AtomicU16::new(0));
+    let axum_token = uuid::Uuid::new_v4().simple().to_string();
     let subscription_manager = Arc::new(SubscriptionManager::new(
         subscription_repository,
         provider_manager.clone(),
@@ -89,6 +92,8 @@ pub fn run() {
         content.clone(),
         download_manager.clone(),
         config_manager.clone(),
+        axum_port.clone(),
+        axum_token.clone(),
     ));
     let sync_repository = Arc::new(SyncRepository::new().expect("Failed to initialize sync state"));
     let sync_manager = Arc::new(SyncManager::new(sync_repository, config_manager.clone()));
@@ -159,8 +164,6 @@ pub fn run() {
                 });
             }
 
-            let axum_port = Arc::new(AtomicU16::new(0));
-            let axum_token = uuid::Uuid::new_v4().simple().to_string();
             let server_port = axum_port.clone();
             let media_download_dir = settings.download_dir.clone();
             let server_config_manager = config_manager.clone();
@@ -182,12 +185,13 @@ pub fn run() {
                 #[cfg(target_os = "android")]
                 {
                     let pkg = crate::db::storage::android_package_name();
-                    roots.push(std::path::PathBuf::from(
-                        "/storage/emulated/0/Download/Pawstash",
-                    ));
-                    roots.push(std::path::PathBuf::from(format!(
-                        "/storage/emulated/0/Android/data/{pkg}/files/Download",
-                    )));
+                    roots.push(crate::db::storage::android_default_download_dir());
+                    roots.push(
+                        crate::db::storage::android_external_storage()
+                            .join(format!("Android/data/{pkg}/files/Download")),
+                    );
+                    roots.push(crate::db::storage::data_root().join("Downloads"));
+                    // /data/user/0 is a bind mount, so paths saved by older builds don't canonicalise to it.
                     roots.push(std::path::PathBuf::from(format!(
                         "/data/data/{pkg}/files/Pawstash/Downloads",
                     )));
@@ -344,6 +348,8 @@ pub fn run() {
             set_subscription_enabled,
             refresh_subscription,
             delete_subscription,
+            clear_subscription_posts,
+            count_subscription_posts,
             get_sync_status,
             create_sync_account,
             connect_sync_account,

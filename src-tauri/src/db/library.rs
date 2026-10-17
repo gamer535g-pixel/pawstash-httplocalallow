@@ -258,6 +258,52 @@ impl LibraryRepository {
         Ok(changed)
     }
 
+    pub fn count_creator_posts_in_stash(
+        &self,
+        collection_id: &str,
+        service: &str,
+        creator: &str,
+    ) -> Result<u64, String> {
+        let c = self.connection.lock().map_err(|e| e.to_string())?;
+        c.query_row(
+            "SELECT COUNT(*) FROM collection_posts WHERE collection_id=?1 AND service=?2 AND creator_id=?3",
+            params![collection_id, service, creator],
+            |r| r.get::<_, i64>(0).map(|n| n.max(0) as u64),
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    pub fn remove_creator_posts_from_stash(
+        &self,
+        collection_id: Option<&str>,
+        service: &str,
+        creator: &str,
+    ) -> Result<u64, String> {
+        let mut c = self.connection.lock().map_err(|e| e.to_string())?;
+        let tx = c.transaction().map_err(|e| e.to_string())?;
+        let count = if let Some(col_id) = collection_id {
+            tx.execute(
+                "DELETE FROM collection_posts WHERE collection_id=?1 AND service=?2 AND creator_id=?3",
+                params![col_id, service, creator],
+            )
+        } else {
+            tx.execute(
+                "DELETE FROM collection_posts WHERE service=?1 AND creator_id=?2",
+                params![service, creator],
+            )
+        }
+        .map_err(|e| e.to_string())? as u64;
+
+        tx.execute(
+            "DELETE FROM content_pins WHERE entity_kind='post' AND service=?1 AND creator_id=?2 AND reason='library' AND (service, creator_id, post_id) NOT IN (SELECT service, creator_id, post_id FROM collection_posts)",
+            params![service, creator],
+        )
+        .map_err(|e| e.to_string())?;
+
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(count)
+    }
+
     pub fn list_post_collections(
         &self,
         service: &str,

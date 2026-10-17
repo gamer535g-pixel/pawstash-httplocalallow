@@ -323,18 +323,18 @@
     --switch-thumb-on: 24px;
 
     --bottom-sheet-width: 640px;
-    --bottom-sheet-max-height: 78dvh;
+    --bottom-sheet-max-height: min(90dvh, calc(100dvh - var(--mobile-status-bar-height) - 16px));
     --bottom-sheet-radius: var(--radius-xl);
     --bottom-sheet-surface: var(--bg-dropdown);
     --bottom-sheet-backdrop: rgba(0, 0, 0, 0.64);
     --bottom-sheet-shadow: 0 18px 55px rgba(0, 0, 0, 0.6);
-    --bottom-sheet-padding-x: 20px;
-    --bottom-sheet-padding-top: 20px;
-    --bottom-sheet-padding-bottom: 20px;
-    --bottom-sheet-title-content-gap: 12px;
-    --bottom-sheet-content-action-gap: 20px;
-    --bottom-sheet-drag-target-height: 44px;
-    --bottom-sheet-handle-width: 36px;
+    --bottom-sheet-padding-x: 16px;
+    --bottom-sheet-padding-top: 14px;
+    --bottom-sheet-padding-bottom: 12px;
+    --bottom-sheet-title-content-gap: 14px;
+    --bottom-sheet-content-action-gap: 10px;
+    --bottom-sheet-drag-target-height: 30px;
+    --bottom-sheet-handle-width: 32px;
     --bottom-sheet-handle-height: 4px;
     --bottom-sheet-handle-color: rgba(var(--surface-tint-rgb), 0.34);
     --bottom-sheet-icon-size: 20px;
@@ -1723,12 +1723,13 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
 
 .unified-filter-menu,
 .popover-menu-dropdown.unified-filter-menu {
-  width: var(--popover-menu-width, min(295px, calc(100vw - 32px))) !important;
+  width: var(--popover-menu-width, min(310px, calc(100vw - 32px))) !important;
   max-height: min(620px, calc(100vh - 32px));
-  overflow: hidden !important;
-  padding: var(--floating-padding) !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  padding: calc(10px * var(--ui-scale, 1)) !important;
   border: var(--floating-border) !important;
-  border-radius: var(--floating-radius) !important;
+  border-radius: calc(var(--radius-lg, 16px) * var(--ui-scale, 1)) !important;
   background: var(--floating-bg) !important;
   box-shadow: var(--floating-shadow) !important;
   backdrop-filter: var(--floating-backdrop) !important;
@@ -1744,53 +1745,126 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
   overflow-x: hidden !important;
 }
 
-.unified-filter-menu .filter-label {
-  display: block;
-  margin: 6px 0 2px !important;
-  padding: 4px 4px 2px !important;
-  border-top: none !important;
-  color: var(--floating-section-color, var(--text-muted)) !important;
-  font-size: var(--floating-section-size, 10.5px) !important;
-  font-weight: var(--floating-section-weight, 700) !important;
-  letter-spacing: var(--floating-section-tracking, 0.08em) !important;
-  line-height: 1.2;
-  text-transform: uppercase;
+.unified-filter-menu .floating-divider {
+  display: none !important;
 }
 
+.unified-filter-menu .filter-section-title,
+.unified-filter-menu .filter-label,
+.filter-section-title {
+  display: flex !important;
+  align-items: center !important;
+  gap: calc(8px * var(--ui-scale, 1)) !important;
+  margin: calc(12px * var(--ui-scale, 1)) 0 calc(6px * var(--ui-scale, 1)) !important;
+  padding: 0 calc(2px * var(--ui-scale, 1)) !important;
+  border-top: none !important;
+  color: var(--text-primary) !important;
+  font-family: var(--font-display, Outfit, sans-serif) !important;
+  font-size: calc(13.5px * var(--ui-scale, 1)) !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em !important;
+  line-height: 1.25 !important;
+  text-transform: none !important;
+}
+
+.unified-filter-menu .filter-section-title:first-child,
 .unified-filter-menu .filter-label:first-child,
-.unified-filter-menu>.filter-label:first-of-type {
-  margin-top: 0 !important;
-  padding-top: 2px !important;
+.unified-filter-menu>.filter-label:first-of-type,
+.unified-filter-menu>.filter-section-title:first-of-type,
+.filter-section-title:first-child {
+  margin-top: calc(2px * var(--ui-scale, 1)) !important;
+  padding-top: 0 !important;
   border-top: 0 !important;
+}
+
+.unified-filter-menu .filter-section-icon,
+.unified-filter-menu .filter-label-icon,
+.filter-section-icon {
+  display: inline-grid !important;
+  place-items: center !important;
+  flex: none !important;
+  width: calc(24px * var(--ui-scale, 1)) !important;
+  height: calc(24px * var(--ui-scale, 1)) !important;
+  border-radius: calc(var(--radius-sm, 7px) * var(--ui-scale, 1)) !important;
+  background: var(--bg-card-hover, rgba(255, 255, 255, 0.08)) !important;
+  color: var(--text-primary) !important;
+}
+
+.unified-filter-menu .filter-section-icon svg,
+.unified-filter-menu .filter-label-icon svg,
+.filter-section-icon svg {
+  width: calc(14px * var(--ui-scale, 1)) !important;
+  height: calc(14px * var(--ui-scale, 1)) !important;
+}
+
+.unified-filter-menu .filter-section-title span,
+.unified-filter-menu .filter-label span,
+.filter-section-title span {
+  color: inherit !important;
+  font: inherit !important;
 }
 
 .unified-filter-menu .service-options,
 .unified-filter-menu .filter-options,
-.unified-filter-menu .download-type-options {
+.unified-filter-menu .download-type-options,
+.service-options,
+.filter-options,
+.download-type-options {
   display: grid !important;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--floating-gap, 2px) !important;
-  margin: 0 !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: calc(3px * var(--ui-scale, 1)) !important;
+  margin: 0 0 calc(8px * var(--ui-scale, 1)) !important;
+  padding: calc(4px * var(--ui-scale, 1)) !important;
+  background: var(--settings-row-bg, rgba(var(--surface-tint-rgb), 0.025)) !important;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.04)) !important;
+  border-radius: calc(var(--radius-md, 12px) * var(--ui-scale, 1)) !important;
+  box-sizing: border-box !important;
 }
 
-.unified-filter-menu .filter-chip {
+.unified-filter-menu .service-options:last-child,
+.unified-filter-menu .filter-options:last-child,
+.unified-filter-menu .download-type-options:last-child,
+.service-options:last-child,
+.filter-options:last-child,
+.download-type-options:last-child {
+  margin-bottom: 0 !important;
+}
+
+.unified-filter-menu .filter-chip,
+.filter-chip {
   width: 100% !important;
   min-width: 0 !important;
-  height: var(--floating-item-height, 36px) !important;
+  height: calc(34px * var(--ui-scale, 1)) !important;
+  min-height: calc(34px * var(--ui-scale, 1)) !important;
   justify-content: flex-start !important;
-  padding: 0 10px !important;
+  padding: 0 calc(8px * var(--ui-scale, 1)) !important;
   overflow: hidden;
   border: 0 !important;
-  border-radius: var(--floating-item-radius, 12px) !important;
+  outline: none !important;
+  box-shadow: none !important;
+  border-radius: calc(var(--radius-sm, 8px) * var(--ui-scale, 1)) !important;
   background: transparent !important;
   color: var(--text-secondary) !important;
-  font-size: 12.5px !important;
-  gap: 8px !important;
-  transition: background var(--duration-fast), color var(--duration-fast);
+  font-size: calc(12.5px * var(--ui-scale, 1)) !important;
+  font-weight: 500 !important;
+  gap: calc(8px * var(--ui-scale, 1)) !important;
+  box-sizing: border-box !important;
+  transition: background var(--duration-fast) var(--ease-expo),
+              color var(--duration-fast) var(--ease-expo) !important;
+}
+
+.unified-filter-menu .filter-chip:focus,
+.unified-filter-menu .filter-chip:focus-visible,
+.filter-chip:focus,
+.filter-chip:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 .unified-filter-menu .filter-chip.chip-all {
   grid-column: span 2 !important;
+  height: calc(34px * var(--ui-scale, 1)) !important;
+  font-weight: 600 !important;
 }
 
 .unified-filter-menu .filter-chip span {
@@ -1802,27 +1876,33 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
 
 .unified-filter-menu .filter-chip svg,
 .unified-filter-menu .filter-chip img {
-  width: 20px !important;
-  height: 20px !important;
+  width: calc(18px * var(--ui-scale, 1)) !important;
+  height: calc(18px * var(--ui-scale, 1)) !important;
   flex: none;
 }
 
 .unified-filter-menu .filter-chip:hover,
 .filter-chip:hover {
   background: rgba(var(--surface-tint-rgb), 0.08) !important;
+  border: 0 !important;
+  outline: none !important;
   color: var(--text-primary) !important;
 }
 
 .unified-filter-menu .filter-chip.state-include,
 .filter-chip.state-include {
   background: color-mix(in srgb, var(--status-success) 16%, transparent) !important;
-  color: var(--status-success) !important;
   border: 0 !important;
+  outline: none !important;
+  color: var(--status-success) !important;
+  font-weight: 600 !important;
 }
 
 .unified-filter-menu .filter-chip.state-include:hover,
 .filter-chip.state-include:hover {
-  background: color-mix(in srgb, var(--status-success) 25%, transparent) !important;
+  background: color-mix(in srgb, var(--status-success) 24%, transparent) !important;
+  border: 0 !important;
+  outline: none !important;
   color: var(--status-success) !important;
 }
 
@@ -1837,13 +1917,17 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
 .unified-filter-menu .filter-chip.state-exclude,
 .filter-chip.state-exclude {
   background: color-mix(in srgb, var(--status-error) 16%, transparent) !important;
-  color: var(--status-error) !important;
   border: 0 !important;
+  outline: none !important;
+  color: var(--status-error) !important;
+  font-weight: 600 !important;
 }
 
 .unified-filter-menu .filter-chip.state-exclude:hover,
 .filter-chip.state-exclude:hover {
-  background: color-mix(in srgb, var(--status-error) 25%, transparent) !important;
+  background: color-mix(in srgb, var(--status-error) 24%, transparent) !important;
+  border: 0 !important;
+  outline: none !important;
   color: var(--status-error) !important;
 }
 
@@ -1855,44 +1939,131 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
   fill: currentColor !important;
 }
 
-.unified-filter-menu .view-option,
-.unified-filter-menu .settings-menu-option,
-.unified-filter-menu .popover-option-card,
+.unified-filter-menu .settings-list {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  gap: 1px !important;
+  padding: 0 !important;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.04)) !important;
+  border-radius: calc(var(--radius-md, 12px) * var(--ui-scale, 1)) !important;
+  overflow: clip !important;
+  background: var(--settings-row-divider, rgba(255, 255, 255, 0.035)) !important;
+  box-sizing: border-box !important;
+  margin-bottom: calc(8px * var(--ui-scale, 1)) !important;
+}
+
+.unified-filter-menu .settings-list:last-child {
+  margin-bottom: 0 !important;
+}
+
+.unified-filter-menu .settings-list>.view-option,
+.settings-list>.view-option {
+  width: 100% !important;
+  min-height: calc(48px * var(--ui-scale, 1)) !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: calc(10px * var(--ui-scale, 1)) !important;
+  padding: calc(8px * var(--ui-scale, 1)) calc(12px * var(--ui-scale, 1)) !important;
+  margin-bottom: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  color: var(--text-secondary) !important;
+  background: var(--settings-row-bg, var(--bg-card)) !important;
+  text-align: left !important;
+  cursor: pointer !important;
+  box-sizing: border-box !important;
+  user-select: none !important;
+  transition: background var(--duration-fast) var(--ease-expo),
+              color var(--duration-fast) var(--ease-expo) !important;
+}
+
+.unified-filter-menu .settings-list>.view-option:last-child,
+.settings-list>.view-option:last-child {
+  margin-bottom: 0 !important;
+}
+
+.unified-filter-menu .settings-list>.view-option:hover,
+.unified-filter-menu .settings-list>.view-option:focus-visible,
+.settings-list>.view-option:hover,
+.settings-list>.view-option:focus-visible {
+  color: var(--text-primary) !important;
+  background: var(--bg-card-hover, rgba(255, 255, 255, 0.08)) !important;
+}
+
+.unified-filter-menu .settings-list>.view-option:focus-visible,
+.settings-list>.view-option:focus-visible {
+  outline: 2px solid var(--accent-primary) !important;
+  outline-offset: -1px !important;
+}
+
+.unified-filter-menu .settings-list>.view-option.active,
+.settings-list>.view-option.active {
+  background: color-mix(in srgb, var(--accent-container) 22%, var(--bg-card)) !important;
+}
+
+.unified-filter-menu .settings-list>.view-option.active:hover,
+.settings-list>.view-option.active:hover {
+  background: color-mix(in srgb, var(--accent-container) 28%, var(--bg-card)) !important;
+}
+
 .settings-menu-option,
-.view-option,
-.popover-option-card {
+.unified-filter-menu .settings-menu-option,
+.view-option:not(.settings-list *),
+.popover-option-card,
+.unified-filter-menu .popover-option-card {
   width: 100%;
-  min-height: var(--floating-card-min-height, 42px);
+  min-height: calc(38px * var(--ui-scale, 1));
   display: flex;
   align-items: center;
-  gap: var(--floating-card-gap, 10px);
-  padding: var(--floating-card-py, 6px) var(--floating-card-px, 10px);
-  margin-bottom: var(--floating-gap, 2px);
-  border: 0;
-  border-radius: var(--floating-card-radius, 12px);
+  gap: calc(10px * var(--ui-scale, 1));
+  padding: calc(7px * var(--ui-scale, 1)) calc(10px * var(--ui-scale, 1));
+  margin-bottom: calc(2px * var(--ui-scale, 1));
+  border: 0 !important;
+  border-radius: calc(var(--radius-md, 10px) * var(--ui-scale, 1));
   color: var(--text-secondary);
-  background: transparent;
+  background: transparent !important;
   text-align: left;
   cursor: pointer;
   box-sizing: border-box;
-  transition: background var(--duration-fast), color var(--duration-fast);
+  user-select: none;
+  transition: background var(--duration-fast) var(--ease-expo),
+              color var(--duration-fast) var(--ease-expo);
 }
 
-.unified-filter-menu .view-option:last-child,
-.settings-menu-option:last-child {
+.settings-menu-option:last-child,
+.unified-filter-menu .settings-menu-option:last-child,
+.view-option:not(.settings-list *):last-child,
+.popover-option-card:last-child {
   margin-bottom: 0;
 }
 
-.unified-filter-menu .view-option:hover,
-.unified-filter-menu .view-option.active,
-.unified-filter-menu .settings-menu-option:hover,
-.unified-filter-menu .popover-option-card:hover,
-.unified-filter-menu .popover-option-card.active,
 .settings-menu-option:hover,
-.view-option:hover,
+.unified-filter-menu .settings-menu-option:hover,
+.view-option:not(.settings-list *):hover,
 .popover-option-card:hover {
   color: var(--text-primary);
-  background: rgba(var(--surface-tint-rgb), 0.06);
+  background: var(--bg-card-hover, rgba(255, 255, 255, 0.08)) !important;
+}
+
+.settings-menu-option:focus-visible,
+.unified-filter-menu .settings-menu-option:focus-visible,
+.view-option:not(.settings-list *):focus-visible,
+.popover-option-card:focus-visible {
+  outline: 2px solid var(--accent-primary) !important;
+  outline-offset: -1px;
+}
+
+.settings-menu-option.text-red-400,
+.unified-filter-menu .settings-menu-option.text-red-400 {
+  color: #f87171 !important;
+}
+
+.settings-menu-option.text-red-400:hover,
+.unified-filter-menu .settings-menu-option.text-red-400:hover {
+  color: #fca5a5 !important;
+  background: rgba(239, 68, 68, 0.12) !important;
 }
 
 .modal-confirm-layout {
@@ -1953,26 +2124,49 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
   place-items: center;
   flex: none;
   color: var(--text-secondary);
+  opacity: 0.85;
+  transition: color var(--duration-fast) var(--ease-expo), opacity var(--duration-fast) var(--ease-expo);
 }
 
-.unified-filter-menu .view-option .checkbox-root {
+.settings-menu-option:hover .settings-menu-option-icon:not([class*='text-red']) {
+  color: var(--text-primary);
+  opacity: 1;
+}
+
+.settings-menu-option-icon.text-red-400,
+.settings-menu-option.text-red-400 .settings-menu-option-icon {
+  color: #f87171 !important;
+  opacity: 1 !important;
+}
+
+.settings-menu-option.text-red-400:hover .settings-menu-option-icon {
+  color: #fca5a5 !important;
+}
+
+.unified-filter-menu .view-option .checkbox-root,
+.unified-filter-menu .view-option .switch-root,
+.view-option .checkbox-root,
+.view-option .switch-root {
+  order: 3 !important;
   flex: 0 0 auto !important;
   width: auto !important;
   min-width: 0 !important;
   margin: 0 !important;
+  margin-left: auto !important;
   display: inline-flex !important;
 }
 
-.unified-filter-menu .view-option>button:not(.checkbox-root),
-.unified-filter-menu .view-option>span:not(.option-icon):not(.checkbox-root),
+.unified-filter-menu .view-option>button:not(.checkbox-root):not(.switch-root),
+.unified-filter-menu .view-option>span:not(.option-icon):not(.checkbox-root):not(.view-option-icon),
 .unified-filter-menu .settings-menu-option>span:not(.settings-menu-option-icon),
 .unified-filter-menu .popover-option-card>span:not(.option-icon),
 .settings-menu-option>span:not(.settings-menu-option-icon),
-.view-option>span:not(.option-icon):not(.checkbox-root),
+.view-option>span:not(.option-icon):not(.checkbox-root):not(.view-option-icon),
 .popover-option-card>span:not(.option-icon) {
+  order: 2 !important;
   min-width: 0;
   display: flex;
-  flex: 1;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 2px;
   padding: 0;
@@ -1986,10 +2180,23 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
 
 .unified-filter-menu .view-option-icon,
 .view-option-icon {
+  order: 1 !important;
   flex: 0 0 calc(var(--floating-card-icon-size, 20px) * var(--ui-scale, 1)) !important;
   width: calc(var(--floating-card-icon-size, 20px) * var(--ui-scale, 1)) !important;
   height: calc(var(--floating-card-icon-size, 20px) * var(--ui-scale, 1)) !important;
-  opacity: 0.5;
+  opacity: 0.8;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: var(--text-secondary);
+}
+
+.unified-filter-menu .view-option:hover .view-option-icon,
+.unified-filter-menu .view-option.active .view-option-icon,
+.view-option:hover .view-option-icon,
+.view-option.active .view-option-icon {
+  color: var(--accent-primary) !important;
+  opacity: 1 !important;
 }
 
 .unified-filter-menu .view-option strong,
@@ -2001,7 +2208,24 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
   font-size: var(--floating-card-title-size, 13px);
   font-weight: var(--floating-card-title-weight, 600);
   line-height: var(--floating-card-title-line-height, 1.25);
+}
+
+.settings-menu-option:not([class*='text-red']) strong,
+.unified-filter-menu .settings-menu-option:not([class*='text-red']) strong,
+.view-option strong,
+.popover-option-card strong {
   color: var(--text-primary);
+}
+
+.settings-menu-option.text-red-400 strong,
+.unified-filter-menu .settings-menu-option.text-red-400 strong,
+.settings-menu-option strong.text-red-400 {
+  color: #f87171 !important;
+}
+
+.settings-menu-option.text-red-400:hover strong,
+.unified-filter-menu .settings-menu-option.text-red-400:hover strong {
+  color: #fca5a5 !important;
 }
 
 .unified-filter-menu .view-option small,
@@ -2013,7 +2237,19 @@ video.grid-tile-media::-webkit-media-controls-enclosure {
   font-size: var(--floating-card-desc-size, 11px);
   font-weight: var(--floating-card-desc-weight, 430);
   line-height: var(--floating-card-desc-line-height, 1.25);
+}
+
+.settings-menu-option:not([class*='text-red']) small,
+.unified-filter-menu .settings-menu-option:not([class*='text-red']) small,
+.view-option small,
+.popover-option-card small {
   color: var(--floating-card-desc-color, rgba(255, 255, 255, 0.55));
+}
+
+.settings-menu-option.text-red-400 small,
+.unified-filter-menu .settings-menu-option.text-red-400 small,
+.settings-menu-option small.text-red-300\/60 {
+  color: rgba(252, 165, 165, 0.7) !important;
 }
 
 .app-tooltip {

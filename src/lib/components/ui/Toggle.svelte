@@ -5,6 +5,7 @@
     onchange?: (checked: boolean) => void;
     ariaLabel?: string;
     class?: string;
+    tabindex?: number;
   }
 
   let {
@@ -12,7 +13,8 @@
     disabled = false,
     onchange,
     ariaLabel,
-    class: extraClass = ''
+    class: extraClass = '',
+    tabindex
   }: Props = $props();
 
   function toggle() {
@@ -28,6 +30,7 @@
   aria-checked={checked}
   aria-label={ariaLabel}
   {disabled}
+  {tabindex}
   onclick={toggle}
   class="switch-root {extraClass}"
   class:checked

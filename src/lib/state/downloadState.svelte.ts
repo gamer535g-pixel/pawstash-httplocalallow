@@ -26,6 +26,17 @@ export type DownloadFilter = 'active' | 'completed' | 'failed' | 'all';
 const IN_FLIGHT_STATUSES = ['queued', 'resolving', 'downloading', 'paused', 'verifying'];
 const isInFlight = (item: DownloadItem) => IN_FLIGHT_STATUSES.includes(item.status) || isAutoRetryPending(item);
 
+export const downloadPostKey = (item: Pick<DownloadItem, 'id' | 'service' | 'creator_id' | 'post_id'>) =>
+  item.service && item.creator_id && item.post_id
+    ? postCacheKey(item.service, item.creator_id, item.post_id)
+    : `file:${item.id}`;
+
+export function countDownloadPosts(items: Iterable<DownloadItem>, include: (item: DownloadItem) => boolean = () => true) {
+  const keys = new Set<string>();
+  for (const item of items) if (include(item)) keys.add(downloadPostKey(item));
+  return keys.size;
+}
+
 export interface QueueStats {
   downloading: number;
   queued: number;
@@ -47,6 +58,10 @@ export class DownloadState {
   activeDownloadsCount = $derived(this.downloads.filter(isInFlight).length);
 
   failedDownloadsCount = $derived(this.downloads.filter(isFailedDownload).length);
+
+  activePostsCount = $derived(countDownloadPosts(this.downloads, isInFlight));
+
+  failedPostsCount = $derived(countDownloadPosts(this.downloads, isFailedDownload));
 
   queueStats = $derived.by<QueueStats>(() => {
     const stats: QueueStats = { downloading: 0, queued: 0, paused: 0, failed: 0, downloadedBytes: 0, totalBytes: 0, speedBps: 0 };

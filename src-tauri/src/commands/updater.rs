@@ -201,17 +201,11 @@ fn get_update_temp_dir() -> Result<std::path::PathBuf, String> {
                     }
                 }
             }
-            let pkg = crate::db::storage::android_package_name();
-            Ok(std::path::PathBuf::from(format!("/data/data/{pkg}/cache",)))
+            Ok(crate::db::storage::android_cache_dir())
         }) {
             return Ok(path);
         }
-        let pkg = crate::db::storage::android_package_name();
-        let fallback = std::path::PathBuf::from(format!("/data/data/{pkg}/cache"));
-        if fallback.exists() {
-            return Ok(fallback);
-        }
-        Ok(std::env::temp_dir())
+        Ok(crate::db::storage::android_cache_dir())
     }
 
     #[cfg(all(target_os = "linux", not(target_os = "android")))]
@@ -392,12 +386,12 @@ pub async fn download_and_install_update(
         let _ = std::fs::set_permissions(&target_path, std::fs::Permissions::from_mode(0o644));
     }
 
-    launch_installer_and_exit(app_handle, &target_path)?;
+    launch_installer_and_exit(app_handle, &target_path).await?;
 
     Ok(())
 }
 
-fn launch_installer_and_exit(
+async fn launch_installer_and_exit(
     app_handle: tauri::AppHandle,
     target_path: &std::path::Path,
 ) -> Result<(), String> {
@@ -454,11 +448,9 @@ fn launch_installer_and_exit(
         let is_sandboxed = std::path::Path::new("/.flatpak-info").exists()
             || std::env::var_os("SNAP").is_some();
         if is_sandboxed {
-            std::process::Command::new("xdg-open")
-                .arg(target_path)
-                .spawn()
-                .map_err(|e| format!("Failed to open downloaded update: {e}"))?;
-            return Ok(());
+            return crate::linux_open::open(target_path)
+                .await
+                .map_err(|e| format!("Failed to open downloaded update: {e}"));
         }
 
         let ext = target_path
@@ -481,9 +473,7 @@ fn launch_installer_and_exit(
                         if std::fs::rename(&tmp_dest, &current_appimage).is_ok() {
                             let _ = std::fs::remove_file(target_path);
                             let mut cmd = std::process::Command::new(&current_appimage);
-                            cmd.env_remove("APPDIR")
-                                .env_remove("ARGV0")
-                                .env_remove("OWD");
+                            crate::linux_open::apply_host_env(&mut cmd);
                             cmd.spawn()
                                 .map_err(|e| format!("Failed to launch AppImage: {e}"))?;
                             app_handle.exit(0);
@@ -495,9 +485,7 @@ fn launch_installer_and_exit(
             }
 
             let mut cmd = std::process::Command::new(target_path);
-            cmd.env_remove("APPDIR")
-                .env_remove("ARGV0")
-                .env_remove("OWD");
+            crate::linux_open::apply_host_env(&mut cmd);
             cmd.spawn()
                 .map_err(|e| format!("Failed to launch AppImage: {e}"))?;
             app_handle.exit(0);
@@ -525,18 +513,14 @@ fn launch_installer_and_exit(
                 app_handle.exit(0);
                 return Ok(());
             } else {
-                std::process::Command::new("xdg-open")
-                    .arg(target_path)
-                    .spawn()
-                    .map_err(|e| format!("Failed to open Linux package: {e}"))?;
-                return Ok(());
+                return crate::linux_open::open(target_path)
+                    .await
+                    .map_err(|e| format!("Failed to open Linux package: {e}"));
             }
         } else {
-            std::process::Command::new("xdg-open")
-                .arg(target_path)
-                .spawn()
-                .map_err(|e| format!("Failed to open Linux package: {e}"))?;
-            return Ok(());
+            return crate::linux_open::open(target_path)
+                .await
+                .map_err(|e| format!("Failed to open Linux package: {e}"));
         }
     }
 

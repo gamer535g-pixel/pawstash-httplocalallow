@@ -21,7 +21,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Select from '$lib/components/ui/Select.svelte';
-  import Checkbox from '$lib/components/ui/Checkbox.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
@@ -66,9 +66,10 @@
 
   import type { FilterMap } from '$lib/types/filter';
   import { countActiveFilters, matchesTriStateFilter, toggleFilterKey } from '$lib/types/filter';
-  import { getPostFormats } from '$lib/utils/media';
+  import { matchesPostFormatFilter } from '$lib/utils/media';
   import { extraField } from '$lib/utils/fields';
   import { parseTags } from '$lib/utils/formatters';
+  import { ctrlWheel } from '$lib/utils/ctrlWheel';
 
   type FavoritesTab = 'posts' | 'creators';
 
@@ -195,7 +196,7 @@
       filtered = filtered.filter((post) => matchesTriStateFilter([post.service], postServiceFilters));
     }
     if (Object.keys(formatFilters).length > 0) {
-      filtered = filtered.filter((post) => matchesTriStateFilter(getPostFormats(post), formatFilters));
+      filtered = filtered.filter((post) => matchesPostFormatFilter(post, formatFilters));
     }
     if (onlyWithAttachments) {
       filtered = filtered.filter((post) => Boolean(post.file || post.attachments?.length));
@@ -598,29 +599,16 @@
     }
   }
 
-  async function batchSubscribeCreators() {
+  function batchSubscribeCreators() {
     const items = selectionState.getItems<Creator>();
     if (items.length === 0) return;
-    try {
-      for (const creator of items) {
-        await subscriptionState.save({
-          service: creator.service,
-          creator_id: creator.id,
-          creator_name: creator.name || creator.id,
-          initial_import: 'none',
-          auto_download: false,
-          download_scope: 'primary',
-          poll_interval_minutes: 30
-        });
-      }
-      notify.success(
-        i18n.t('selection.subscribe'),
-        `${items.length} ${items.length === 1 ? 'creator' : 'creators'}`
-      );
-      selectionState.exit();
-    } catch (err) {
-      notify.error(i18n.t('subscriptions.action_error'), err);
-    }
+    subscriptionState.openDialog({
+      service: items[0].service,
+      creatorId: items[0].id,
+      creatorName: items[0].name || items[0].id,
+      batch: items.map((c) => ({ service: c.service, id: c.id, name: c.name || c.id }))
+    });
+    selectionState.exit();
   }
 
   async function batchUnfavoriteCreators() {
@@ -712,34 +700,15 @@
     }
   }
 
-  async function toggleCreatorSubscription(event: MouseEvent, creator: Creator) {
+  function handleSubscriptionClick(event: MouseEvent, creator: Creator) {
     event.stopPropagation();
     event.preventDefault();
-    const key = `sub:${creator.service}:${creator.id}`;
-    if (tilePending[key]) return;
-    tilePending[key] = true;
-    try {
-      const existing = subscriptionState.forCreator(creator.service, creator.id);
-      if (existing) {
-        await subscriptionState.remove(existing.id);
-        notify.success(i18n.t('subscriptions.removed'), { description: creator.name, glyph: 'removed' });
-      } else {
-        await subscriptionState.save({
-          service: creator.service,
-          creator_id: creator.id,
-          creator_name: creator.name || creator.id,
-          initial_import: 'none',
-          auto_download: false,
-          download_scope: 'primary',
-          poll_interval_minutes: 30
-        });
-        notify.success(i18n.t('subscriptions.saved'), creator.name);
-      }
-    } catch (err) {
-      notify.error(i18n.t('subscriptions.action_error'), err);
-    } finally {
-      tilePending[key] = false;
-    }
+    subscriptionState.openDialog({
+      service: creator.service,
+      creatorId: creator.id,
+      creatorName: creator.name || creator.id,
+      avatarUrl: creator.avatar_url
+    });
   }
 
   function closeSearch() {
@@ -795,10 +764,13 @@
 {/snippet}
 
 {#snippet filterContent()}
-  <span class="filter-label">{i18n.t('feed.platform')}</span>
+  <div class="filter-section-title">
+    <div class="filter-section-icon"><IconGlobe class="w-3.5 h-3.5" /></div>
+    <span>{i18n.t('feed.platform')}</span>
+  </div>
   <div class="service-options">
     <Button
-      variant={Object.keys(currentServices).length === 0 ? 'accent' : 'ghost'}
+      variant="ghost"
       size="sm"
       onclick={clearServices}
       class="filter-chip chip-all {Object.keys(currentServices).length === 0 ? 'state-include' : ''}"
@@ -825,8 +797,10 @@
     {/each}
   </div>
   {#if activeTab === 'posts'}
-    <div class="floating-divider"></div>
-    <span class="filter-label">{i18n.t('feed.format')}</span>
+    <div class="filter-section-title">
+      <div class="filter-section-icon"><IconDocument class="w-3.5 h-3.5" /></div>
+      <span>{i18n.t('feed.format')}</span>
+    </div>
     <div class="service-options">
       {#each formatList as fmt}
         {@const state = formatFilters[fmt.id] ?? 'neutral'}
@@ -847,25 +821,38 @@
         </Button>
       {/each}
     </div>
-    <div class="floating-divider"></div>
-    <span class="filter-label section-label">{i18n.t('feed.filters')}</span>
-    <button
-      type="button"
-      class="view-option"
-      class:active={onlyWithAttachments}
-      use:ripple
-      onclick={() => onlyWithAttachments = !onlyWithAttachments}
-    >
-      <Checkbox
-        checked={onlyWithAttachments}
-        onchange={(v) => onlyWithAttachments = v}
-      />
-      <span>
-        <strong>{i18n.t('feed.with_attachments')}</strong>
-        <small>{i18n.t('feed.with_attachments_desc')}</small>
-      </span>
-      <IconDocument class="view-option-icon" />
-    </button>
+    <div class="filter-section-title">
+      <div class="filter-section-icon"><IconOptions class="w-3.5 h-3.5" /></div>
+      <span>{i18n.t('feed.filters')}</span>
+    </div>
+    <div class="settings-list">
+      <div
+        role="switch"
+        aria-checked={onlyWithAttachments}
+        tabindex="0"
+        class="view-option"
+        class:active={onlyWithAttachments}
+        use:ripple
+        onclick={() => (onlyWithAttachments = !onlyWithAttachments)}
+        onkeydown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onlyWithAttachments = !onlyWithAttachments;
+          }
+        }}
+      >
+        <IconDocument class="view-option-icon" />
+        <span>
+          <strong>{i18n.t('feed.with_attachments')}</strong>
+          <small>{i18n.t('feed.with_attachments_desc')}</small>
+        </span>
+        <Toggle
+          checked={onlyWithAttachments}
+          tabindex={-1}
+          class="pointer-events-none"
+        />
+      </div>
+    </div>
   {/if}
 {/snippet}
 
@@ -991,7 +978,7 @@
     <div class="grid-stack">
       <div
         class="creators-grid"
-        onwheel={handleCreatorWheel}
+        {@attach ctrlWheel(handleCreatorWheel)}
         style={`--favorites-card-width: ${targetCardWidth}px; --favorites-gap: ${gap}px;`}
       >
       {#each visibleCreators as creator, index (creator.service + ':' + creator.id)}
@@ -1060,15 +1047,12 @@
                   type="button"
                   class="grid-tile-action"
                   class:is-selected={Boolean(creatorSub)}
-                  disabled={subPending}
-                  onclick={(e) => toggleCreatorSubscription(e, creator)}
+                  onclick={(e) => handleSubscriptionClick(e, creator)}
                   use:ripple
-                  use:tooltip={i18n.t(creatorSub ? 'subscriptions.unsubscribe' : 'subscriptions.subscribe')}
-                  aria-label={i18n.t(creatorSub ? 'subscriptions.unsubscribe' : 'subscriptions.subscribe')}
+                  use:tooltip={i18n.t(creatorSub ? 'subscriptions.subscription' : 'subscriptions.subscribe')}
+                  aria-label={i18n.t(creatorSub ? 'subscriptions.subscription' : 'subscriptions.subscribe')}
                 >
-                  {#if subPending}
-                    <IconLoading />
-                  {:else if creatorSub}
+                  {#if creatorSub}
                     <IconPersonSubscribed />
                   {:else}
                     <IconPersonAdd />

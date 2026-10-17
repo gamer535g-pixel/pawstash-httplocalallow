@@ -184,14 +184,18 @@
       {:else if completedItems.length === items.length}
         <button
           class="grid-tile-action group-action"
-          onclick={(event) => {
+          onclick={async (event) => {
             event.stopPropagation();
             const first = completedItems[0];
             if (first) {
               const p = first.final_path;
               const lastSlash = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
               const folder = lastSlash > 0 ? p.slice(0, lastSlash) : p;
-              void apiShowInFolder(folder);
+              try {
+                await apiShowInFolder(folder);
+              } catch (error) {
+                notify.error(i18n.t('downloads.show_in_folder_failed'), error);
+              }
             }
           }}
           use:tooltip={i18n.t('downloads.open_post_folder')}

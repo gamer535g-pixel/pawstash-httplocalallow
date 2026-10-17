@@ -2,6 +2,7 @@ import type { Post, Attachment, Creator, CreatorProfile } from '$lib/types/conte
 import { providerState } from '$lib/state/providerState.svelte';
 import { thumbHashToUrl } from './thumbhash';
 import { extraField } from './fields';
+import { matchesTriStateFilter, type FilterMap } from '$lib/types/filter';
 import { apiProbeDownloadSize } from '$lib/utils/ipc';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { serverPortState } from '$lib/state/serverPort.svelte';
@@ -168,12 +169,25 @@ export function creatorAvatarSrc(creator?: Creator | CreatorProfile | null): str
   if (avatarUrl) {
     return avatarUrl;
   }
+  const candidates = extraField<unknown>(creator, 'candidate_avatar_urls');
+  if (Array.isArray(candidates)) {
+    const reported = candidates.find((url): url is string => typeof url === 'string' && url.trim() !== '');
+    if (reported) return reported;
+  }
   const service = typeof creator.service === 'string' ? creator.service : undefined;
   const id = typeof creator.id === 'string' ? creator.id : undefined;
   if (service && id) {
-    return creatorAvatarUrl(service, id);
+    return creatorAvatarUrl(service, id, undefined, creatorProviderHint(creator));
   }
   return '';
+}
+
+function creatorProviderHint(creator: Creator | CreatorProfile): string | undefined {
+  const isConcrete = (id: unknown): id is string => typeof id === 'string' && id.trim() !== '' && id !== 'auto';
+  const providerId = extraField<unknown>(creator, 'provider_id');
+  if (isConcrete(providerId)) return providerId;
+  const providerIds = extraField<unknown>(creator, 'provider_ids');
+  return Array.isArray(providerIds) ? providerIds.find(isConcrete) : undefined;
 }
 
 export function creatorPlaceholderUrl(creator?: Creator | CreatorProfile | null): string | undefined {
@@ -621,8 +635,9 @@ function computePostFormats(post: Post): string[] {
     formats.push('audio');
   }
 
+  const formatUnknown = isPostFormatUnknown(p);
   const hasTextContent = Boolean(p.content && p.content.trim().length > 20);
-  const isTextOnlyPost = (p.attachment_count ?? 0) === 0 && !p.file?.path && !p.file?.name && directMedia.length === 0;
+  const isTextOnlyPost = !formatUnknown && (p.attachment_count ?? 0) === 0 && !p.file?.path && !p.file?.name && directMedia.length === 0;
   if (hasTextContent || isTextOnlyPost) {
     formats.push('text');
   }
@@ -642,13 +657,24 @@ function computePostFormats(post: Post): string[] {
     formats.push('wip');
   }
 
-  if (formats.length === 0) formats.push('text');
+  if (formats.length === 0 && !formatUnknown) formats.push('text');
   return formats;
+}
+
+/** Scraped feed cards and favorite stubs don't list their files until the post detail is fetched. */
+export function isPostFormatUnknown(post: Post): boolean {
+  if (post.detail_fetched === true) return false;
+  if (post.preview_state === 'scraped') return true;
+  return post.file == null && post.attachments == null;
+}
+
+export function matchesPostFormatFilter(post: Post, filterMap: FilterMap): boolean {
+  return matchesTriStateFilter(getPostFormats(post), filterMap, !isPostFormatUnknown(post));
 }
 
 export function matchesPostFormat(post: Post, format: string): boolean {
   if (format === 'all') return true;
-  return getPostFormats(post).includes(format);
+  return matchesPostFormatFilter(post, { [format]: 'include' });
 }
 
 export function isDirectMediaUrl(url: string): boolean {

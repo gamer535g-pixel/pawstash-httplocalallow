@@ -54,6 +54,7 @@
   let isEntering = $state(true);
   let isDragging = $state(false);
   let isClosing = $state(false);
+  let isScrolled = $state(false);
   let closeTimer: ReturnType<typeof setTimeout> | null = null;
 
   onDestroy(() => {
@@ -225,13 +226,22 @@
         tabindex="-1"
         use:dialogFocus={{ onEscape: requestClose }}
       >
-        <header class="bottom-sheet__header">
+        <header class="bottom-sheet__header" class:is-scrolled={isScrolled}>
           <h2 class="bottom-sheet__title">{title}</h2>
         </header>
 
         {#if children}
           {#if isScrollable}
-            <div class="bottom-sheet__body" use:scrollable={{ overflowX: 'hidden' }}>
+            <div
+              class="bottom-sheet__body"
+              class:is-scrolled={isScrolled}
+              use:scrollable={{
+                overflowX: 'hidden',
+                onScroll: (top) => {
+                  isScrolled = top > 2;
+                }
+              }}
+            >
               <div class="bottom-sheet__content" class:is-flush={flush}>
                 {@render children()}
               </div>
@@ -389,6 +399,41 @@
     min-height: 0;
     max-width: 100%;
     flex: 1 1 auto;
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      black 0px,
+      black calc(100% - 24px),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      black 0px,
+      black calc(100% - 24px),
+      transparent 100%
+    );
+  }
+
+  .bottom-sheet__body.is-scrolled {
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent 0px,
+      black 24px,
+      black calc(100% - 24px),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      transparent 0px,
+      black 24px,
+      black calc(100% - 24px),
+      transparent 100%
+    );
+  }
+
+  :global(html.webkitgtk) .bottom-sheet__body,
+  :global(html.webkitgtk) .bottom-sheet__body.is-scrolled {
+    -webkit-mask-image: none;
+    mask-image: none;
   }
 
   .bottom-sheet__body.is-unscrollable {
@@ -402,7 +447,9 @@
     padding:
       calc(var(--bottom-sheet-padding-top) * var(--ui-scale, 1))
       calc(var(--bottom-sheet-padding-x) * var(--ui-scale, 1))
-      0;
+      calc(10px * var(--ui-scale, 1));
+    z-index: 2;
+    position: relative;
   }
 
   .bottom-sheet__title {

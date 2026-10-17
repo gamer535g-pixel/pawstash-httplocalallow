@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { notify } from '$lib/utils/toast';
 import { i18n } from '$lib/i18n';
 import { formatBytes } from '$lib/utils/formatters';
+import { openExternalUrl } from '$lib/utils/ipc';
 import { configState } from '$lib/state/configState.svelte';
 import type { UpdateInfo, UpdateProgressPayload } from '$lib/types/update';
 
@@ -99,11 +100,7 @@ export class UpdateState {
 
   async openReleasePage() {
     if (!this.info?.release_url) return;
-    try {
-      await invoke('open_in_browser', { url: this.info.release_url });
-    } catch {
-      window.open(this.info.release_url, '_blank');
-    }
+    await openExternalUrl(this.info.release_url);
   }
 
   async startInAppUpdate() {

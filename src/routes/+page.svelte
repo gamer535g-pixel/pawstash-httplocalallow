@@ -28,6 +28,8 @@
   import FavoritesView from '$lib/components/content/FavoritesView.svelte';
   import ProfilePage from '$lib/components/profile/ProfilePage.svelte';
   import UpdateModal from '$lib/components/ui/UpdateModal.svelte';
+  import SubscriptionModal from '$lib/components/content/SubscriptionModal.svelte';
+  import UnsubscribeDialog from '$lib/components/content/UnsubscribeDialog.svelte';
   import { updateState } from '$lib/state/updateState.svelte';
   import { initFrontendLogging } from '$lib/utils/logger';
   import { initDeepLinkListener, handleDeepLinkUrl } from '$lib/utils/deepLink';
@@ -208,6 +210,8 @@
   {/if}
 
   <UpdateModal />
+  <SubscriptionModal />
+  <UnsubscribeDialog />
   <img
     bind:this={flightEl}
     src={pawstashLogo}

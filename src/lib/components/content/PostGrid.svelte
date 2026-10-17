@@ -16,6 +16,7 @@
   import { GridHandoff } from '$lib/motion/gridHandoff.svelte';
   import IconEmpty from '~icons/fluent/image-off-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
+  import { ctrlWheel } from '$lib/utils/ctrlWheel';
 
   interface Props {
     posts: Post[];
@@ -281,7 +282,7 @@
   class="grid-root"
   role="feed"
   aria-label={ariaLabel}
-  onwheel={handleWheel}
+  {@attach ctrlWheel(handleWheel)}
   style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-ratio: ${ratios[configState.settings.grid_aspect_ratio]}; --grid-gap: ${gap}px;`}
 >
   {#if scaleVisible}
@@ -335,6 +336,8 @@
   .grid-root { position: relative; width: 100%; }
   .virtual-grid { position: relative; width: 100%; contain: layout style; }
   .virtual-row { position: absolute; top: 0; left: 0; right: 0; display: grid; align-items: start; will-change: transform; }
+  /* Per-row layers cost WebKitGTK more than repainting the moved rows. */
+  :global(html.webkitgtk) .virtual-row { will-change: auto; }
   .scale-indicator { position: fixed; z-index: 80; left: 50%; bottom: 34px; transform: translateX(-50%); padding: 7px 12px; border: 1px solid rgba(247, 247, 248, .14); border-radius: 999px; background: var(--on-media-scrim-strong); color: var(--on-media); font-size: 12px; font-weight: 650; backdrop-filter: blur(14px); pointer-events: none; }
   .loading-tail { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; color: var(--text-muted); font-size: 11px; }
   .load-sentinel { width: 100%; height: 1px; pointer-events: none; }

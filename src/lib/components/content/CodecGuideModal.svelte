@@ -1,7 +1,7 @@
 <script lang="ts">
   import { i18n } from '$lib/i18n';
   import { notify } from '$lib/utils/toast';
-  import { apiOpenInBrowser } from '$lib/utils/ipc';
+  import { openExternalUrl } from '$lib/utils/ipc';
   import Modal from '$lib/components/ui/Modal.svelte';
   import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
@@ -77,7 +77,7 @@
           <Button
             variant="ghost"
             class="store-btn"
-            onclick={() => void apiOpenInBrowser('https://apps.microsoft.com/detail/9nmzlz57r3t7')}
+            onclick={() => void openExternalUrl('https://apps.microsoft.com/detail/9nmzlz57r3t7')}
           >
             <IconOpen class="w-[15px] h-[15px]" />
             <span>{i18n.t('post.codec_windows_m2_btn')}</span>

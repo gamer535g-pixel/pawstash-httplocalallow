@@ -165,7 +165,7 @@
   import { tick } from 'svelte';
   import { i18n } from '$lib/i18n';
   import { navigationState } from '$lib/state/navigationState.svelte';
-  import { apiOpenInBrowser } from '$lib/utils/ipc';
+  import { openExternalUrl } from '$lib/utils/ipc';
   import { isDirectMediaUrl } from '$lib/utils/media';
   import { notify } from '$lib/utils/toast';
   import { ripple } from '$lib/motion';
@@ -294,7 +294,7 @@
       return;
     }
 
-    void apiOpenInBrowser(url);
+    void openExternalUrl(url);
   }
 
   $effect(() => {
@@ -343,7 +343,7 @@
                 );
               }
             } else {
-              void apiOpenInBrowser(state.url);
+              void openExternalUrl(state.url);
             }
           }}
         >
@@ -363,7 +363,7 @@
         onclick={() => {
           const u = linkPopover!.url;
           linkPopover = null;
-          void apiOpenInBrowser(u);
+          void openExternalUrl(u);
         }}
       >
         <IconOpen class="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />

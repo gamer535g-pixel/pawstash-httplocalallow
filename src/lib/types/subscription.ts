@@ -7,6 +7,7 @@ export interface CreatorSubscription {
   creator_id: string;
   creator_name: string;
   destination_collection_id: string;
+  save_to_library: boolean;
   enabled: boolean;
   initial_import: InitialImport;
   auto_download: boolean;
@@ -23,6 +24,8 @@ export interface SubscriptionInput {
   creator_id: string;
   creator_name: string;
   destination_collection_id?: string;
+  save_to_library?: boolean;
+  enabled?: boolean;
   initial_import: InitialImport;
   auto_download: boolean;
   download_scope: DownloadScope;

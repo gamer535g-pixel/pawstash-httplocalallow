@@ -34,7 +34,7 @@
   import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
   import { logMediaError } from '$lib/utils/logger';
   import { diagnoseVideoFailure, diagnoseVideoFailureAsync, getUnsupportedContainerFormat, getFileExtension, type MediaFailureState } from '$lib/utils/media';
-  import { apiOpenDownloadFile } from '$lib/utils/ipc';
+  import { openDownloadedFile } from '$lib/utils/ipc';
   import { getVideoThumbnail, isFrameBlankOrBlack } from '$lib/utils/mediaThumbnail';
   import Button from '$lib/components/ui/Button.svelte';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
@@ -966,7 +966,7 @@
                 {i18n.t('post.unsupported_format_desc', { format: failure.format || getFileExtension(current.name) })}
               </p>
               {#if currentDownloaded && current?.downloadedPath}
-                <Button variant="ghost" class="mt-3 viewer-ghost-action" onclick={() => void apiOpenDownloadFile(current.downloadedPath!)}>
+                <Button variant="ghost" class="mt-3 viewer-ghost-action" onclick={() => void openDownloadedFile(current.downloadedPath!)}>
                   <IconPlay class="w-4 h-4 mr-1.5" />
                   <span>{i18n.t('post.open_in_player')}</span>
                 </Button>
@@ -976,7 +976,7 @@
             {:else if failure.preset === 'unsupported_codec'}
               <p class="text-ink/80 text-sm max-w-md text-center mt-2">{i18n.t('post.unsupported_codec_desc')}</p>
               {#if currentDownloaded && current?.downloadedPath}
-                <Button variant="ghost" class="mt-3 viewer-ghost-action" onclick={() => void apiOpenDownloadFile(current.downloadedPath!)}>
+                <Button variant="ghost" class="mt-3 viewer-ghost-action" onclick={() => void openDownloadedFile(current.downloadedPath!)}>
                   <IconPlay class="w-4 h-4 mr-1.5" />
                   <span>{i18n.t('post.open_in_player')}</span>
                 </Button>
@@ -989,7 +989,7 @@
                 <p class="text-ink/50 font-mono text-xs mt-1">{failure.message}</p>
               {/if}
               {#if currentDownloaded && current?.downloadedPath}
-                <Button variant="ghost" class="mt-3 viewer-ghost-action" onclick={() => void apiOpenDownloadFile(current.downloadedPath!)}>
+                <Button variant="ghost" class="mt-3 viewer-ghost-action" onclick={() => void openDownloadedFile(current.downloadedPath!)}>
                   <IconPlay class="w-4 h-4 mr-1.5" />
                   <span>{i18n.t('post.open_in_player')}</span>
                 </Button>

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 pub const INBOX_COLLECTION_ID: &str = "00000000-0000-0000-0000-000000000001";
 
-const CURRENT_SCHEMA_VERSION: i64 = 5;
+const CURRENT_SCHEMA_VERSION: i64 = 7;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -192,6 +192,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     creator_name TEXT NOT NULL DEFAULT '',
     destination_collection_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001'
         REFERENCES collections(id) ON DELETE SET DEFAULT,
+    save_to_library INTEGER NOT NULL DEFAULT 1 CHECK (save_to_library IN (0, 1)),
     enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
     initial_import TEXT NOT NULL DEFAULT 'none' CHECK (initial_import IN ('none', 'latest', 'all')),
     auto_download INTEGER NOT NULL DEFAULT 0 CHECK (auto_download IN (0, 1)),
@@ -250,19 +251,66 @@ pub fn android_package_name() -> String {
             return pkg.to_string();
         }
     }
-    if std::path::Path::new("/data/data/app.pawstash.client.dev/files").exists()
-        || std::path::Path::new("/data/user/0/app.pawstash.client.dev/files").exists()
+    let user_id = android_user_id();
+    if std::path::Path::new(&format!("/data/user/{user_id}/app.pawstash.client.dev/files")).exists()
+        || std::path::Path::new("/data/data/app.pawstash.client.dev/files").exists()
     {
         return "app.pawstash.client.dev".to_string();
     }
     "app.pawstash.client".to_string()
 }
 
+/// App uids are `user_id * 100000 + app_id` (AOSP `android_filesystem_config.h`).
+#[cfg(target_os = "android")]
+pub fn android_user_id() -> u32 {
+    const AID_USER_OFFSET: u32 = 100_000;
+    // SAFETY: getuid has no preconditions and always succeeds.
+    let uid = unsafe { libc::getuid() };
+    uid / AID_USER_OFFSET
+}
+
+/// `/data/data` is user 0 only; work profiles and Secure Folder live under `/data/user/<id>`.
+#[cfg(target_os = "android")]
+pub fn android_app_data_dir() -> &'static std::path::Path {
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let pkg = android_package_name();
+        // Android 13+ sets TMPDIR to the cache dir, which also covers adopted storage.
+        let from_tmpdir = std::env::var_os("TMPDIR")
+            .map(PathBuf::from)
+            .filter(|cache| cache.file_name() == Some(std::ffi::OsStr::new("cache")))
+            .and_then(|cache| cache.parent().map(std::path::Path::to_path_buf))
+            .filter(|dir| dir.file_name() == Some(std::ffi::OsStr::new(&pkg)) && dir.is_dir());
+        if let Some(dir) = from_tmpdir {
+            return dir;
+        }
+        let per_user = PathBuf::from(format!("/data/user/{}/{pkg}", android_user_id()));
+        if per_user.is_dir() {
+            return per_user;
+        }
+        PathBuf::from(format!("/data/data/{pkg}"))
+    })
+}
+
+#[cfg(target_os = "android")]
+pub fn android_cache_dir() -> PathBuf {
+    android_app_data_dir().join("cache")
+}
+
+#[cfg(target_os = "android")]
+pub fn android_external_storage() -> PathBuf {
+    PathBuf::from(format!("/storage/emulated/{}", android_user_id()))
+}
+
+#[cfg(target_os = "android")]
+pub fn android_default_download_dir() -> PathBuf {
+    android_external_storage().join("Download").join("Pawstash")
+}
+
 pub fn data_root() -> PathBuf {
     #[cfg(target_os = "android")]
     {
-        let pkg = android_package_name();
-        PathBuf::from(format!("/data/data/{pkg}/files/Pawstash"))
+        android_app_data_dir().join("files").join("Pawstash")
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -441,6 +489,32 @@ pub fn initialize_schema(connection: &mut Connection) -> Result<(), String> {
                     )
                     .map_err(|e| e.to_string())?;
             }
+            6 => {
+                if !column_exists(&transaction, "subscriptions", "save_to_library")? {
+                    transaction
+                        .execute(
+                            "ALTER TABLE subscriptions ADD COLUMN save_to_library INTEGER NOT NULL DEFAULT 1",
+                            [],
+                        )
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+            7 => {
+                transaction
+                    .execute(
+                        "UPDATE creators SET snapshot_json = CASE
+                             WHEN json_type(snapshot_json, '$.provider_ids[0]') = 'text'
+                                  AND json_extract(snapshot_json, '$.provider_ids[0]') NOT IN ('', 'auto')
+                             THEN json_set(snapshot_json, '$.provider_id', json_extract(snapshot_json, '$.provider_ids[0]'))
+                             ELSE json_remove(snapshot_json, '$.provider_id')
+                         END
+                         WHERE CASE WHEN json_valid(snapshot_json)
+                                    THEN json_extract(snapshot_json, '$.provider_id') = 'auto'
+                                    ELSE 0 END",
+                        [],
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
             _ => return Err(format!("Missing database migration {next_version}")),
         }
         transaction
@@ -494,5 +568,48 @@ mod tests {
         assert!(column_exists(&connection, "creators", "is_ai").unwrap());
         assert!(column_exists(&connection, "thumb_blobs", "content_key").unwrap());
         assert!(column_exists(&connection, "thumb_refs", "content_key").unwrap());
+        assert!(column_exists(&connection, "subscriptions", "save_to_library").unwrap());
+    }
+
+    #[test]
+    fn migration_7_repairs_auto_provider_ids() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        prepare_connection(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                r#"INSERT INTO creators(service, creator_id, name, snapshot_json) VALUES
+                     ('fansly', 'with_ids', 'a', '{"id":"with_ids","provider_id":"auto","provider_ids":["onlyhaven","coomer"]}'),
+                     ('fansly', 'no_ids', 'b', '{"id":"no_ids","provider_id":"auto"}'),
+                     ('patreon', 'concrete', 'c', '{"id":"concrete","provider_id":"pawchive"}'),
+                     ('patreon', 'broken', 'd', 'not json');
+                   PRAGMA user_version = 6;"#,
+            )
+            .unwrap();
+        initialize_schema(&mut connection).unwrap();
+
+        let provider_of = |id: &str| -> Option<String> {
+            connection
+                .query_row(
+                    "SELECT json_extract(snapshot_json, '$.provider_id') FROM creators WHERE creator_id = ?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(provider_of("with_ids").as_deref(), Some("onlyhaven"));
+        assert_eq!(provider_of("no_ids"), None);
+        assert_eq!(provider_of("concrete").as_deref(), Some("pawchive"));
+        let broken: String = connection
+            .query_row(
+                "SELECT snapshot_json FROM creators WHERE creator_id = 'broken'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(broken, "not json");
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
     }
 }

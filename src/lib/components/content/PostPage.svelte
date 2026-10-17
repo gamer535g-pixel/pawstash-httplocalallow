@@ -15,7 +15,7 @@
   import { accountState } from '$lib/state/accountState.svelte';
   import { themeState, getContrastColor } from '$lib/theme/themeState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
-  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiGetCreatorArtworkPath, apiOpenInBrowser, apiFetchPostComments, apiProbeDownloadSize, apiProbeDownloadSizes, apiShowInFolder, apiStartDownload, apiOpenDownloadFile, apiResolvePostUrl } from '$lib/utils/ipc';
+  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiGetCreatorArtworkPath, openExternalUrl, apiFetchPostComments, apiProbeDownloadSize, apiProbeDownloadSizes, apiShowInFolder, apiStartDownload, openDownloadedFile, apiResolvePostUrl } from '$lib/utils/ipc';
   import type { Attachment, Comment, Post } from '$lib/types/content';
   import type { DownloadItem } from '$lib/types/download';
   import type { LibraryCollection } from '$lib/types/library';
@@ -391,19 +391,22 @@
   function openInProvider(targetProvId?: string) {
     const effectiveProvId = targetProvId || (activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined);
     if (post?.page_url && (!effectiveProvId || effectiveProvId === post.provider_id)) {
-      void apiOpenInBrowser(post.page_url).catch((err) => logger.warn('Failed to open post URL in provider', err));
+      void openExternalUrl(post.page_url);
       return;
     }
     apiResolvePostUrl(service, creatorId, postId, effectiveProvId)
       .then((url) => {
-        if (url) void apiOpenInBrowser(url).catch((err) => logger.warn('Failed to open post URL in provider', err));
+        if (url) void openExternalUrl(url);
       })
-      .catch((err) => logger.warn('Failed to resolve post URL', err));
+      .catch((err) => {
+        logger.warn('Failed to resolve post URL', err);
+        notify.error(i18n.t('common.open_link_failed'), err);
+      });
   }
 
   function openOriginalPost() {
     const url = getPlatformPostUrl(service, creatorId, postId, creatorProfile?.public_id);
-    if (url) void apiOpenInBrowser(url).catch((err) => logger.warn('Failed to open original post URL in browser', err));
+    if (url) void openExternalUrl(url);
   }
 
   function openInBrowser() {
@@ -542,7 +545,7 @@
     if (existing) {
       openCloudFolderModal(existing, null);
     } else {
-      void apiOpenInBrowser(url);
+      void openExternalUrl(url);
     }
   }
 
@@ -824,7 +827,7 @@
 
   function openFileExternally(item?: DownloadItem | null) {
     if (!item?.final_path) return;
-    void apiOpenDownloadFile(item.final_path);
+    void openDownloadedFile(item.final_path);
   }
 
   function isHtmlContentEmpty(html?: string) {
@@ -2696,7 +2699,7 @@
                           if (linkedPostId) {
                             navigationState.openPost(service, creatorId, linkedPostId);
                           } else if (postEmbed?.url) {
-                            void apiOpenInBrowser(postEmbed.url);
+                            void openExternalUrl(postEmbed.url);
                           }
                         }}
                         aria-label={postEmbed.subject || (linkedPostId ? `Post #${linkedPostId}` : 'Linked Post')}
@@ -2712,7 +2715,7 @@
                             if (linkedPostId) {
                               navigationState.openPost(service, creatorId, linkedPostId);
                             } else if (postEmbed?.url) {
-                              void apiOpenInBrowser(postEmbed.url);
+                              void openExternalUrl(postEmbed.url);
                             }
                           }}
                           class="media-download-btn is-embed-btn"
@@ -2752,7 +2755,7 @@
                           type="button"
                           onclick={() => {
                             if (postEmbed?.url) {
-                              void apiOpenInBrowser(postEmbed.url);
+                              void openExternalUrl(postEmbed.url);
                             }
                           }}
                           aria-label={postEmbed.subject || 'External Link'}
@@ -2776,7 +2779,7 @@
                         <div class="media-download-group">
                           <Button
                             variant="ghost"
-                            onclick={() => postEmbed?.url && void apiOpenInBrowser(postEmbed.url)}
+                            onclick={() => postEmbed?.url && void openExternalUrl(postEmbed.url)}
                             class="media-download-btn is-embed-btn"
                             title={i18n.t('post.open_link')}
                           >

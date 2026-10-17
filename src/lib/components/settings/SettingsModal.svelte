@@ -183,6 +183,8 @@
   let isProgrammaticScroll = false;
   let programmaticScrollTimeout: ReturnType<typeof setTimeout> | undefined;
   let scrollSpyRaf: number | undefined;
+  let settingsPageEl = $state<HTMLElement | null>(null);
+  let scrollSpyMetrics: { tops: { id: string; top: number }[]; maxScrollTop: number } | null = null;
   let availableBackgroundTypes = $state<BackgroundType[]>(supportedBackgroundTypes());
   let cacheStats = $state<CacheStats | null>(null);
   let cacheBusy = $state<'images' | 'all' | null>(null);
@@ -311,6 +313,30 @@
     }
   });
 
+  function measureScrollSpy(viewport: HTMLElement) {
+    const tops: { id: string; top: number }[] = [];
+    for (const cat of categories) {
+      const section = document.getElementById(`settings-${cat.id}`);
+      if (section) tops.push({ id: cat.id, top: section.offsetTop });
+    }
+    scrollSpyMetrics = { tops, maxScrollTop: viewport.scrollHeight - viewport.clientHeight };
+    return scrollSpyMetrics;
+  }
+
+  $effect(() => {
+    const viewport = viewportEl;
+    const page = settingsPageEl;
+    void categories;
+    scrollSpyMetrics = null;
+    if (!viewport) return;
+    const observer = new ResizeObserver(() => {
+      scrollSpyMetrics = null;
+    });
+    observer.observe(viewport);
+    if (page) observer.observe(page);
+    return () => observer.disconnect();
+  });
+
   function handleScrollSpy() {
     if (isProgrammaticScroll || !viewportEl) return;
 
@@ -320,10 +346,9 @@
       if (isProgrammaticScroll || !viewportEl) return;
 
       const scrollTop = viewportEl.scrollTop;
-      const scrollHeight = viewportEl.scrollHeight;
-      const clientHeight = viewportEl.clientHeight;
+      const metrics = scrollSpyMetrics ?? measureScrollSpy(viewportEl);
 
-      if (scrollTop + clientHeight >= scrollHeight - 36) {
+      if (scrollTop >= metrics.maxScrollTop - 36) {
         const lastCat = categories[categories.length - 1];
         if (lastCat && activeCategory !== lastCat.id) {
           activeCategory = lastCat.id;
@@ -333,11 +358,8 @@
 
       const probeOffset = scrollTop + (layoutState.isMobile ? 80 : 110);
       let currentId = categories[0]?.id || 'appearance';
-      for (const cat of categories) {
-        const section = document.getElementById(`settings-${cat.id}`);
-        if (section && section.offsetTop <= probeOffset) {
-          currentId = cat.id;
-        }
+      for (const { id, top } of metrics.tops) {
+        if (top <= probeOffset) currentId = id;
       }
 
       if (activeCategory !== currentId) {
@@ -566,7 +588,7 @@
     try {
       await openLogsFolder();
     } catch (e) {
-      notify.error('Failed to open logs folder');
+      notify.error(i18n.t('settings.open_logs_folder_failed'), e);
       logger.error('Failed to open logs folder', e);
     }
   }
@@ -1060,7 +1082,7 @@
     </StickyHeader>
   {/snippet}
 
-  <div class="settings-page" data-control-size="base">
+  <div class="settings-page" data-control-size="base" bind:this={settingsPageEl}>
     <div class="settings-toolbar">
       {@render categoryTabs()}
       {@render settingsMenu('main')}
@@ -1396,6 +1418,7 @@
           </SettingItem>
         {/if}
 
+        {#if !layoutState.isLinux}
         <SettingItem
           title={i18n.t('settings.scroll_edge_mask')}
           description={i18n.t('settings.scroll_edge_mask_desc')}
@@ -1411,6 +1434,7 @@
             onchange={(value) => updateAndSaveSetting('scroll_edge_mask', value)}
           />
         </SettingItem>
+        {/if}
 
         <SettingItem
           title={i18n.t('settings.disable_blur_placeholders')}
@@ -2771,6 +2795,11 @@
     filter: drop-shadow(0 8px 36px rgba(254, 184, 173, 0.28));
     will-change: opacity, transform;
     transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  :global(html.webkitgtk) .settings-hero-logo {
+    filter: none;
+    will-change: auto;
   }
 
   .settings-hero-logo.is-flying {

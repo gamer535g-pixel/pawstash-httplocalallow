@@ -1,4 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
+import { i18n } from '$lib/i18n';
+import { logger } from '$lib/utils/logger';
+import { notify } from '$lib/utils/toast';
 import type { CloudFolderResult } from '$lib/types/cloud';
 import type { AppSettings } from '$lib/types/config';
 import type { DownloadItem } from '$lib/types/download';
@@ -107,15 +110,24 @@ export const apiSaveSettings = (settings: AppSettings) => invoke<void>('save_set
 export const apiOpenInBrowser = (url: string) => invoke<void>('open_in_browser', { url });
 export async function openExternalUrl(url: string) {
   try {
-    await invoke('open_in_browser', { url });
-  } catch {
-    window.open(url, '_blank');
+    await apiOpenInBrowser(url);
+  } catch (error) {
+    logger.warn('Failed to open external link', { url, error });
+    notify.error(i18n.t('common.open_link_failed'), error);
   }
 }
 export const apiOpenDownloadsFolder = () => invoke<void>('open_downloads_folder');
 export const apiOpenAppLinksSettings = () => invoke<void>('open_app_links_settings');
 export const apiOpenDownloadFile = (filePath: string) =>
   invoke<void>('open_download_file', { filePath });
+export async function openDownloadedFile(filePath: string) {
+  try {
+    await apiOpenDownloadFile(filePath);
+  } catch (error) {
+    logger.warn('Failed to open downloaded file', { filePath, error });
+    notify.error(i18n.t('downloads.open_file_failed'), error);
+  }
+}
 export const apiShowInFolder = (path: string) =>
   invoke<void>('show_in_folder', { path });
 export const apiShowMainWindow = () => invoke<void>('show_main_window');
@@ -389,8 +401,12 @@ export const apiSetSubscriptionEnabled = (subscriptionId: string, enabled: boole
   invoke<CreatorSubscription>('set_subscription_enabled', { subscriptionId, enabled });
 export const apiRefreshSubscription = (subscriptionId: string) =>
   invoke<CreatorSubscription>('refresh_subscription', { subscriptionId });
-export const apiDeleteSubscription = (subscriptionId: string) =>
-  invoke<boolean>('delete_subscription', { subscriptionId });
+export const apiDeleteSubscription = (subscriptionId: string, removePosts?: boolean) =>
+  invoke<boolean>('delete_subscription', { subscriptionId, removePosts });
+export const apiClearSubscriptionPosts = (subscriptionId: string) =>
+  invoke<number>('clear_subscription_posts', { subscriptionId });
+export const apiCountSubscriptionPosts = (subscriptionId: string) =>
+  invoke<number>('count_subscription_posts', { subscriptionId });
 
 export const apiGetSyncStatus = () => invoke<SyncStatus>('get_sync_status');
 export const apiCreateSyncAccount = (serverUrl: string, accountId: string, masterPassword: string, deviceName: string) =>

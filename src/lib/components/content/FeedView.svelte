@@ -13,7 +13,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Select from '$lib/components/ui/Select.svelte';
-  import Checkbox from '$lib/components/ui/Checkbox.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
@@ -464,7 +464,10 @@
 
 {#snippet filterInnerContent()}
   {#if enabledProviders.length > 1}
-    <span class="filter-label">{i18n.t('providers.title')}</span>
+    <div class="filter-section-title">
+      <div class="filter-section-icon"><IconGlobe class="w-3.5 h-3.5" /></div>
+      <span>{i18n.t('providers.title')}</span>
+    </div>
     <div class="service-options">
       {#each enabledProviders as provider}
         {@const state = feedState.providerFilters[provider.id] ?? 'neutral'}
@@ -484,15 +487,17 @@
         </Button>
       {/each}
     </div>
-    <div class="floating-divider"></div>
   {/if}
 
-  <span class="filter-label">{i18n.t('feed.platform')}</span>
+  <div class="filter-section-title">
+    <div class="filter-section-icon"><IconGlobe class="w-3.5 h-3.5" /></div>
+    <span>{i18n.t('feed.platform')}</span>
+  </div>
   <div class="service-options">
     <Button
-      variant={Object.keys(feedState.serviceFilters).length === 0 ? 'accent' : 'ghost'}
+      variant="ghost"
       size="sm"
-      onclick={() => feedState.serviceFilters = {}}
+      onclick={() => (feedState.serviceFilters = {})}
       class="filter-chip chip-all {Object.keys(feedState.serviceFilters).length === 0 ? 'state-include' : ''}"
     >
       <IconGlobe class="w-5 h-5" />
@@ -517,9 +522,10 @@
     {/each}
   </div>
 
-  <div class="floating-divider"></div>
-
-  <span class="filter-label">{i18n.t('feed.format')}</span>
+  <div class="filter-section-title">
+    <div class="filter-section-icon"><IconDocument class="w-3.5 h-3.5" /></div>
+    <span>{i18n.t('feed.format')}</span>
+  </div>
   <div class="service-options">
     {#each formatList as fmt}
       {@const state = (fmt as any).isAi ? feedState.aiFilter : (feedState.formatFilters[fmt.id] ?? 'neutral')}
@@ -541,44 +547,65 @@
     {/each}
   </div>
 
-  <div class="floating-divider"></div>
+  <div class="filter-section-title">
+    <div class="filter-section-icon"><IconOptions class="w-3.5 h-3.5" /></div>
+    <span>{i18n.t('feed.filters')}</span>
+  </div>
+  <div class="settings-list">
+    <div
+      role="switch"
+      aria-checked={feedState.onlyWithAttachments}
+      tabindex="0"
+      class="view-option"
+      class:active={feedState.onlyWithAttachments}
+      use:ripple
+      onclick={() => (feedState.onlyWithAttachments = !feedState.onlyWithAttachments)}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          feedState.onlyWithAttachments = !feedState.onlyWithAttachments;
+        }
+      }}
+    >
+      <IconDocument class="view-option-icon" />
+      <span>
+        <strong>{i18n.t('feed.with_attachments')}</strong>
+        <small>{i18n.t('feed.with_attachments_desc')}</small>
+      </span>
+      <Toggle
+        checked={feedState.onlyWithAttachments}
+        tabindex={-1}
+        class="pointer-events-none"
+      />
+    </div>
 
-  <span class="filter-label section-label">{i18n.t('feed.filters')}</span>
-  <button
-    type="button"
-    class="view-option"
-    class:active={feedState.onlyWithAttachments}
-    use:ripple
-    onclick={() => feedState.onlyWithAttachments = !feedState.onlyWithAttachments}
-  >
-    <Checkbox
-      checked={feedState.onlyWithAttachments}
-      onchange={(v) => feedState.onlyWithAttachments = v}
-    />
-    <span>
-      <strong>{i18n.t('feed.with_attachments')}</strong>
-      <small>{i18n.t('feed.with_attachments_desc')}</small>
-    </span>
-    <IconDocument class="view-option-icon" />
-  </button>
-
-  <button
-    type="button"
-    class="view-option"
-    class:active={feedState.favoritesOnly}
-    use:ripple
-    onclick={toggleFavoritesFilter}
-  >
-    <Checkbox
-      checked={feedState.favoritesOnly}
-      onchange={toggleFavoritesFilter}
-    />
-    <span>
-      <strong>{i18n.t('feed.favorite_creators_only')}</strong>
-      <small>{i18n.t('feed.favorite_creators_desc')}</small>
-    </span>
-    <IconStar class="view-option-icon text-amber-500" />
-  </button>
+    <div
+      role="switch"
+      aria-checked={feedState.favoritesOnly}
+      tabindex="0"
+      class="view-option"
+      class:active={feedState.favoritesOnly}
+      use:ripple
+      onclick={toggleFavoritesFilter}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleFavoritesFilter();
+        }
+      }}
+    >
+      <IconStar class="view-option-icon text-amber-500" />
+      <span>
+        <strong>{i18n.t('feed.favorite_creators_only')}</strong>
+        <small>{i18n.t('feed.favorite_creators_desc')}</small>
+      </span>
+      <Toggle
+        checked={feedState.favoritesOnly}
+        tabindex={-1}
+        class="pointer-events-none"
+      />
+    </div>
+  </div>
 {/snippet}
 
 {#snippet feedFilter(sticky = false)}

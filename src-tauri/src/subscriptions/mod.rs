@@ -6,6 +6,7 @@ use crate::db::library::LibraryRepository;
 use crate::db::subscriptions::{Subscription, SubscriptionRepository};
 use crate::downloader::manager::DownloadManager;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::Emitter;
@@ -17,6 +18,8 @@ pub struct SubscriptionManager {
     content: Arc<ContentRepository>,
     downloads: Arc<DownloadManager>,
     config: Arc<ConfigManager>,
+    media_port: Arc<AtomicU16>,
+    media_token: String,
     running: Mutex<HashSet<String>>,
 }
 
@@ -28,6 +31,8 @@ impl SubscriptionManager {
         content: Arc<ContentRepository>,
         downloads: Arc<DownloadManager>,
         config: Arc<ConfigManager>,
+        media_port: Arc<AtomicU16>,
+        media_token: String,
     ) -> Self {
         Self {
             repository,
@@ -36,6 +41,8 @@ impl SubscriptionManager {
             content,
             downloads,
             config,
+            media_port,
+            media_token,
             running: Mutex::new(HashSet::new()),
         }
     }
@@ -50,6 +57,13 @@ impl SubscriptionManager {
     pub fn start(self: &Arc<Self>, app_handle: tauri::AppHandle) {
         let manager = self.clone();
         tauri::async_runtime::spawn(async move {
+            // Cloud-proxied downloads need the media server port before the first refresh.
+            for _ in 0..40 {
+                if manager.media_port.load(Ordering::Acquire) != 0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
             loop {
                 if let Ok(due) = manager.repository.due() {
                     for subscription in due {
@@ -158,11 +172,12 @@ impl SubscriptionManager {
                         continue;
                     }
                     self.content.pin_post(post, "subscription", "")?;
-                    self.library
-                        .save_post(post, Some(&subscription.destination_collection_id))?;
+                    if subscription.save_to_library {
+                        self.library
+                            .save_post(post, Some(&subscription.destination_collection_id))?;
+                    }
                     if subscription.auto_download {
-                        self.enqueue_media(post, &subscription.download_scope, &settings)
-                            .await;
+                        self.enqueue_media(post, &subscription, &settings).await;
                     }
                 }
             }
@@ -178,7 +193,18 @@ impl SubscriptionManager {
         format!("{}:{}:{}", post.service, post.user, post.id)
     }
 
-    async fn enqueue_media(self: &Arc<Self>, post: &Post, scope: &str, _settings: &AppSettings) {
+    async fn enqueue_media(
+        self: &Arc<Self>,
+        post: &Post,
+        subscription: &Subscription,
+        _settings: &AppSettings,
+    ) {
+        let scope = subscription.download_scope.as_str();
+        let creator_name = crate::downloader::template::resolve_creator_name(
+            &self.content,
+            post,
+            Some(&subscription.creator_name),
+        );
         let mut files: Vec<&Attachment> = Vec::new();
         if let Some(file) = post.file.as_ref().filter(|file| file.path.is_some()) {
             files.push(file);
@@ -204,18 +230,32 @@ impl SubscriptionManager {
                 .name
                 .clone()
                 .unwrap_or_else(|| format!("{}_{}", post.id, index + 1));
-            let _ = self.downloads.enqueue(
-                post.service.clone(),
-                post.user.clone(),
-                None,
-                post.id.clone(),
-                Some(post.title.clone()),
-                post.published.clone(),
-                path.to_string(),
+            let queued = crate::server::absolute_local_media_url(
                 url,
-                filename,
-                index + 1,
-            );
+                self.media_port.load(Ordering::Acquire),
+                &self.media_token,
+            )
+            .and_then(|url| {
+                self.downloads.enqueue(
+                    post.service.clone(),
+                    post.user.clone(),
+                    creator_name.clone(),
+                    post.id.clone(),
+                    Some(post.title.clone()),
+                    post.published.clone(),
+                    path.to_string(),
+                    url,
+                    filename,
+                    index + 1,
+                )
+            });
+            if let Err(error) = queued {
+                tracing::warn!(
+                    "Subscription {} failed to queue {path} from post {}: {error}",
+                    subscription.id,
+                    post.id
+                );
+            }
         }
     }
 }

@@ -9,7 +9,7 @@ import {
   type PartialPostsEvent
 } from '$lib/utils/ipc';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { getPostFormats } from '$lib/utils/media';
+import { matchesPostFormatFilter } from '$lib/utils/media';
 import { parseTags } from '$lib/utils/formatters';
 import { logger } from '$lib/utils/logger';
 import { accountState } from './accountState.svelte';
@@ -139,8 +139,7 @@ export class FeedState {
       const hasAttachments = (post.attachment_count ?? post.attachments?.length ?? 0) > 0 || Boolean(post.file?.path);
       const matchesAttachments = !this.onlyWithAttachments || hasAttachments;
 
-      const postFormats = getPostFormats(post);
-      const matchesFormat = matchesTriStateFilter(postFormats, this.formatFilters);
+      const matchesFormat = matchesPostFormatFilter(post, this.formatFilters);
 
       const postTags = parseTags(post.tags);
       const isPostAi = Boolean(

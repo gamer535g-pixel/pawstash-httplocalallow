@@ -5,7 +5,7 @@ use super::client::{
 use super::crypto::{
     decrypt_record, encrypt_record, unwrap_vault, wrap_vault, KdfEnvelope, VaultSecrets, KEY_BYTES,
 };
-use super::repository::{RemoteApply, SyncRepository, SyncState};
+use super::repository::{PawchiveSessionRecord, RemoteApply, SyncRepository, SyncState};
 use super::secrets::SecretStore;
 use crate::config::settings::ConfigManager;
 use serde::{Deserialize, Serialize};
@@ -625,6 +625,12 @@ impl SyncManager {
                     tracing::error!(error = %e, count = batch.len(), "Sync: failed to apply remote changes");
                     return Err(e);
                 }
+                for change in batch.iter().filter(|c| c.kind == "session" && !c.tombstone) {
+                    let Some(bytes) = change.plaintext.as_deref() else { continue };
+                    if let Err(e) = self.apply_session_record(bytes) {
+                        tracing::error!(error = %e, record_id = %change.record_id, "Sync: failed to apply synced Pawchive session");
+                    }
+                }
             }
 
             let page_max = pull.changes.iter().map(|c| c.position).max().unwrap_or(0);
@@ -651,6 +657,28 @@ impl SyncManager {
                 return Ok(());
             }
         }
+    }
+
+    fn apply_session_record(&self, bytes: &[u8]) -> Result<(), String> {
+        let mut settings = self.config.load()?;
+        if !settings.sync_pawchive_session {
+            return Ok(());
+        }
+        let record: PawchiveSessionRecord = serde_json::from_slice(bytes)
+            .map_err(|e| format!("Failed to parse session record: {e}"))?;
+        if record.session_cookie.is_empty() {
+            return Ok(());
+        }
+        let username_changed =
+            !record.username.is_empty() && settings.pawchive_username != record.username;
+        if settings.session_cookie == record.session_cookie && !username_changed {
+            return Ok(());
+        }
+        settings.session_cookie = record.session_cookie;
+        if username_changed {
+            settings.pawchive_username = record.username;
+        }
+        self.config.save(&settings)
     }
 
     async fn sync_inner(&self, app: &tauri::AppHandle) -> Result<(), String> {

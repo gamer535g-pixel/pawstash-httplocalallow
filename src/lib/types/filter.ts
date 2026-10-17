@@ -34,11 +34,13 @@ export function getExcludedKeys(map: FilterMap): string[] {
   return Object.keys(map).filter((k) => map[k] === 'exclude');
 }
 
-export function matchesTriStateFilter(itemValues: string[], filterMap: FilterMap): boolean {
+/** With `valuesComplete: false`, only a matching exclude can rule an item out. */
+export function matchesTriStateFilter(itemValues: string[], filterMap: FilterMap, valuesComplete = true): boolean {
   const excluded = getExcludedKeys(filterMap);
   if (excluded.length > 0 && excluded.some((ex) => itemValues.includes(ex))) {
     return false;
   }
+  if (!valuesComplete) return true;
 
   const included = getIncludedKeys(filterMap);
   if (included.length > 0 && !included.some((inc) => itemValues.includes(inc))) {

@@ -2,7 +2,6 @@ use crate::db::storage::open_database;
 use crate::sync::secrets::SecretStore;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::sync::Mutex;
 
 const SETTINGS_PREFIX: &str = "setting.";
@@ -172,13 +171,13 @@ fn legacy_domain_value(endpoint: Option<&str>) -> String {
 impl Default for AppSettings {
     fn default() -> Self {
         #[cfg(target_os = "android")]
-        let download_dir = PathBuf::from("/storage/emulated/0/Download/Pawstash")
+        let download_dir = crate::db::storage::android_default_download_dir()
             .to_string_lossy()
             .to_string();
 
         #[cfg(not(target_os = "android"))]
         let download_dir = dirs::download_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("Pawstash")
             .to_string_lossy()
             .to_string();
@@ -665,7 +664,9 @@ impl AppSettings {
         string!(download_dir);
         #[cfg(target_os = "android")]
         if self.download_dir.contains("/data/data/app.pawstash") {
-            self.download_dir = "/storage/emulated/0/Download/Pawstash".to_string();
+            self.download_dir = crate::db::storage::android_default_download_dir()
+                .to_string_lossy()
+                .to_string();
         }
         string!(api_domain);
         string!(file_domain);

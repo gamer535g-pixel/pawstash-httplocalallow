@@ -343,9 +343,76 @@ pub fn resolve_target_dir(
     target_dir
 }
 
+const POST_CREATOR_NAME_KEYS: [&str; 3] = ["creator_name", "username", "author"];
+
+pub fn resolve_creator_name(
+    content: &crate::db::content::ContentRepository,
+    post: &crate::api::models::Post,
+    fallback: Option<&str>,
+) -> Option<String> {
+    let cached = match content.get_creator(&post.service, &post.user) {
+        Ok(profile) => profile.map(|profile| profile.name),
+        Err(error) => {
+            tracing::warn!(
+                "Failed to read cached creator {}:{} for download naming: {error}",
+                post.service,
+                post.user
+            );
+            None
+        }
+    };
+    pick_creator_name(cached.as_deref(), fallback, post)
+}
+
+fn pick_creator_name(
+    cached: Option<&str>,
+    fallback: Option<&str>,
+    post: &crate::api::models::Post,
+) -> Option<String> {
+    let from_post = POST_CREATOR_NAME_KEYS
+        .iter()
+        .filter_map(|key| post.extra.get(*key).and_then(|value| value.as_str()));
+    [cached, fallback]
+        .into_iter()
+        .flatten()
+        .chain(from_post)
+        .map(str::trim)
+        .find(|name| !name.is_empty())
+        .map(String::from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn creator_name_prefers_cache_then_fallback_then_post_fields() {
+        let mut post = crate::api::models::Post {
+            id: "1".into(),
+            user: "12345".into(),
+            service: "patreon".into(),
+            ..Default::default()
+        };
+        post.extra
+            .insert("username".into(), serde_json::Value::from("post_user"));
+        post.extra
+            .insert("creator_name".into(), serde_json::Value::from("  "));
+
+        assert_eq!(
+            pick_creator_name(Some("Cached"), Some("Sub"), &post).as_deref(),
+            Some("Cached")
+        );
+        assert_eq!(
+            pick_creator_name(Some(" "), Some("Sub"), &post).as_deref(),
+            Some("Sub")
+        );
+        assert_eq!(
+            pick_creator_name(None, Some(""), &post).as_deref(),
+            Some("post_user")
+        );
+        post.extra.clear();
+        assert_eq!(pick_creator_name(None, None, &post), None);
+    }
 
     #[test]
     fn test_sanitization() {

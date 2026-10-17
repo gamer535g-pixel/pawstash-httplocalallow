@@ -67,7 +67,8 @@
   });
 
   let maskClass = $derived.by(() => {
-    if (configState.settings.scroll_edge_mask === false) return '';
+    // WebKitGTK re-renders a masked ancestor of the scroller offscreen on every scroll frame.
+    if (layoutState.isLinux || configState.settings.scroll_edge_mask === false) return '';
     if (isScrolledTop && isScrolledBottom) return 'mask-both';
     if (isScrolledTop) return 'mask-top';
     if (isScrolledBottom) return 'mask-bottom';

@@ -1075,16 +1075,20 @@ pub async fn fetch_creator_profile(
                 page_url: creator.page_url,
                 extra: creator.extra,
             };
-            let prov_key = provider_id.as_deref().unwrap_or("auto");
-            profile.extra.insert(
-                "provider_id".to_string(),
-                serde_json::Value::String(prov_key.to_string()),
-            );
+            let explicit_provider = provider_id
+                .as_deref()
+                .filter(|pid| *pid != crate::db::content::AUTO_PROVIDER_ID);
+            if let Some(pid) = explicit_provider {
+                profile.extra.insert(
+                    "provider_id".to_string(),
+                    serde_json::Value::String(pid.to_string()),
+                );
+            }
             state
                 .provider_manager
                 .enrich_creator_profile(&mut profile)
                 .await;
-            if prov_key == "auto" {
+            if explicit_provider.is_none() {
                 state.content.save_creator(&profile)?;
             }
             Ok(profile)
@@ -1598,16 +1602,33 @@ async fn enrich_favorite_artist(state: &State<'_, AppState>, item: &mut Favorite
         page_url: None,
         extra: item.extra.clone(),
     };
-    if let Ok(Some(cached)) = state.content.get_creator(&srv, &id) {
-        if !cached.name.is_empty() && cached.name != id {
-            item.name = Some(cached.name.clone());
-            creator.name = cached.name;
+    match state.content.get_creator(&srv, &id) {
+        Ok(Some(cached)) => {
+            if !cached.name.is_empty() && cached.name != id {
+                item.name = Some(cached.name.clone());
+                creator.name = cached.name;
+            }
+            creator.avatar_url = cached.avatar_url;
+            creator.avatar_path = cached.avatar_path;
+            creator.banner_url = cached.banner_url;
+            creator.banner_path = cached.banner_path;
+            creator.page_url = cached.page_url;
+            let favorite_hint = crate::db::content::creator_provider_hint(
+                creator.extra.get("provider_id"),
+                creator.extra.get("provider_ids"),
+            );
+            if favorite_hint.is_none() {
+                for key in ["provider_id", "provider_ids"] {
+                    if let Some(value) = cached.extra.get(key) {
+                        creator.extra.insert(key.to_string(), value.clone());
+                    }
+                }
+            }
         }
-        creator.avatar_url = cached.avatar_url;
-        creator.avatar_path = cached.avatar_path;
-        creator.banner_url = cached.banner_url;
-        creator.banner_path = cached.banner_path;
-        creator.page_url = cached.page_url;
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(%error, service = %srv, creator_id = %id, "Cached creator lookup failed while enriching a favorite");
+        }
     }
     state.provider_manager.enrich_creator(&mut creator).await;
     if (item.name.is_none() || item.name.as_deref() == Some(&item.id))
@@ -2058,10 +2079,13 @@ pub async fn set_creator_favorite(
     let is_authenticated = !settings.session_cookie.is_empty();
 
     if is_authenticated {
-        let _ = state
+        if let Err(error) = state
             .provider_manager
             .set_creator_favorite(&service, &creator_id, favorite)
-            .await;
+            .await
+        {
+            tracing::warn!(%error, %service, %creator_id, "Remote creator favorite failed; keeping the local favorite");
+        }
     }
 
     if favorite {
@@ -2111,7 +2135,9 @@ pub async fn set_creator_favorite(
                 }
             }
         };
-        let _ = state.content.save_creator(&profile);
+        if let Err(error) = state.content.save_creator(&profile) {
+            tracing::warn!(%error, %service, %creator_id, "Failed to cache favorited creator profile");
+        }
         state.content.set_pin(
             "creator",
             &service,
@@ -2677,20 +2703,8 @@ pub async fn start_download(
         }
     });
 
-    let creator_name = state
-        .content
-        .get_creator(&post.service, &post.user)
-        .ok()
-        .flatten()
-        .map(|c| c.name)
-        .or_else(|| {
-            post.extra
-                .get("creator_name")
-                .or_else(|| post.extra.get("username"))
-                .or_else(|| post.extra.get("author"))
-                .and_then(|v| v.as_str())
-                .map(String::from)
-        });
+    let creator_name =
+        crate::downloader::template::resolve_creator_name(&state.content, &post, None);
 
     let index = {
         let mut idx = 1;
@@ -2777,16 +2791,11 @@ pub async fn start_download(
         crate::downloader::metadata::save_post_metadata(&target_dir, &meta, &settings)?;
     }
 
-    let port = state.axum_port.load(Ordering::Acquire);
-    let download_url = if (url.starts_with("/cloud_stream/") || url.starts_with('/')) && port > 0 {
-        let separator = if url.contains('?') { '&' } else { '?' };
-        format!(
-            "http://127.0.0.1:{port}{url}{separator}token={}",
-            state.axum_token
-        )
-    } else {
-        url
-    };
+    let download_url = crate::server::absolute_local_media_url(
+        url,
+        state.axum_port.load(Ordering::Acquire),
+        &state.axum_token,
+    )?;
 
     state.download_manager.enqueue(
         post.service,
@@ -3007,6 +3016,7 @@ pub async fn refresh_subscription(
 #[tauri::command]
 pub fn delete_subscription(
     subscription_id: String,
+    remove_posts: Option<bool>,
     app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
@@ -3024,6 +3034,14 @@ pub fn delete_subscription(
             "",
             false,
         )?;
+
+        if remove_posts.unwrap_or(false) {
+            let _ = state.library.remove_creator_posts_from_stash(
+                Some(&subscription.destination_collection_id),
+                &subscription.service,
+                &subscription.creator_id,
+            );
+        }
     }
     let result = state
         .subscription_manager
@@ -3031,6 +3049,46 @@ pub fn delete_subscription(
         .delete(&subscription_id);
     state.sync_manager.trigger_sync_on_change(app_handle);
     result
+}
+
+#[tauri::command]
+pub fn clear_subscription_posts(
+    subscription_id: String,
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<u64, String> {
+    let subscription = state
+        .subscription_manager
+        .repository()
+        .get(&subscription_id)?
+        .ok_or_else(|| "Subscription not found".to_string())?;
+
+    let count = state.library.remove_creator_posts_from_stash(
+        Some(&subscription.destination_collection_id),
+        &subscription.service,
+        &subscription.creator_id,
+    )?;
+
+    state.sync_manager.trigger_sync_on_change(app_handle);
+    Ok(count)
+}
+
+#[tauri::command]
+pub fn count_subscription_posts(
+    subscription_id: String,
+    state: State<'_, AppState>,
+) -> Result<u64, String> {
+    let subscription = state
+        .subscription_manager
+        .repository()
+        .get(&subscription_id)?
+        .ok_or_else(|| "Subscription not found".to_string())?;
+
+    state.library.count_creator_posts_in_stash(
+        &subscription.destination_collection_id,
+        &subscription.service,
+        &subscription.creator_id,
+    )
 }
 
 #[tauri::command]
@@ -3200,7 +3258,7 @@ pub fn set_sync_enabled(
 }
 
 #[tauri::command]
-pub fn open_in_browser(url: String) -> Result<(), String> {
+pub async fn open_in_browser(url: String) -> Result<(), String> {
     let parsed = reqwest::Url::parse(&url).map_err(|error| error.to_string())?;
     if !matches!(parsed.scheme(), "http" | "https" | "ms-windows-store") {
         return Err("Only HTTP, HTTPS, and Store links can be opened".to_string());
@@ -3250,11 +3308,7 @@ pub fn open_in_browser(url: String) -> Result<(), String> {
     }
     #[cfg(target_os = "linux")]
     {
-        std::process::Command::new("xdg-open")
-            .arg(safe_url)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        crate::linux_open::open(safe_url).await
     }
     #[cfg(target_os = "android")]
     {
@@ -3314,7 +3368,7 @@ pub fn open_in_browser(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn open_downloads_folder(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn open_downloads_folder(state: State<'_, AppState>) -> Result<(), String> {
     let settings = state.config_manager.load()?;
     let folder = std::path::PathBuf::from(&settings.download_dir);
     let _ = std::fs::create_dir_all(&folder);
@@ -3340,11 +3394,7 @@ pub fn open_downloads_folder(state: State<'_, AppState>) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         let folder = std::fs::canonicalize(folder).map_err(|error| error.to_string())?;
-        std::process::Command::new("xdg-open")
-            .arg(&folder)
-            .spawn()
-            .map_err(|error| error.to_string())?;
-        Ok(())
+        crate::linux_open::open(folder).await
     }
     #[cfg(target_os = "android")]
     {
@@ -3376,7 +3426,7 @@ pub fn open_downloads_folder(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn open_download_file(file_path: String) -> Result<(), String> {
+pub async fn open_download_file(file_path: String) -> Result<(), String> {
     let path = std::path::PathBuf::from(&file_path);
     if !path.exists() {
         return Err("File not found on device".to_string());
@@ -3429,11 +3479,7 @@ pub fn open_download_file(file_path: String) -> Result<(), String> {
     }
     #[cfg(target_os = "linux")]
     {
-        std::process::Command::new("xdg-open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        crate::linux_open::open(path).await
     }
     #[cfg(target_os = "android")]
     {
@@ -3465,7 +3511,7 @@ pub fn open_download_file(file_path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn show_in_folder(path: String) -> Result<(), String> {
+pub async fn show_in_folder(path: String) -> Result<(), String> {
     let p = std::path::PathBuf::from(&path);
     if !p.exists() {
         return Err("Path not found on device".to_string());
@@ -3514,11 +3560,7 @@ pub fn show_in_folder(path: String) -> Result<(), String> {
         } else {
             path
         };
-        std::process::Command::new("xdg-open")
-            .arg(&folder)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {e}"))?;
-        Ok(())
+        crate::linux_open::open(folder).await
     }
     #[cfg(target_os = "android")]
     {
@@ -3996,7 +4038,7 @@ pub fn read_recent_logs(lines: Option<usize>) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn open_logs_folder() -> Result<(), String> {
+pub async fn open_logs_folder() -> Result<(), String> {
     let folder = crate::logging::logs_dir();
     let _ = std::fs::create_dir_all(&folder);
 
@@ -4021,11 +4063,7 @@ pub fn open_logs_folder() -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         let folder = std::fs::canonicalize(folder).map_err(|error| error.to_string())?;
-        std::process::Command::new("xdg-open")
-            .arg(&folder)
-            .spawn()
-            .map_err(|error| error.to_string())?;
-        Ok(())
+        crate::linux_open::open(folder).await
     }
     #[cfg(target_os = "android")]
     {

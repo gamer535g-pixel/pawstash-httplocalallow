@@ -14,6 +14,7 @@ pub struct Subscription {
     pub creator_id: String,
     pub creator_name: String,
     pub destination_collection_id: String,
+    pub save_to_library: bool,
     pub enabled: bool,
     pub initial_import: String,
     pub auto_download: bool,
@@ -25,12 +26,20 @@ pub struct Subscription {
     pub last_error: Option<String>,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubscriptionInput {
     pub service: String,
     pub creator_id: String,
     pub creator_name: String,
     pub destination_collection_id: Option<String>,
+    #[serde(default = "default_true")]
+    pub save_to_library: bool,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     pub initial_import: String,
     pub auto_download: bool,
     pub download_scope: String,
@@ -64,20 +73,21 @@ impl SubscriptionRepository {
             creator_id: row.get(2)?,
             creator_name: row.get(3)?,
             destination_collection_id: row.get(4)?,
-            enabled: row.get::<_, i64>(5)? != 0,
-            initial_import: row.get(6)?,
-            auto_download: row.get::<_, i64>(7)? != 0,
-            download_scope: row.get(8)?,
-            poll_interval_minutes: row.get::<_, i64>(9)?.max(0) as u32,
-            last_checked_at: row.get(10)?,
-            next_check_at: row.get(11)?,
-            failure_count: row.get::<_, i64>(12)?.max(0) as u32,
-            last_error: row.get(13)?,
+            save_to_library: row.get::<_, i64>(5)? != 0,
+            enabled: row.get::<_, i64>(6)? != 0,
+            initial_import: row.get(7)?,
+            auto_download: row.get::<_, i64>(8)? != 0,
+            download_scope: row.get(9)?,
+            poll_interval_minutes: row.get::<_, i64>(10)?.max(0) as u32,
+            last_checked_at: row.get(11)?,
+            next_check_at: row.get(12)?,
+            failure_count: row.get::<_, i64>(13)?.max(0) as u32,
+            last_error: row.get(14)?,
         })
     }
 
     const SELECT: &'static str = "SELECT id, service, creator_id, creator_name,
-        destination_collection_id, enabled, initial_import, auto_download, download_scope,
+        destination_collection_id, save_to_library, enabled, initial_import, auto_download, download_scope,
         poll_interval_minutes, last_checked_at, next_check_at, failure_count, last_error
         FROM subscriptions";
 
@@ -145,17 +155,20 @@ impl SubscriptionRepository {
         let id = exists.unwrap_or_else(|| Uuid::new_v4().to_string());
         connection.execute(
             "INSERT INTO subscriptions (id, service, creator_id, creator_name, destination_collection_id,
-                enabled, initial_import, auto_download, download_scope, poll_interval_minutes, next_check_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP)
+                save_to_library, enabled, initial_import, auto_download, download_scope, poll_interval_minutes, next_check_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
              ON CONFLICT(service, creator_id) DO UPDATE SET
                 creator_name = excluded.creator_name,
                 destination_collection_id = excluded.destination_collection_id,
-                enabled = 1, initial_import = excluded.initial_import,
-                auto_download = excluded.auto_download, download_scope = excluded.download_scope,
+                save_to_library = excluded.save_to_library,
+                enabled = excluded.enabled,
+                initial_import = excluded.initial_import,
+                auto_download = excluded.auto_download,
+                download_scope = excluded.download_scope,
                 poll_interval_minutes = excluded.poll_interval_minutes,
                 next_check_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP",
             params![id, input.service, input.creator_id, input.creator_name, collection,
-                input.initial_import, input.auto_download as i64, input.download_scope, interval],
+                input.save_to_library as i64, input.enabled as i64, input.initial_import, input.auto_download as i64, input.download_scope, interval],
         ).map_err(|e| e.to_string())?;
         Ok((
             self.get_locked(&connection, &id)?
@@ -268,6 +281,8 @@ mod tests {
             creator_id: "42".into(),
             creator_name: "Artist".into(),
             destination_collection_id: None,
+            save_to_library: true,
+            enabled: true,
             initial_import: "none".into(),
             auto_download: false,
             download_scope: "primary".into(),
@@ -303,5 +318,21 @@ mod tests {
             )
             .unwrap();
         assert_eq!(seen.len(), 1);
+    }
+
+    #[test]
+    fn upsert_updates_enabled_and_save_to_library() {
+        let repository = SubscriptionRepository::in_memory();
+        let (first, _) = repository.upsert(&input()).unwrap();
+        assert!(first.enabled);
+        assert!(first.save_to_library);
+
+        let mut updated_input = input();
+        updated_input.enabled = false;
+        updated_input.save_to_library = false;
+        let (second, _) = repository.upsert(&updated_input).unwrap();
+        assert_eq!(first.id, second.id);
+        assert!(!second.enabled);
+        assert!(!second.save_to_library);
     }
 }

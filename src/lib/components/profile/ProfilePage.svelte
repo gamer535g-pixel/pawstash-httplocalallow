@@ -22,7 +22,6 @@
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconLaptop from '~icons/fluent/laptop-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
-  import { invoke } from '@tauri-apps/api/core';
   import { notify } from '$lib/utils/toast';
   import { apiTestSyncConnection, apiReadRecentLogs } from '$lib/utils/ipc';
 
@@ -50,14 +49,6 @@
 
   let testingConnection = $state(false);
   let copyingLogs = $state(false);
-
-  async function openExternalUrl(url: string) {
-    try {
-      await invoke('open_in_browser', { url });
-    } catch {
-      window.open(url, '_blank');
-    }
-  }
 
   function generateRandomId(): string {
     const chars = 'abcdef0123456789';

@@ -259,7 +259,8 @@ impl DownloadManager {
         let temp_dir = {
             #[cfg(target_os = "android")]
             {
-                std::env::temp_dir().join("pawstash_temp")
+                // temp_dir() is /data/local/tmp before Android 13, which the app can't write.
+                crate::db::storage::android_cache_dir().join("pawstash_temp")
             }
             #[cfg(not(target_os = "android"))]
             {
@@ -504,6 +505,7 @@ impl DownloadManager {
         #[cfg(target_os = "android")]
         {
             let pkg = crate::db::storage::android_package_name();
+            let external = crate::db::storage::android_external_storage();
             let preferred_trimmed = preferred.trim();
             let mut candidates = Vec::new();
 
@@ -512,23 +514,14 @@ impl DownloadManager {
                 if p.is_absolute() {
                     candidates.push(p);
                 } else {
-                    candidates.push(PathBuf::from(format!(
-                        "/storage/emulated/0/{preferred_trimmed}"
-                    )));
+                    candidates.push(external.join(preferred_trimmed));
                 }
             }
 
-            candidates.push(PathBuf::from("/storage/emulated/0/Download/Pawstash"));
-            candidates.push(PathBuf::from("/storage/emulated/0/Download"));
-            candidates.push(PathBuf::from(format!(
-                "/storage/emulated/0/Android/data/{pkg}/files/Download",
-            )));
-            candidates.push(PathBuf::from(format!(
-                "/data/user/0/{pkg}/files/Pawstash/Downloads"
-            )));
-            candidates.push(PathBuf::from(format!(
-                "/data/data/{pkg}/files/Pawstash/Downloads"
-            )));
+            candidates.push(crate::db::storage::android_default_download_dir());
+            candidates.push(external.join("Download"));
+            candidates.push(external.join(format!("Android/data/{pkg}/files/Download")));
+            candidates.push(crate::db::storage::data_root().join("Downloads"));
 
             for (idx, candidate) in candidates.iter().enumerate() {
                 if candidate.as_os_str().is_empty() {
@@ -843,16 +836,25 @@ impl DownloadManager {
         let mut blob_stored = false;
         #[cfg(not(target_os = "android"))]
         {
-            if let Ok(root) = Self::ensure_download_root(&settings.download_dir) {
-                let blob_path = root.join(&relative_blob);
-                if let Some(parent) = blob_path.parent() {
-                    let _ = tokio::fs::create_dir_all(parent).await;
+            // Hard link only: a copy would double disk usage.
+            let blob_path = Path::new(&job.output_dir).join(&relative_blob);
+            if blob_path.exists() {
+                blob_stored = true;
+            } else {
+                let linked: std::io::Result<()> = async {
+                    if let Some(parent) = blob_path.parent() {
+                        tokio::fs::create_dir_all(parent).await?;
+                    }
+                    tokio::fs::hard_link(final_path, &blob_path).await
                 }
-                if blob_path.exists()
-                    || tokio::fs::hard_link(final_path, &blob_path).await.is_ok()
-                    || tokio::fs::copy(final_path, &blob_path).await.is_ok()
-                {
-                    blob_stored = true;
+                .await;
+                match linked {
+                    Ok(()) => blob_stored = true,
+                    Err(error) => tracing::debug!(
+                        "Skipping content blob for download {id}: cannot hard link {} -> {}: {error}",
+                        final_path.display(),
+                        blob_path.display()
+                    ),
                 }
             }
         }

@@ -20,7 +20,7 @@
     apiFetchCreatorTags,
     apiFetchAnnouncements,
     apiFetchFancards,
-    apiOpenInBrowser,
+    openExternalUrl,
     apiResolveCreatorUrl,
     apiSetCreatorFavorite,
     apiSetPostFavorite
@@ -35,13 +35,12 @@
     formatProviderName,
     getPlatformProfileUrl,
     getPostDownloadTargets,
-    getPostFormats
+    matchesPostFormatFilter
   } from '$lib/utils/media';
   import { extraField } from '$lib/utils/fields';
   import { seedFromImageUrl, seedFromThumbHash } from '$lib/theme/seedColor';
   import { parseTags, getPostTags, formatDate, formatBytes, parseDateTimestamp, cleanPostTitle } from '$lib/utils/formatters';
   import { logger } from '$lib/utils/logger';
-  import type { DownloadScope, InitialImport } from '$lib/types/subscription';
   import type { Post, CreatorProfile, Announcement, Fancard } from '$lib/types/content';
   import type { FilterMap } from '$lib/types/filter';
   import { countActiveFilters, matchesTriStateFilter, toggleFilterKey } from '$lib/types/filter';
@@ -60,7 +59,7 @@
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import Checkbox from '$lib/components/ui/Checkbox.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import { ripple } from '$lib/motion';
   import { selectionState } from '$lib/state/selectionState.svelte';
@@ -79,6 +78,7 @@
   import IconCheckboxChecked from '~icons/fluent/checkbox-checked-24-regular';
   import IconFolder from '~icons/fluent/folder-24-regular';
   import IconArrowDownload from '~icons/fluent/arrow-download-24-regular';
+  import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconBookmarkAdd from '~icons/fluent/bookmark-add-24-regular';
   import IconOptions from '~icons/fluent/options-24-regular';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
@@ -96,7 +96,6 @@
   import IconNews from '~icons/fluent/news-24-regular';
   import IconCard from '~icons/fluent/payment-24-regular';
   import IconClock from '~icons/fluent/clock-24-regular';
-  import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconImageOff from '~icons/fluent/image-off-24-regular';
   import IconSparkle from '~icons/fluent/sparkle-24-regular';
   import IconWarning from '~icons/fluent/warning-24-regular';
@@ -189,13 +188,6 @@
   let canonicalProfile = $derived(autoEntry?.profile ?? contentState.creators[creatorCacheKey(service, creatorId)]?.profile ?? null);
   let profile = $derived(entry.profile ?? canonicalProfile ?? null);
   let subscription = $derived(subscriptionState.forCreator(service, creatorId));
-  let subscriptionMenuOpen = $state(false);
-  let saving = $state(false);
-  let destination = $state('00000000-0000-0000-0000-000000000001');
-  let initialImport = $state<InitialImport>('none');
-  let autoDownload = $state(false);
-  let downloadScope = $state<DownloadScope>('primary');
-  let interval = $state(30);
   let authenticated = $derived(accountState.session.authenticated);
   let isFavorited = $state(false);
   let favoritingPending = $state(false);
@@ -228,7 +220,6 @@
   let filtersOpen = $state(false);
   let stickyFiltersOpen = $state(false);
   let mobileMoreOpen = $state(false);
-  let mobileSubSettingsOpen = $state(false);
   let activeFilterCount = $derived(
     countActiveFilters([formatFilters, providerFilters]) + (onlyWithAttachments ? 1 : 0)
   );
@@ -446,7 +437,7 @@
     }
 
     if (Object.keys(formatFilters).length > 0) {
-      posts = posts.filter((post) => matchesTriStateFilter(getPostFormats(post), formatFilters));
+      posts = posts.filter((post) => matchesPostFormatFilter(post, formatFilters));
     }
 
     if (Object.keys(providerFilters).length > 0) {
@@ -891,74 +882,7 @@
     }
   }
 
-  function initEditorFields() {
-    if (subscription) {
-      destination = subscription.destination_collection_id;
-      initialImport = subscription.initial_import;
-      autoDownload = subscription.auto_download;
-      downloadScope = subscription.download_scope;
-      interval = subscription.poll_interval_minutes;
-    }
-  }
 
-  async function subscribeDefault() {
-    saving = true;
-    try {
-      await subscriptionState.save({
-        service,
-        creator_id: creatorId,
-        creator_name: creatorName,
-        destination_collection_id: '00000000-0000-0000-0000-000000000001',
-        initial_import: 'none',
-        auto_download: false,
-        download_scope: 'primary',
-        poll_interval_minutes: 30
-      });
-      notify.success(i18n.t('subscriptions.saved'), creatorName);
-    } catch (error) {
-      notify.error(i18n.t('subscriptions.action_error'), error);
-    } finally {
-      saving = false;
-    }
-  }
-
-  async function saveSubscription() {
-    saving = true;
-    try {
-      await subscriptionState.save({
-        service,
-        creator_id: creatorId,
-        creator_name: creatorName,
-        destination_collection_id: destination,
-        initial_import: initialImport,
-        auto_download: autoDownload,
-        download_scope: downloadScope,
-        poll_interval_minutes: interval
-      });
-      subscriptionMenuOpen = false;
-      mobileSubSettingsOpen = false;
-      notify.success(i18n.t('subscriptions.saved'), creatorName);
-    } catch (error) {
-      notify.error(i18n.t('subscriptions.action_error'), error);
-    } finally {
-      saving = false;
-    }
-  }
-
-  async function unsubscribe() {
-    if (!subscription) return;
-    saving = true;
-    try {
-      await subscriptionState.remove(subscription.id);
-      subscriptionMenuOpen = false;
-      mobileSubSettingsOpen = false;
-      notify.success(i18n.t('subscriptions.removed'), { description: creatorName, glyph: 'removed' });
-    } catch (error) {
-      notify.error(i18n.t('subscriptions.action_error'), error);
-    } finally {
-      saving = false;
-    }
-  }
 
   async function handleLoadMore() {
     if (normalizedPostSearch.length >= 2) {
@@ -986,19 +910,22 @@
     const effectiveProvId = targetProvId || (activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined);
     const pageUrl = typeof profile?.page_url === 'string' ? profile.page_url : undefined;
     if (!effectiveProvId && pageUrl) {
-      void apiOpenInBrowser(pageUrl).catch((err) => logger.warn('Failed to open creator in provider', err));
+      void openExternalUrl(pageUrl);
       return;
     }
     void apiResolveCreatorUrl(service, creatorId, effectiveProvId)
       .then((url) => {
-        if (url) void apiOpenInBrowser(url);
+        if (url) void openExternalUrl(url);
       })
-      .catch((err) => logger.warn('Failed to resolve creator URL in provider', err));
+      .catch((err) => {
+        logger.warn('Failed to resolve creator URL in provider', err);
+        notify.error(i18n.t('common.open_link_failed'), err);
+      });
   }
 
   function openOriginalProfile() {
     const url = getPlatformProfileUrl(service, creatorId, profile?.public_id);
-    if (url) void apiOpenInBrowser(url).catch((err) => logger.warn('Failed to open creator original profile', err));
+    if (url) void openExternalUrl(url);
   }
 
   function openInBrowser() {
@@ -1146,130 +1073,29 @@
   }
 </script>
 
-{#snippet subscriptionEditorFields()}
-  <div class="sub-form flex flex-col gap-4">
-    <div class="field-group">
-      <div class="field-label text-xs font-semibold text-[var(--fg-muted)] mb-1">
-        {i18n.t('subscriptions.destination')}
-      </div>
-      <Select
-        options={stashOptions}
-        value={destination}
-        onchange={(v) => destination = v}
-      />
-    </div>
-
-    <div class="field-group">
-      <div class="field-label text-xs font-semibold text-[var(--fg-muted)] mb-1">
-        {i18n.t('subscriptions.initial_import')}
-      </div>
-      <Select
-        options={[
-          { value: 'none', label: i18n.t('subscriptions.import_none') },
-          { value: 'latest50', label: i18n.t('subscriptions.import_latest') },
-          { value: 'all', label: i18n.t('subscriptions.import_all') }
-        ]}
-        value={initialImport}
-        onchange={(v) => initialImport = v as InitialImport}
-      />
-    </div>
-
-    <div class="field-group flex items-center justify-between">
-      <span class="text-xs font-semibold text-[var(--fg-default)]">{i18n.t('subscriptions.auto_download')}</span>
-      <Checkbox checked={autoDownload} onchange={(v) => autoDownload = v} />
-    </div>
-
-    {#if autoDownload}
-      <div class="field-group">
-        <div class="field-label text-xs font-semibold text-[var(--fg-muted)] mb-1">
-          {i18n.t('subscriptions.download_scope')}
-        </div>
-        <Select
-          options={[
-            { value: 'primary', label: i18n.t('subscriptions.primary_file') },
-            { value: 'all', label: i18n.t('subscriptions.all_files') }
-          ]}
-          value={downloadScope}
-          onchange={(v) => downloadScope = v as DownloadScope}
-        />
-      </div>
-    {/if}
-
-    <div class="field-group">
-      <div class="field-label text-xs font-semibold text-[var(--fg-muted)] mb-1">
-        {i18n.t('subscriptions.interval')}
-      </div>
-      <Input
-        type="text"
-        value={String(interval)}
-        oninput={(e) => {
-          const val = Number((e.target as HTMLInputElement).value);
-          if (!isNaN(val) && val > 0) interval = val;
-        }}
-      >
-        {#snippet right()}
-          <span class="text-xs font-medium text-[var(--fg-muted)] select-none pr-1.5 pointer-events-none">
-            {i18n.t('subscriptions.minutes_unit')}
-          </span>
-        {/snippet}
-      </Input>
-    </div>
-
-    <div class="flex items-center gap-2.5 mt-3 pt-3 border-t border-[var(--border-color)]">
-      {#if subscription}
-        <Button variant="danger" size="base" class="flex-1" onclick={unsubscribe} disabled={saving}>
-          {i18n.t('subscriptions.unsubscribe') || i18n.t('selection.unsubscribe')}
-        </Button>
-      {/if}
-      <Button variant="accent" size="base" class="flex-1" onclick={saveSubscription} disabled={saving}>
-        {i18n.t('subscriptions.save')}
-      </Button>
-    </div>
-  </div>
-{/snippet}
-
 {#snippet subscriptionControl()}
-  {#if !subscription}
-    <Button
-      variant="ghost"
-      onclick={subscribeDefault}
-      disabled={saving}
-      class="action-btn"
-      title={i18n.t('subscriptions.subscribe')}
-      aria-label={i18n.t('subscriptions.subscribe')}
-    >
+  <Button
+    variant={subscription ? 'accent' : 'ghost'}
+    onclick={() => subscriptionState.openDialog({ service, creatorId, creatorName })}
+    class="action-btn"
+    title={i18n.t(subscription ? 'subscriptions.subscription' : 'subscriptions.subscribe')}
+    aria-label={i18n.t(subscription ? 'subscriptions.subscription' : 'subscriptions.subscribe')}
+  >
+    {#if subscription}
+      <IconSettings class="w-[18px] h-[18px]" />
+    {:else}
       <IconAdd class="w-[18px] h-[18px]" />
-      <span class="btn-text">{i18n.t('subscriptions.subscribe')}</span>
-    </Button>
-  {:else}
-    <PopoverMenu
-      bind:open={subscriptionMenuOpen}
-      title={i18n.t('subscriptions.subscription')}
-      width="340px"
-    >
-      {#snippet trigger()}
-        <Button
-          variant="accent"
-          onclick={() => { initEditorFields(); subscriptionMenuOpen = !subscriptionMenuOpen; }}
-          class="action-btn"
-          title={i18n.t('subscriptions.subscription')}
-          aria-label={i18n.t('subscriptions.subscription')}
-        >
-          <IconSettings class="w-[18px] h-[18px]" />
-          <span class="btn-text">{i18n.t('subscriptions.subscription')}</span>
-        </Button>
-      {/snippet}
-
-      <div class="subscription-popover-form">
-        {@render subscriptionEditorFields()}
-      </div>
-    </PopoverMenu>
-  {/if}
+    {/if}
+    <span class="btn-text">{i18n.t(subscription ? 'subscriptions.subscription' : 'subscriptions.subscribe')}</span>
+  </Button>
 {/snippet}
 
 {#snippet filterInnerContent()}
   {#if candidateProviders.length > 1}
-    <span class="filter-label">{i18n.t('providers.title')}</span>
+    <div class="filter-section-title">
+      <div class="filter-section-icon"><IconGlobe class="w-3.5 h-3.5" /></div>
+      <span>{i18n.t('providers.title')}</span>
+    </div>
     <div class="service-options">
       {#each candidateProviders as provider}
         {@const state = providerFilters[provider.id] ?? 'neutral'}
@@ -1289,10 +1115,12 @@
         </Button>
       {/each}
     </div>
-    <div class="floating-divider"></div>
   {/if}
 
-  <span class="filter-label">{i18n.t('feed.format')}</span>
+  <div class="filter-section-title">
+    <div class="filter-section-icon"><IconDocument class="w-3.5 h-3.5" /></div>
+    <span>{i18n.t('feed.format')}</span>
+  </div>
   <div class="service-options">
     {#each formatList as fmt}
       {@const state = formatFilters[fmt.id] ?? 'neutral'}
@@ -1314,26 +1142,38 @@
     {/each}
   </div>
 
-  <div class="floating-divider"></div>
-
-  <span class="filter-label section-label">{i18n.t('feed.filters')}</span>
-  <button
-    type="button"
-    class="view-option"
-    class:active={onlyWithAttachments}
-    use:ripple
-    onclick={() => onlyWithAttachments = !onlyWithAttachments}
-  >
-    <Checkbox
-      checked={onlyWithAttachments}
-      onchange={(v) => onlyWithAttachments = v}
-    />
-    <span>
-      <strong>{i18n.t('feed.with_attachments')}</strong>
-      <small>{i18n.t('feed.with_attachments_desc')}</small>
-    </span>
-    <IconDocument class="view-option-icon" />
-  </button>
+  <div class="filter-section-title">
+    <div class="filter-section-icon"><IconOptions class="w-3.5 h-3.5" /></div>
+    <span>{i18n.t('feed.filters')}</span>
+  </div>
+  <div class="settings-list">
+    <div
+      role="switch"
+      aria-checked={onlyWithAttachments}
+      tabindex="0"
+      class="view-option"
+      class:active={onlyWithAttachments}
+      use:ripple
+      onclick={() => (onlyWithAttachments = !onlyWithAttachments)}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onlyWithAttachments = !onlyWithAttachments;
+        }
+      }}
+    >
+      <IconDocument class="view-option-icon" />
+      <span>
+        <strong>{i18n.t('feed.with_attachments')}</strong>
+        <small>{i18n.t('feed.with_attachments_desc')}</small>
+      </span>
+      <Toggle
+        checked={onlyWithAttachments}
+        tabindex={-1}
+        class="pointer-events-none"
+      />
+    </div>
+  </div>
 {/snippet}
 
 <PageShell scrollable={true} scrollKey={navigationState.entryKey} onrefresh={refreshCreator}>
@@ -1503,28 +1343,19 @@
             {/if}
           </Button>
 
-          {#if !subscription}
-            <Button
-              variant="ghost"
-              onclick={subscribeDefault}
-              disabled={saving}
-              class="action-btn btn-icon"
-              title={i18n.t('subscriptions.subscribe')}
-              aria-label={i18n.t('subscriptions.subscribe')}
-            >
-              <IconAdd class="w-5 h-5" />
-            </Button>
-          {:else}
-            <Button
-              variant="accent"
-              onclick={() => { initEditorFields(); mobileSubSettingsOpen = true; }}
-              class="action-btn btn-icon"
-              title={i18n.t('subscriptions.subscription')}
-              aria-label={i18n.t('subscriptions.subscription')}
-            >
+          <Button
+            variant={subscription ? 'accent' : 'ghost'}
+            onclick={() => subscriptionState.openDialog({ service, creatorId, creatorName })}
+            class="action-btn btn-icon"
+            title={i18n.t(subscription ? 'subscriptions.subscription' : 'subscriptions.subscribe')}
+            aria-label={i18n.t(subscription ? 'subscriptions.subscription' : 'subscriptions.subscribe')}
+          >
+            {#if subscription}
               <IconSettings class="w-5 h-5" />
-            </Button>
-          {/if}
+            {:else}
+              <IconAdd class="w-5 h-5" />
+            {/if}
+          </Button>
         </div>
 
         <div class="right-actions flex items-center gap-2 ml-auto">
@@ -2179,40 +2010,26 @@
         </div>
       </button>
 
-      {#if subscription}
-        <button
-          type="button"
-          class="sheet-action-item"
-          use:ripple
-          onclick={() => {
-            mobileMoreOpen = false;
-            initEditorFields();
-            mobileSubSettingsOpen = true;
-          }}
-        >
+      <button
+        type="button"
+        class="sheet-action-item"
+        use:ripple
+        onclick={() => {
+          mobileMoreOpen = false;
+          subscriptionState.openDialog({ service, creatorId, creatorName });
+        }}
+      >
+        {#if subscription}
           <IconSettings class="text-secondary" />
-          <div class="flex flex-col min-w-0">
-            <span class="text-sm font-semibold text-primary">{i18n.t('subscriptions.subscription')}</span>
-            <span class="text-xs text-[var(--fg-muted)]">{i18n.t('subscriptions.destination')}: {stashes.find(s => s.id === subscription?.destination_collection_id)?.name || 'Default'}</span>
-          </div>
-        </button>
-      {:else}
-        <button
-          type="button"
-          class="sheet-action-item"
-          disabled={saving}
-          use:ripple
-          onclick={() => {
-            mobileMoreOpen = false;
-            void subscribeDefault();
-          }}
-        >
+        {:else}
           <IconAdd class="text-accent" />
-          <div class="flex flex-col min-w-0">
-            <span class="text-sm font-semibold text-primary">{i18n.t('subscriptions.subscribe')}</span>
-          </div>
-        </button>
-      {/if}
+        {/if}
+        <div class="flex flex-col min-w-0">
+          <span class="text-sm font-semibold text-primary">
+            {i18n.t(subscription ? 'subscriptions.subscription' : 'subscriptions.subscribe')}
+          </span>
+        </div>
+      </button>
 
       <button
         type="button"
@@ -2299,13 +2116,7 @@
     </div>
   </BottomSheet>
 
-  <BottomSheet
-    open={mobileSubSettingsOpen}
-    title={i18n.t('subscriptions.subscription')}
-    onclose={() => (mobileSubSettingsOpen = false)}
-  >
-    {@render subscriptionEditorFields()}
-  </BottomSheet>
+
 {/if}
 
 <style>
@@ -2767,9 +2578,4 @@
     font-size: 14px;
   }
 
-
-  .subscription-popover-form {
-    padding: 8px 10px 6px;
-    box-sizing: border-box;
-  }
 </style>

@@ -210,6 +210,7 @@ pub fn init_logging() {
         version = env!("CARGO_PKG_VERSION"),
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
+        data_root = %data_root().display(),
         "Pawstash initialized"
     );
 }

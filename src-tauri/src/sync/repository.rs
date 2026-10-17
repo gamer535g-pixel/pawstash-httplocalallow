@@ -67,6 +67,10 @@ pub struct MembershipRecord {
     pub added_at: String,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SubscriptionRecord {
     pub id: String,
@@ -74,6 +78,8 @@ pub struct SubscriptionRecord {
     pub creator_id: String,
     pub creator_name: String,
     pub destination_collection_id: String,
+    #[serde(default = "default_true")]
+    pub save_to_library: bool,
     pub enabled: bool,
     pub initial_import: String,
     pub auto_download: bool,
@@ -527,7 +533,7 @@ impl SyncRepository {
 
         let subscriptions = collect(
             &tx,
-            "SELECT id,service,creator_id,creator_name,destination_collection_id,enabled,initial_import,auto_download,download_scope,poll_interval_minutes,created_at,updated_at FROM subscriptions",
+            "SELECT id,service,creator_id,creator_name,destination_collection_id,save_to_library,enabled,initial_import,auto_download,download_scope,poll_interval_minutes,created_at,updated_at FROM subscriptions",
             |r| {
                 Ok(SubscriptionRecord {
                     id: r.get(0)?,
@@ -535,13 +541,14 @@ impl SyncRepository {
                     creator_id: r.get(2)?,
                     creator_name: r.get(3)?,
                     destination_collection_id: r.get(4)?,
-                    enabled: r.get::<_, i64>(5)? != 0,
-                    initial_import: r.get(6)?,
-                    auto_download: r.get::<_, i64>(7)? != 0,
-                    download_scope: r.get(8)?,
-                    poll_interval_minutes: r.get(9)?,
-                    created_at: r.get(10)?,
-                    updated_at: r.get(11)?,
+                    save_to_library: r.get::<_, i64>(5)? != 0,
+                    enabled: r.get::<_, i64>(6)? != 0,
+                    initial_import: r.get(7)?,
+                    auto_download: r.get::<_, i64>(8)? != 0,
+                    download_scope: r.get(9)?,
+                    poll_interval_minutes: r.get(10)?,
+                    created_at: r.get(11)?,
+                    updated_at: r.get(12)?,
                 })
             },
         )?;
@@ -1152,10 +1159,11 @@ impl SyncRepository {
                 )
                 .map_err(|e| format!("Failed to ensure collection for subscription ({record_id}): {e}"))?;
                 tx.execute(
-                    "INSERT INTO subscriptions(id,service,creator_id,creator_name,destination_collection_id,enabled,initial_import,auto_download,download_scope,poll_interval_minutes,next_check_at,created_at,updated_at)
-                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,CURRENT_TIMESTAMP,?11,?12)
+                    "INSERT INTO subscriptions(id,service,creator_id,creator_name,destination_collection_id,save_to_library,enabled,initial_import,auto_download,download_scope,poll_interval_minutes,next_check_at,created_at,updated_at)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,CURRENT_TIMESTAMP,?12,?13)
                      ON CONFLICT(service,creator_id) DO UPDATE SET
                        destination_collection_id=excluded.destination_collection_id,
+                       save_to_library=excluded.save_to_library,
                        enabled=excluded.enabled, initial_import=excluded.initial_import,
                        auto_download=excluded.auto_download, download_scope=excluded.download_scope,
                        poll_interval_minutes=excluded.poll_interval_minutes, updated_at=excluded.updated_at
@@ -1166,6 +1174,7 @@ impl SyncRepository {
                         rec.creator_id,
                         rec.creator_name,
                         rec.destination_collection_id,
+                        rec.save_to_library as i64,
                         rec.enabled as i64,
                         rec.initial_import,
                         rec.auto_download as i64,
@@ -1177,31 +1186,8 @@ impl SyncRepository {
                 )
                 .map_err(|e| format!("Failed to insert/update subscription ({record_id}): {e}"))?;
             }
-            "session" => {
-                let config_mgr = crate::config::settings::ConfigManager::new()
-                    .map_err(|e| format!("Failed to load config manager: {e}"))?;
-                let settings = config_mgr
-                    .load()
-                    .map_err(|e| format!("Failed to load settings: {e}"))?;
-                if settings.sync_pawchive_session {
-                    let rec = serde_json::from_slice::<PawchiveSessionRecord>(bytes)
-                        .map_err(|e| format!("Failed to parse session record: {e}"))?;
-                    if !rec.session_cookie.is_empty() {
-                        crate::sync::secrets::SecretStore::save_named(
-                            "pawchive-session",
-                            rec.session_cookie.as_bytes(),
-                        )
-                        .map_err(|e| format!("Failed to save synced session secret: {e}"))?;
-                        if !rec.username.is_empty() && settings.pawchive_username != rec.username {
-                            let mut updated = settings;
-                            updated.pawchive_username = rec.username;
-                            config_mgr
-                                .save(&updated)
-                                .map_err(|e| format!("Failed to update settings: {e}"))?;
-                        }
-                    }
-                }
-            }
+            // Applied by SyncManager after commit; opening settings here deadlocks on this transaction.
+            "session" => {}
             "fav_post" => {
                 let rec: FavoritePostRecord = serde_json::from_slice(bytes).map_err(|e| {
                     format!("Failed to deserialize fav_post record ({record_id}): {e}")
@@ -1575,6 +1561,7 @@ mod tests {
             creator_id: "creator_future".into(),
             creator_name: "Future Creator".into(),
             destination_collection_id: "col_sub_dest".into(),
+            save_to_library: true,
             enabled: true,
             initial_import: "none".into(),
             auto_download: false,
