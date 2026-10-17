@@ -111,7 +111,7 @@
       }
       notify.success(
         i18n.t('selection.save_to_library'),
-        `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
+        i18n.t('counts.posts', { count: items.length })
       );
       selectionState.exit();
     } catch (err) {
@@ -126,7 +126,7 @@
       const count = await downloadState.downloadPosts(items);
       notify.success(
         i18n.t('selection.download_all'),
-        `${count} ${count === 1 ? 'file' : 'files'}`
+        i18n.t('counts.files', { count: count })
       );
       selectionState.exit();
     } catch (err) {
@@ -142,8 +142,8 @@
         await apiSetPostFavorite(post.service, post.user, post.id, isFav);
       }
       notify.success(
-        i18n.t(isFav ? 'selection.favorite' : 'selection.unfavorite') || 'Updated favorites',
-        `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
+        i18n.t(isFav ? 'selection.favorite' : 'selection.unfavorite'),
+        i18n.t('counts.posts', { count: items.length })
       );
       await accountState.fetchFavorites('post');
       selectionState.exit();
@@ -260,7 +260,7 @@
 
     for (const p of periods) {
       if (!['day', 'week', 'month', 'recent', 'all'].includes(p.id)) {
-        options.push({ value: `${p.id}:all`, label: i18n.t(p.label_key) || p.id });
+        options.push({ value: `${p.id}:all`, label: i18n.has(p.label_key) ? i18n.t(p.label_key) : p.id });
       }
     }
 
@@ -322,7 +322,7 @@
   let currentPeriodLabel = $derived.by(() => {
     const curVal = getSelectedOptionValue();
     const opt = popularSelectOptions.find((o) => o.value === curVal);
-    return opt?.label ?? (i18n.t('feed.today'));
+    return opt?.label ?? i18n.t('feed.today');
   });
 
   let feedModeOptions = $derived.by<ChoiceOption<FeedMode>[]>(() => {
@@ -747,8 +747,8 @@
       onLoadMore={() => feedState.loadMore()}
       stateKey={`${feedState.isSearchActive ? `feed:search:${feedState.searchQuery.trim()}` : (feedState.mode === 'recent' ? 'feed:recent' : `feed:popular:${feedState.popularPeriod}:${feedState.popularDate}`)}:services=${JSON.stringify(feedState.serviceFilters)}:formats=${JSON.stringify(feedState.formatFilters)}:attachments=${feedState.onlyWithAttachments}:favs=${feedState.favoritesOnly}`}
       paginationKey={`${feedState.mode}:${feedState.isSearchActive ? `search:${feedState.searchQuery.trim()}` : feedState.popularPeriod}:${feedState.popularDate}:${feedState.posts.length}`}
-      emptyTitle={feedState.isSearchActive ? (i18n.t('favorites.no_results')) : (i18n.t('feed.empty'))}
-      emptyDescription={feedState.isSearchActive ? (i18n.t('favorites.no_results_desc')) : (i18n.t('feed.empty_desc'))}
+      emptyTitle={feedState.isSearchActive ? i18n.t('favorites.no_results') : i18n.t('feed.empty')}
+      emptyDescription={feedState.isSearchActive ? i18n.t('favorites.no_results_desc') : i18n.t('feed.empty_desc')}
     />
     {#if feedState.error}
       <p class="mt-5 text-center text-xs text-red-300/80">{feedState.error}</p>
@@ -844,7 +844,7 @@
       >
         <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit')) : (i18n.t('selection.select_mode'))}</span>
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? i18n.t('selection.exit') : i18n.t('selection.select_mode')}</span>
         </div>
       </button>
 

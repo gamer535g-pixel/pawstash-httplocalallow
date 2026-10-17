@@ -9,6 +9,8 @@ const __dirname = path.dirname(__filename);
 const ROOT_DIR = path.resolve(__dirname, '..');
 const LOCALES_DIR = path.join(ROOT_DIR, 'src', 'lib', 'i18n', 'locales');
 const SRC_DIR = path.join(ROOT_DIR, 'src');
+const RUST_DIR = path.join(ROOT_DIR, 'src-tauri', 'src');
+const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other']);
 
 const args = process.argv.slice(2);
 const isStrict = args.includes('--strict');
@@ -27,11 +29,19 @@ const c = {
   gray: '\x1b[90m',
 };
 
+function isPluralForms(val) {
+  if (val === null || typeof val !== 'object' || Array.isArray(val)) return false;
+  const keys = Object.keys(val);
+  return keys.includes('other') && keys.every((k) => PLURAL_CATEGORIES.has(k) && typeof val[k] === 'string');
+}
+
 function flattenObject(obj, prefix = '') {
   const result = {};
   for (const [key, val] of Object.entries(obj)) {
     const fullPath = prefix ? `${prefix}.${key}` : key;
-    if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
+    if (isPluralForms(val)) {
+      result[fullPath] = val;
+    } else if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
       Object.assign(result, flattenObject(val, fullPath));
     } else {
       result[fullPath] = val;
@@ -40,10 +50,22 @@ function flattenObject(obj, prefix = '') {
   return result;
 }
 
-function extractPlaceholders(str) {
-  if (typeof str !== 'string') return [];
-  const matches = str.match(/\{([a-zA-Z0-9_]+)\}/g);
-  return matches ? matches.map(m => m.slice(1, -1)).sort() : [];
+function messageStrings(val) {
+  return typeof val === 'string' ? [val] : Object.values(val);
+}
+
+function extractPlaceholders(val) {
+  const names = new Set();
+  for (const str of messageStrings(val)) {
+    for (const m of str.matchAll(/\{([a-zA-Z0-9_]+)\}/g)) names.add(m[1]);
+  }
+  return [...names].sort();
+}
+
+function missingPluralForms(localeName, val) {
+  if (!isPluralForms(val)) return [];
+  const required = new Intl.PluralRules(localeName).resolvedOptions().pluralCategories;
+  return required.filter((category) => !(category in val));
 }
 
 function findSourceFiles(dir, extensions = ['.svelte', '.ts', '.js']) {
@@ -92,6 +114,27 @@ function extractKeysFromCode(files) {
   return codeKeys;
 }
 
+// Keys also arrive as plain strings (`labelKey`, backend `label_key`), not only through t().
+function collectKeyLiterals(files) {
+  const literals = new Map();
+  const prefixes = new Set();
+  for (const file of files) {
+    const content = fs.readFileSync(file, 'utf8');
+    const relPath = path.relative(ROOT_DIR, file).replace(/\\/g, '/');
+    const literalRegex = file.endsWith('.rs')
+      ? /_key:\s*(?:Some\()?"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)"/g
+      : /['"`]([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)['"`]/g;
+    for (const m of content.matchAll(literalRegex)) {
+      if (!literals.has(m[1])) literals.set(m[1], new Set());
+      literals.get(m[1]).add(relPath);
+    }
+    for (const m of content.matchAll(/['"`]([a-z][a-z0-9_]*\.[a-z0-9_.]*)(?:\$\{|['"]\s*\+)/g)) {
+      prefixes.add(m[1]);
+    }
+  }
+  return { literals, prefixes };
+}
+
 function runCheck() {
   if (!fs.existsSync(LOCALES_DIR)) {
     console.error(`Locales directory not found: ${LOCALES_DIR}`);
@@ -126,11 +169,19 @@ function runCheck() {
   }
 
   const allKeys = Array.from(allKeysSet).sort();
+  const namespaces = new Set(allKeys.map((k) => k.split('.')[0]));
   const sourceFiles = findSourceFiles(SRC_DIR);
   const codeKeysMap = extractKeysFromCode(sourceFiles);
+  const { literals, prefixes } = collectKeyLiterals([...sourceFiles, ...findSourceFiles(RUST_DIR, ['.rs'])]);
+  for (const [literal, refs] of literals) {
+    if (namespaces.has(literal.split('.')[0]) && !codeKeysMap.has(literal)) {
+      codeKeysMap.set(literal, refs);
+    }
+  }
 
   const missingInLocale = {};
   const emptyInLocale = {};
+  const missingPluralForm = [];
   const placeholderMismatches = [];
 
   for (const localeName of Object.keys(locales)) {
@@ -141,11 +192,14 @@ function runCheck() {
     for (const key of allKeys) {
       if (!(key in flat)) {
         missingInLocale[localeName].push(key);
-      } else {
-        const val = flat[key];
-        if (typeof val === 'string' && val.trim() === '') {
-          emptyInLocale[localeName].push(key);
-        }
+        continue;
+      }
+      const val = flat[key];
+      if (messageStrings(val).some((str) => str.trim() === '')) {
+        emptyInLocale[localeName].push(key);
+      }
+      for (const category of missingPluralForms(localeName, val)) {
+        missingPluralForm.push(`${localeName}: ${key} (${category})`);
       }
     }
   }
@@ -153,7 +207,7 @@ function runCheck() {
   for (const key of allKeys) {
     const placeholdersPerLocale = {};
     for (const [localeName, flat] of Object.entries(flattenedLocales)) {
-      if (key in flat && typeof flat[key] === 'string') {
+      if (key in flat) {
         placeholdersPerLocale[localeName] = extractPlaceholders(flat[key]);
       }
     }
@@ -181,14 +235,16 @@ function runCheck() {
 
   const missingInTranslations = [];
   for (const [codeKey, refs] of codeKeysMap.entries()) {
-    if (!allKeysSet.has(codeKey)) {
+    const isNamespacePrefix = allKeys.some((k) => k.startsWith(`${codeKey}.`));
+    if (!allKeysSet.has(codeKey) && !isNamespacePrefix) {
       missingInTranslations.push({ key: codeKey, refs: Array.from(refs) });
     }
   }
 
   const unusedKeys = [];
   for (const key of allKeys) {
-    if (!codeKeysMap.has(key)) {
+    const builtFromPrefix = [...prefixes].some((prefix) => key.startsWith(prefix));
+    if (!codeKeysMap.has(key) && !builtFromPrefix) {
       unusedKeys.push(key);
     }
   }
@@ -200,7 +256,7 @@ function runCheck() {
   for (const keys of Object.values(emptyInLocale)) {
     if (keys.length > 0) hasErrors = true;
   }
-  if (missingInTranslations.length > 0) {
+  if (missingInTranslations.length > 0 || missingPluralForm.length > 0) {
     hasErrors = true;
   }
 
@@ -210,6 +266,7 @@ function runCheck() {
       locales: Object.keys(locales),
       missingInLocale,
       emptyInLocale,
+      missingPluralForm,
       placeholderMismatches,
       missingInTranslations,
       unusedKeys,
@@ -263,6 +320,13 @@ function runCheck() {
     }
   }
 
+  if (missingPluralForm.length > 0) {
+    console.log(`\n${c.red}Missing plural forms (${missingPluralForm.length}):${c.reset}`);
+    for (const item of missingPluralForm) {
+      console.log(`  - ${item}`);
+    }
+  }
+
   if (placeholderMismatches.length > 0) {
     console.log(`\n${c.yellow}Placeholder mismatches (${placeholderMismatches.length}):${c.reset}`);
     for (const item of placeholderMismatches) {
@@ -290,4 +354,3 @@ function runCheck() {
 }
 
 runCheck();
-

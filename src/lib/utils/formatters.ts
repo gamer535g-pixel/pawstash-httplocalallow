@@ -1,12 +1,16 @@
+import { i18n } from '$lib/i18n';
 import { extraField } from './fields';
 
 export function formatBytes(bytes: number, decimals: number = 2): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+  return i18n.bytes(bytes, Math.max(0, decimals));
+}
+
+export function formatSpeed(bytesPerSecond: number): string {
+  return i18n.t('common.per_second', { value: formatBytes(bytesPerSecond) });
+}
+
+export function formatPercent(percent: number): string {
+  return i18n.number(percent / 100, { style: 'percent', maximumFractionDigits: 1 });
 }
 
 export function parseDateTimestamp(dateValue?: string | number | null): number {
@@ -27,11 +31,7 @@ export function formatDate(dateValue?: string | number | null): string {
       ? new Date(num < 10_000_000_000 ? num * 1000 : num)
       : new Date(String(dateValue));
     if (isNaN(date.getTime())) return String(dateValue);
-    return date.toLocaleDateString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
+    return i18n.date(date, { year: 'numeric', month: 'short', day: 'numeric' });
   } catch {
     return String(dateValue);
   }

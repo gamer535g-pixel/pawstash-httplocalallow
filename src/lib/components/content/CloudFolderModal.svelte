@@ -435,7 +435,7 @@
     if (started > 0) {
       notify.success(
         i18n.t('feed.download_started'),
-        { description: `${started} ${i18n.t('selection.items_count')}`, glyph: 'download' }
+        { description: i18n.t('downloads.files_queued', { count: started }), glyph: 'download' }
       );
     }
     clearSelection();
@@ -448,7 +448,7 @@
     if (node.is_folder) {
       const files = getAllDescendantFiles(node.id);
       if (files.length === 0) {
-        notify.error('Folder is empty');
+        notify.error(i18n.t('downloads.cloud_folder_empty'));
         return;
       }
 
@@ -478,7 +478,7 @@
       if (started > 0) {
         notify.success(
           i18n.t('feed.download_started'),
-          { description: `${started} files from "${node.name}" added to queue`, glyph: 'download' }
+          { description: i18n.t('downloads.files_queued_from', { count: started, name: node.name }), glyph: 'download' }
         );
       }
       return;
@@ -524,7 +524,7 @@
             type="button"
             class="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-veil/10 text-[var(--fg-default)] transition-colors mr-1 shrink-0"
             onclick={navigateUp}
-            title="Go up one folder"
+            title={i18n.t('downloads.cloud_go_up')}
           >
             <IconChevronLeft class="w-[18px] h-[18px]" />
           </button>
@@ -566,7 +566,7 @@
             {#if currentItems.length === 0}
               <tr>
                 <td colspan="5" class="py-20 text-center text-xs text-[var(--fg-muted)]">
-                  This folder is empty
+                  {i18n.t('downloads.cloud_folder_empty')}
                 </td>
               </tr>
             {:else}
@@ -610,7 +610,7 @@
                         <div class="flex items-center gap-1.5 text-[11px] text-[var(--fg-muted)] sm:hidden font-mono mt-0.5 leading-tight">
                           {#if isDownloading}
                             <span class="text-[var(--accent)] font-medium font-sans">
-                              {progress.percent > 0 ? `${progress.percent}%` : (i18n.t('downloads.status_queued'))}
+                              {progress.percent > 0 ? `${progress.percent}%` : i18n.t('downloads.status_queued')}
                             </span>
                           {:else if isCompleted}
                             <span class="text-emerald-400 font-medium font-sans">
@@ -633,7 +633,7 @@
                   <td class="py-2 px-4 text-right text-[12px] font-mono whitespace-nowrap relative z-[1] hidden sm:table-cell">
                     {#if isDownloading}
                       <span class="text-[var(--accent)] font-medium">
-                        {progress.percent > 0 ? `${progress.percent}%` : (i18n.t('downloads.status_queued'))}
+                        {progress.percent > 0 ? `${progress.percent}%` : i18n.t('downloads.status_queued')}
                       </span>
                     {:else if isCompleted}
                       <span class="text-emerald-400 font-medium inline-flex items-center gap-1 justify-end">
@@ -727,7 +727,7 @@
             {selectedFiles.length}
           </span>
           <span class="selection-count-label">
-            {selectedTotalBytes > 0 ? formatBytes(selectedTotalBytes) : (i18n.t('selection.items_count'))}
+            {selectedTotalBytes > 0 ? formatBytes(selectedTotalBytes) : i18n.t('selection.items_count')}
           </span>
         </div>
 

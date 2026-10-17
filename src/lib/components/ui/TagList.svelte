@@ -40,7 +40,7 @@
 
   let expanded = $state(false);
 
-  let effectiveAllLabel = $derived(allLabel ?? (i18n.t('common.all')));
+  let effectiveAllLabel = $derived(allLabel ?? i18n.t('common.all'));
   let expandBtnLabel = $derived(i18n.t('common.expand'));
   let collapseBtnLabel = $derived(i18n.t('common.collapse'));
 

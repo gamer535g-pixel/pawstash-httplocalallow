@@ -72,7 +72,7 @@
         }
         notify.success(
           i18n.t('selection.unsubscribe'),
-          `${target.batch.length} ${target.batch.length === 1 ? 'creator' : 'creators'}`
+          i18n.t('counts.creators', { count: target.batch.length })
         );
       } else if (target.subscription) {
         await subscriptionState.remove(target.subscription.id, removePosts);

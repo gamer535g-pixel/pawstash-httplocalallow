@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { notify } from '$lib/utils/toast';
 import { i18n } from '$lib/i18n';
-import { formatBytes } from '$lib/utils/formatters';
+import { formatSpeed } from '$lib/utils/formatters';
 import { openExternalUrl } from '$lib/utils/ipc';
 import { configState } from '$lib/state/configState.svelte';
 import type { UpdateInfo, UpdateProgressPayload } from '$lib/types/update';
@@ -32,7 +32,7 @@ export class UpdateState {
           this.downloadedBytes = event.payload.downloaded;
           this.totalBytes = event.payload.total;
           if (event.payload.speed_bytes_per_sec > 0) {
-            this.speedText = `${formatBytes(event.payload.speed_bytes_per_sec)}/s`;
+            this.speedText = formatSpeed(event.payload.speed_bytes_per_sec);
           } else {
             this.speedText = '';
           }
@@ -60,12 +60,12 @@ export class UpdateState {
           this.modalOpen = true;
         } else {
           notify.info(
-            i18n.t('update_available_title'),
-            i18n.t('update_available_desc', { version: result.latest_version }),
+            i18n.t('update.available_title'),
+            i18n.t('update.available_desc', { version: result.latest_version }),
             {
               duration: 30000,
               action: {
-                label: i18n.t('update_view_changelog'),
+                label: i18n.t('update.view_changelog'),
                 onclick: () => {
                   this.modalOpen = true;
                 }
@@ -75,15 +75,15 @@ export class UpdateState {
         }
       } else if (!silent) {
         notify.success(
-          i18n.t('update_up_to_date_title'),
-          i18n.t('update_up_to_date_desc')
+          i18n.t('update.up_to_date_title'),
+          i18n.t('update.up_to_date_desc')
         );
       }
     } catch (err: any) {
       const message = typeof err === 'string' ? err : err?.message || String(err);
       this.error = message;
       if (!silent) {
-        notify.error(i18n.t('update_check_failed'), message);
+        notify.error(i18n.t('update.check_failed'), message);
       }
     } finally {
       this.checking = false;
@@ -129,7 +129,7 @@ export class UpdateState {
       this.installing = true;
     } catch (err: any) {
       const message = typeof err === 'string' ? err : err?.message || String(err);
-      notify.error(i18n.t('update_install_failed'), message);
+      notify.error(i18n.t('update.install_failed'), message);
       this.downloading = false;
       this.installing = false;
     }

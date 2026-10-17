@@ -2,7 +2,7 @@
   import { downloadState } from '$lib/state/downloadState.svelte';
   import { configState } from '$lib/state/configState.svelte';
   import { i18n } from '$lib/i18n';
-  import { formatBytes } from '$lib/utils/formatters';
+  import { formatBytes, formatSpeed } from '$lib/utils/formatters';
   import { notify } from '$lib/utils/toast';
   import Button from '$lib/components/ui/Button.svelte';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
@@ -63,7 +63,7 @@
     {#if stats.totalBytes > 0 || stats.speedBps > 0}
       <p class="queue-bytes">
         {#if stats.totalBytes > 0}{formatBytes(stats.downloadedBytes)} / {formatBytes(stats.totalBytes)}{/if}
-        {#if stats.speedBps > 0}<span>{formatBytes(stats.speedBps)}/s</span>{/if}
+        {#if stats.speedBps > 0}<span>{formatSpeed(stats.speedBps)}</span>{/if}
       </p>
     {/if}
 

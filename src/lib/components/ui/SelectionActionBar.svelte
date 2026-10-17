@@ -100,8 +100,8 @@
           </span>
           <span class="selection-count-text">
             {selectedCount === 0
-              ? (i18n.t('selection.none_selected'))
-              : (i18n.t('selection.items_count'))}
+              ? i18n.t('selection.none_selected')
+              : i18n.t('selection.items_count')}
           </span>
         </div>
 

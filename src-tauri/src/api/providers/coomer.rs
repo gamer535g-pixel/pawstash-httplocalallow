@@ -449,10 +449,10 @@ impl SourceProvider for CoomerProvider {
             supports_push_favorites: false,
             auth_fields: vec![AuthField {
                 key: "session_cookie".to_string(),
-                label_key: "settings.providers.session_cookie".to_string(),
+                label_key: "settings.session_cookie".to_string(),
                 field_type: "password".to_string(),
                 placeholder: Some("session=...".to_string()),
-                help_text_key: Some("settings.providers.cookie_help".to_string()),
+                help_text_key: Some("settings.session_cookie_help".to_string()),
                 required: false,
             }],
             help_url: {

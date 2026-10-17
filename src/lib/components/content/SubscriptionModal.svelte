@@ -103,33 +103,10 @@
 
   function formatRelativeTime(dateStr?: string | null): string {
     if (!dateStr) return i18n.t('subscriptions.never');
-    try {
-      const date = new Date(dateStr.endsWith('Z') ? dateStr : `${dateStr.replace(' ', 'T')}Z`);
-      if (isNaN(date.getTime())) return dateStr;
-      const now = Date.now();
-      const diffSec = Math.round((now - date.getTime()) / 1000);
-      if (Math.abs(diffSec) < 45) {
-        return i18n.t('subscriptions.just_now');
-      }
-      if (diffSec > 0) {
-        const mins = Math.round(diffSec / 60);
-        if (mins < 60) return i18n.t('subscriptions.mins_ago', { count: mins });
-        const hours = Math.round(mins / 60);
-        if (hours < 24) return i18n.t('subscriptions.hours_ago', { count: hours });
-        const days = Math.round(hours / 24);
-        return i18n.t('subscriptions.days_ago', { count: days });
-      } else {
-        const diffFuture = Math.abs(diffSec);
-        const mins = Math.round(diffFuture / 60);
-        if (mins < 60) return i18n.t('subscriptions.in_mins', { count: mins });
-        const hours = Math.round(mins / 60);
-        if (hours < 24) return i18n.t('subscriptions.in_hours', { count: hours });
-        const days = Math.round(hours / 24);
-        return i18n.t('subscriptions.in_days', { count: days });
-      }
-    } catch {
-      return dateStr;
-    }
+    const date = new Date(dateStr.endsWith('Z') ? dateStr : `${dateStr.replace(' ', 'T')}Z`);
+    if (isNaN(date.getTime())) return dateStr;
+    if (Math.abs(date.getTime() - Date.now()) < 45_000) return i18n.t('subscriptions.just_now');
+    return i18n.relativeTime(date);
   }
 
   $effect(() => {
@@ -238,7 +215,7 @@
         }
         notify.success(
           i18n.t('subscriptions.saved'),
-          `${target.batch.length} ${target.batch.length === 1 ? 'creator' : 'creators'}`
+          i18n.t('counts.creators', { count: target.batch.length })
         );
       } else {
         await subscriptionState.save({

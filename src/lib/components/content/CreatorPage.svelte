@@ -491,7 +491,7 @@
 
   let currentSortLabel = $derived.by(() => {
     const opt = sortOptions.find((o) => o.value === sortOrder);
-    return opt?.label ?? sortOptions[0]?.label ?? (i18n.t('favorites.sort_by'));
+    return opt?.label ?? sortOptions[0]?.label ?? i18n.t('favorites.sort_by');
   });
 
   $effect(() => {
@@ -1025,7 +1025,7 @@
       }
       notify.success(
         i18n.t('selection.save_to_library'),
-        `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
+        i18n.t('counts.posts', { count: items.length })
       );
       selectionState.exit();
     } catch (err) {
@@ -1040,7 +1040,7 @@
       const count = await downloadState.downloadPosts(items);
       notify.success(
         i18n.t('selection.download_all'),
-        `${count} ${count === 1 ? 'file' : 'files'}`
+        i18n.t('counts.files', { count: count })
       );
       selectionState.exit();
     } catch (err) {
@@ -1062,9 +1062,9 @@
       }
       notify.success(
         isFav
-          ? (i18n.t('selection.favorite'))
-          : (i18n.t('selection.unfavorite')),
-        `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
+          ? i18n.t('selection.favorite')
+          : i18n.t('selection.unfavorite'),
+        i18n.t('counts.posts', { count: items.length })
       );
       selectionState.exit();
     } catch (err) {
@@ -1603,14 +1603,14 @@
           <div class="detail-empty py-16 px-4 flex flex-col items-center justify-center text-center">
             <IconWarning class="w-10 h-10 text-[var(--fg-subtle)] mb-3 opacity-60" />
             <h2 class="text-lg font-semibold text-[var(--fg-default)] mb-1">
-              {i18n.t('creator.not_found_on_provider', { provider: currentProviderName }) || `No posts found on ${currentProviderName}`}
+              {i18n.t('creator.not_found_on_provider', { provider: currentProviderName })}
             </h2>
             <p class="text-sm text-[var(--fg-muted)] max-w-md mb-2">
-              {i18n.t('creator.not_found_on_provider_desc', { provider: currentProviderName }) || `This creator has no posts available on ${currentProviderName}. You can switch to Merged view or select another provider.`}
+              {i18n.t('creator.not_found_on_provider_desc', { provider: currentProviderName })}
             </p>
             {#if autoEntry && autoEntry.posts.length > 0}
               <p class="text-xs text-[var(--fg-subtle)] mb-6">
-                {i18n.t('creator.available_on_other_sources', { count: autoEntry.posts.length }) || `${autoEntry.posts.length} posts available in Merged view`}
+                {i18n.t('creator.available_on_other_sources', { count: autoEntry.posts.length })}
               </p>
             {:else}
               <div class="mb-4"></div>
@@ -1647,7 +1647,7 @@
             posts={visibleCreatorPosts}
             loading={entry.loading || entry.loadingMore || (normalizedPostSearch.length >= 2 && postSearchLoading)}
             hasMore={normalizedPostSearch.length >= 2 ? postSearchHasMore : entry.hasMore}
-            emptyTitle={postSearchQuery ? (i18n.t('feed.no_results')) : (i18n.t('feed.empty'))}
+            emptyTitle={postSearchQuery ? i18n.t('feed.no_results') : i18n.t('feed.empty')}
             ariaLabel={creatorName}
             onLoadMore={handleLoadMore}
           />
@@ -1986,7 +1986,7 @@
       >
         <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit')) : (i18n.t('selection.select_mode'))}</span>
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? i18n.t('selection.exit') : i18n.t('selection.select_mode')}</span>
         </div>
       </button>
 

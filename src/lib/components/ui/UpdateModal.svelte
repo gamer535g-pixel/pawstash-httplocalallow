@@ -76,7 +76,7 @@
       <div class="update-progress-container">
         <div class="update-progress-header">
           <span class="update-progress-title">
-            {updateState.installing ? i18n.t('update_installing') : i18n.t('update_downloading')}
+            {updateState.installing ? i18n.t('update.installing') : i18n.t('update.downloading')}
           </span>
           <span class="update-progress-speed font-mono">
             {#if updateState.speedText && !updateState.installing}
@@ -114,10 +114,10 @@
       >
         {#if updateState.downloading}
           <IconLoading class="mr-2 shrink-0" />
-          <span>{updateState.installing ? i18n.t('update_installing') : `${updateState.downloadProgress}%`}</span>
+          <span>{updateState.installing ? i18n.t('update.installing') : `${updateState.downloadProgress}%`}</span>
         {:else}
           <IconArrowDownload class="mr-2 shrink-0" />
-          <span>{updateState.info?.asset_size ? formatBytes(updateState.info.asset_size) : i18n.t('update_action_download')}</span>
+          <span>{updateState.info?.asset_size ? formatBytes(updateState.info.asset_size) : i18n.t('update.action_download')}</span>
         {/if}
       </Button>
     </div>
@@ -128,7 +128,7 @@
   {#if layoutState.isMobile}
     <BottomSheet
       isOpen={updateState.modalOpen}
-      title={i18n.t('update_modal_title')}
+      title={i18n.t('update.modal_title')}
       closeLabel={i18n.t('common.close')}
       onclose={() => updateState.closeModal()}
     >
@@ -145,7 +145,7 @@
   {:else}
     <Modal
       isOpen={updateState.modalOpen}
-      title={i18n.t('update_modal_title')}
+      title={i18n.t('update.modal_title')}
       size="lg"
       onclose={() => updateState.closeModal()}
     >

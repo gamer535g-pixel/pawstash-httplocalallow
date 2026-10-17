@@ -98,7 +98,7 @@
           ></div>
           <div class="poll-row-content">
             <span class="choice-name">{choice.text}</span>
-            <span class="choice-count">{choice.votes.toLocaleString()}</span>
+            <span class="choice-count">{i18n.number(choice.votes)}</span>
           </div>
         </div>
       {/each}
@@ -115,7 +115,7 @@
           <span class="meta-dot">|</span>
         {/if}
       {/if}
-      <span>{parsed.totalVotes.toLocaleString()} {i18n.t('post.poll_votes')}</span>
+      <span>{i18n.t('counts.votes', { count: parsed.totalVotes })}</span>
     </div>
   </div>
 {/if}

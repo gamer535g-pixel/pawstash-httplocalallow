@@ -3,7 +3,7 @@
   import { downloadState } from '$lib/state/downloadState.svelte';
   import { configState } from '$lib/state/configState.svelte';
   import { i18n } from '$lib/i18n';
-  import { formatBytes } from '$lib/utils/formatters';
+  import { formatBytes, formatSpeed } from '$lib/utils/formatters';
   import { notify } from '$lib/utils/toast';
   import { ripple, tooltip } from '$lib/motion';
   import { selectionState } from '$lib/state/selectionState.svelte';
@@ -369,7 +369,7 @@
       <span>{item.total_bytes > 0 ? formatBytes(item.total_bytes) : formatBytes(item.downloaded_bytes)}</span>
       <div class="grid-tile-meta-stats">
         {#if item.status !== 'completed' && item.total_bytes > 0}<span>{percent}%</span>{/if}
-        {#if item.speed_bps > 0}<span>{formatBytes(item.speed_bps)}/s</span>{/if}
+        {#if item.speed_bps > 0}<span>{formatSpeed(item.speed_bps)}</span>{/if}
         {#if metaBadge}
           <span class="download-format-badge">{metaBadge}</span>
         {/if}

@@ -106,7 +106,7 @@
   let completedPostsCount = $derived(countDownloadPosts(downloadState.downloads, isCompleted));
   let totalCount = $derived(downloadState.downloads.length);
   let totalPostsCount = $derived(countDownloadPosts(downloadState.downloads));
-  let currentSortLabel = $derived(i18n.t(`downloads.sort_${sortBy}`) || i18n.t('common.sort'));
+  let currentSortLabel = $derived(i18n.t(`downloads.sort_${sortBy}`));
 
   function tabOption(value: DownloadFilter, label: string, posts: number, files: number): ChoiceOption<DownloadFilter> {
     return { value, label, count: posts, title: i18n.t('downloads.tab_count_title', { posts, files }) };
@@ -445,7 +445,7 @@
       }
       notify.success(
         i18n.t('downloads.pause'),
-        `${pausable.length} ${pausable.length === 1 ? 'download' : 'downloads'}`
+        i18n.t('counts.downloads', { count: pausable.length })
       );
       selectionState.exit();
     } catch (err) {
@@ -463,7 +463,7 @@
       }
       notify.success(
         i18n.t('downloads.resume'),
-        `${resumable.length} ${resumable.length === 1 ? 'download' : 'downloads'}`
+        i18n.t('counts.downloads', { count: resumable.length })
       );
       selectionState.exit();
     } catch (err) {
@@ -481,7 +481,7 @@
       }
       notify.success(
         i18n.t('downloads.retry'),
-        `${retryable.length} ${retryable.length === 1 ? 'download' : 'downloads'}`
+        i18n.t('counts.downloads', { count: retryable.length })
       );
       selectionState.exit();
     } catch (err) {
@@ -512,8 +512,8 @@
         await downloadState.remove(item.id);
       }
       notify.success(
-        allActiveSelected ? (i18n.t('downloads.cancel')) : (i18n.t('downloads.remove')),
-        `${items.length} ${items.length === 1 ? 'download' : 'downloads'}`
+        allActiveSelected ? i18n.t('downloads.cancel') : i18n.t('downloads.remove'),
+        i18n.t('counts.downloads', { count: items.length })
       );
       selectionState.exit();
     } catch (err) {
@@ -834,7 +834,7 @@
     size="sm"
     class="selection-btn"
     onclick={batchRemove}
-    title={allActiveSelected ? (i18n.t('downloads.cancel')) : (i18n.t('downloads.remove'))}
+    title={allActiveSelected ? i18n.t('downloads.cancel') : i18n.t('downloads.remove')}
   >
     {#if allActiveSelected}
       <IconDismiss class="w-[16px] h-[16px]" />
@@ -893,7 +893,7 @@
       >
         <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit')) : (i18n.t('selection.select_mode'))}</span>
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? i18n.t('selection.exit') : i18n.t('selection.select_mode')}</span>
         </div>
       </button>
 

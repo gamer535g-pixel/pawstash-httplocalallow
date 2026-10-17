@@ -43,7 +43,7 @@
   const accentPresets = $derived(
     ACCENT_PRESETS.map((preset) => ({
       hex: preset.hex,
-      name: i18n.t(`color_picker.accent_${preset.id}`) || preset.id
+      name: i18n.has(`color_picker.accent_${preset.id}`) ? i18n.t(`color_picker.accent_${preset.id}`) : preset.id
     }))
   );
 

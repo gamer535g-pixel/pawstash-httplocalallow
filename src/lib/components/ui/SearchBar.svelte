@@ -93,7 +93,7 @@
         class="search-action-btn"
         onclick={handleClearOrClose}
         aria-label={value ? 'Clear search' : 'Close search'}
-        use:tooltip={value ? (i18n.t('feed.clear')) : (i18n.t('nav.close'))}
+        use:tooltip={value ? i18n.t('feed.clear') : i18n.t('nav.close')}
       >
         <IconDismiss class="w-5 h-5" />
       </button>

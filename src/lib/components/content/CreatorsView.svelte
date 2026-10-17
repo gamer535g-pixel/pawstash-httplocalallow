@@ -6,6 +6,7 @@
   import { configState } from '$lib/state/configState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { i18n } from '$lib/i18n';
+  import { formatDate } from '$lib/utils/formatters';
   import type { Creator } from '$lib/types/content';
   import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
   import PageShell from '$lib/components/layout/PageShell.svelte';
@@ -163,12 +164,6 @@
     };
   }
 
-  function formatTimestamp(ts?: number) {
-    if (!ts) return '';
-    const date = new Date(ts * 1000);
-    return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-  }
-
   function toggleService(service: string) {
     creatorsState.serviceFilters = toggleFilterKey(creatorsState.serviceFilters, service);
     void creatorsState.loadPage(true);
@@ -236,7 +231,7 @@
 
   let currentSortLabel = $derived.by(() => {
     const opt = sortOptions.find((o) => o.value === currentSortValue);
-    return opt?.label ?? (i18n.t('favorites.sort_by'));
+    return opt?.label ?? i18n.t('favorites.sort_by');
   });
 
   function handleSortChange(val: string) {
@@ -373,8 +368,8 @@
         await apiSetCreatorFavorite(creator.service, creator.id, isFav);
       }
       notify.success(
-        i18n.t(isFav ? 'selection.favorite' : 'selection.unfavorite') || 'Updated favorites',
-        `${items.length} ${items.length === 1 ? 'creator' : 'creators'}`
+        i18n.t(isFav ? 'selection.favorite' : 'selection.unfavorite'),
+        i18n.t('counts.creators', { count: items.length })
       );
       await accountState.fetchFavorites('creator');
       selectionState.exit();
@@ -797,7 +792,7 @@
                     {creator.favorited}
                   </span>
                 {/if}
-                <span>{formatTimestamp(creator.updated)}</span>
+                <span>{formatDate(creator.updated)}</span>
               </div>
             </div>
           </div>
@@ -886,7 +881,7 @@
       >
         <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit')) : (i18n.t('selection.select_mode'))}</span>
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? i18n.t('selection.exit') : i18n.t('selection.select_mode')}</span>
         </div>
       </button>
 

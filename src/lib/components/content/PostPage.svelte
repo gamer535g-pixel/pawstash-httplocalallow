@@ -526,7 +526,7 @@
     }
     notify.success(
       i18n.t('feed.download_started'),
-      { description: `${started} ${started === 1 ? 'file' : 'files'} added to queue`, glyph: 'download' }
+      { description: i18n.t('downloads.files_queued', { count: started }), glyph: 'download' }
     );
   }
 
@@ -1513,10 +1513,10 @@
     const otherCount = deferredAttachments.length - videoCount - photoCount;
 
     const parts: string[] = [];
-    if (videoCount > 0) parts.push(`${videoCount} ${i18n.t('post.video_count', { count: videoCount })}`);
-    if (photoCount > 0) parts.push(`${photoCount} ${i18n.t('post.photo_count', { count: photoCount })}`);
-    if (otherCount > 0) parts.push(`${otherCount} ${i18n.t('post.file_count', { count: otherCount })}`);
-    const details = parts.join(', ') || `${deferredAttachments.length} ${i18n.t('post.file_count', { count: deferredAttachments.length })}`;
+    if (videoCount > 0) parts.push(i18n.t('counts.videos', { count: videoCount }));
+    if (photoCount > 0) parts.push(i18n.t('counts.photos', { count: photoCount }));
+    if (otherCount > 0) parts.push(i18n.t('counts.files', { count: otherCount }));
+    const details = parts.join(', ') || i18n.t('counts.files', { count: deferredAttachments.length });
 
     return i18n.t('post.files_exceed_limit_warning', { details });
   });
@@ -2688,8 +2688,8 @@
                   {#if isEmbedLinkedPost}
                     <div class="media-item is-embed-item is-linked-post-item">
                       <div class="media-header">
-                        <span class="media-filename">{postEmbed.subject || postEmbed.description || (linkedPostId ? `Post #${linkedPostId}` : post.title)}</span>
-                        <span class="cloud-source-badge">Post</span>
+                        <span class="media-filename">{postEmbed.subject || postEmbed.description || (linkedPostId ? i18n.t('post.linked_post_title', { id: linkedPostId }) : post.title)}</span>
+                        <span class="cloud-source-badge">{i18n.t('post.linked_post_badge')}</span>
                       </div>
 
                       <button
@@ -2806,17 +2806,17 @@
                       {@const fNodeId = (file as any).cloud_node_id}
                       {@const fChildCount = (file as any).cloud_child_count || 0}
                       <div class="media-header">
-                        <span class="media-filename">{file?.name || 'Folder'}</span>
-                        <span class="cloud-source-badge">{(file as any).cloud_provider || 'Cloud'}</span>
+                        <span class="media-filename">{file?.name || i18n.t('post.cloud_folder')}</span>
+                        <span class="cloud-source-badge">{(file as any).cloud_provider || i18n.t('post.cloud_provider_fallback')}</span>
                         {#if fChildCount > 0}
-                          <span class="media-filesize">({fChildCount} items)</span>
+                          <span class="media-filesize">({i18n.t('counts.items', { count: fChildCount })})</span>
                         {/if}
                       </div>
                       <button
                         type="button"
                         class="file-placeholder media-open-surface cursor-pointer hover:bg-[var(--bg-card-hover)] transition-colors"
                         onclick={() => openCloudFolderModal(fRes, fNodeId)}
-                        aria-label="Open folder {file?.name}"
+                        aria-label={i18n.t('post.open_cloud_folder', { name: file?.name ?? '' })}
                       >
                         <IconFolder class="placeholder-icon text-[var(--accent)]" />
                         <p class="placeholder-text font-medium">{file?.name}</p>

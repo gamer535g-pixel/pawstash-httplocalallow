@@ -225,7 +225,7 @@
     try {
       const d = new Date(BUILD_TIME);
       if (isNaN(d.getTime())) return BUILD_TIME;
-      return d.toLocaleString(i18n.currentLocale === 'ru' ? 'ru-RU' : 'en-US', {
+      return i18n.date(d, {
         day: 'numeric',
         month: 'short',
         year: 'numeric',
@@ -600,7 +600,7 @@
       await clearLogs();
       notify.success(i18n.t('settings.logs_cleared'), { glyph: 'cleared' });
     } catch (e) {
-      notify.error('Failed to clear logs');
+      notify.error(i18n.t('settings.logs_clear_failed'), e);
       logger.error('Failed to clear logs', e);
     } finally {
       clearingLogs = false;
@@ -2391,7 +2391,7 @@
               readonly={true}
               class="font-mono text-[13px]"
               actionIcon={copiedPreview ? IconCheck : IconCopy}
-              actionTooltip={copiedPreview ? (i18n.t('common.copied')) : (i18n.t('common.copy'))}
+              actionTooltip={copiedPreview ? i18n.t('common.copied') : i18n.t('common.copy')}
               onAction={copyPreviewPath}
             />
           </div>
@@ -2511,14 +2511,7 @@
           onReset={() => resetSetting('cache_max_mb')}
         >
           <Select
-            options={[
-              { value: 64, label: '64 MB' },
-              { value: 128, label: '128 MB' },
-              { value: 256, label: '256 MB' },
-              { value: 512, label: '512 MB' },
-              { value: 1024, label: '1 GB' },
-              { value: 2048, label: '2 GB' }
-            ]}
+            options={[64, 128, 256, 512, 1024, 2048].map((mb) => ({ value: mb, label: formatBytes(mb * 1024 * 1024, 0) }))}
             value={settings.cache_max_mb}
             onchange={(value) => void updateAndSaveSetting('cache_max_mb', Number(value))}
           />

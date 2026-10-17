@@ -1,7 +1,7 @@
 <script lang="ts">
   import { i18n } from '$lib/i18n';
   import { themeState } from '$lib/theme/themeState.svelte';
-  import { formatBytes } from '$lib/utils/formatters';
+  import { formatBytes, formatPercent } from '$lib/utils/formatters';
   import type { DownloadItem } from '$lib/types/download';
 
   type MediaType = 'image' | 'video' | 'audio' | 'file';
@@ -112,9 +112,9 @@
       </span>
       <span class="text-xs text-ink/40 font-mono">
         {#if stats.activeCount > 0}
-          ({stats.completedCount} / {stats.totalCount} {i18n.t('settings.cache_files').toLowerCase()})
+          ({i18n.t('downloads.files_progress', { done: stats.completedCount, count: stats.totalCount })})
         {:else}
-          ({stats.totalCount} {i18n.t('settings.cache_files').toLowerCase()})
+          ({i18n.t('counts.files', { count: stats.totalCount })})
         {/if}
       </span>
     </div>
@@ -122,7 +122,7 @@
     {#if stats.activeCount > 0}
       <div class="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-accent/15 border border-accent/30 text-accent text-xs font-medium">
         <span class="w-1.5 h-1.5 rounded-full bg-accent animate-pulse"></span>
-        <span>{stats.activeCount} {i18n.t('downloads.active').toLowerCase()}</span>
+        <span>{i18n.t('downloads.active_count', { count: stats.activeCount })}</span>
       </div>
     {/if}
   </div>
@@ -136,7 +136,7 @@
           <div
             class="storage-bar-segment"
             style="width: {cat.share}%; background-color: {cat.color};"
-            title="{cat.label}: {formatBytes(cat.bytes)} ({cat.count} files, {cat.share.toFixed(1)}%)"
+            title="{cat.label}: {formatBytes(cat.bytes)} ({i18n.t('counts.files', { count: cat.count })}, {formatPercent(cat.share)})"
           ></div>
         {/each}
       </div>

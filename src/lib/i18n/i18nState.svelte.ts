@@ -14,68 +14,147 @@ export const LOCALES: LocaleConfig[] = [
   { code: 'en', name: 'English', nativeName: 'English' },
 ];
 
-const translations: Record<Locale, typeof ru> = {
-  ru,
-  en,
-};
+type Messages = { [key: string]: string | Messages };
+type PluralForms = Partial<Record<Intl.LDMLPluralRule, string>> & { other: string };
+type Vars = Record<string, string | number>;
+type Formatter = Intl.NumberFormat | Intl.DateTimeFormat | Intl.PluralRules | Intl.RelativeTimeFormat;
+
+const translations: Record<Locale, Messages> = { ru, en };
+const FALLBACK_LOCALE: Locale = 'en';
+const LOCALE_TAGS: Record<Locale, string> = { ru: 'ru-RU', en: 'en-US' };
+const RUSSIAN_SPEAKING = new Set(['ru', 'uk', 'be', 'kk']);
+const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other']);
+const BYTE_UNITS = ['byte', 'kilobyte', 'megabyte', 'gigabyte', 'terabyte'] as const;
+const RELATIVE_STEPS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ['second', 60],
+  ['minute', 60],
+  ['hour', 24],
+  ['day', 7],
+  ['week', 4.34524],
+  ['month', 12],
+];
 
 const STORAGE_KEY = 'pawstash_locale';
+
+function isPluralForms(value: unknown): value is PluralForms {
+  if (!value || typeof value !== 'object') return false;
+  const keys = Object.keys(value);
+  return keys.includes('other') && keys.every((key) => PLURAL_CATEGORIES.has(key));
+}
+
+function lookup(messages: Messages, key: string): string | PluralForms | undefined {
+  let current: string | Messages | undefined = messages;
+  for (const part of key.split('.')) {
+    if (!current || typeof current !== 'object') return undefined;
+    current = current[part];
+  }
+  if (typeof current === 'string' || isPluralForms(current)) return current;
+  return undefined;
+}
+
+function detectLocale(): Locale {
+  const lang = navigator.language.split('-')[0].toLowerCase();
+  return RUSSIAN_SPEAKING.has(lang) ? 'ru' : 'en';
+}
 
 export class I18nState {
   currentLocale = $state<Locale>('ru');
 
+  private formatCache = new Map<string, Formatter>();
+  private missingReported = new Set<string>();
+
+  get tag(): string {
+    return LOCALE_TAGS[this.currentLocale];
+  }
+
   init() {
-    if (typeof localStorage !== 'undefined') {
-      const saved = localStorage.getItem(STORAGE_KEY) as Locale | null;
-      if (saved && saved in translations) {
-        this.currentLocale = saved;
-      } else {
-        const browserLang = navigator.language.split('-')[0];
-        if (browserLang === 'en') {
-          this.currentLocale = 'en';
-        } else {
-          this.currentLocale = 'ru';
-        }
-      }
-      document.documentElement.lang = this.currentLocale;
-    }
+    if (typeof localStorage === 'undefined') return;
+    const saved = localStorage.getItem(STORAGE_KEY);
+    this.currentLocale = saved && saved in translations ? (saved as Locale) : detectLocale();
+    document.documentElement.lang = this.currentLocale;
   }
 
   setLocale(locale: Locale) {
-    if (locale in translations) {
-      this.currentLocale = locale;
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(STORAGE_KEY, locale);
-        document.documentElement.lang = locale;
+    if (!(locale in translations)) return;
+    this.currentLocale = locale;
+    document.documentElement.lang = locale;
+    localStorage.setItem(STORAGE_KEY, locale);
+  }
+
+  has(key: string): boolean {
+    return lookup(translations[this.currentLocale], key) !== undefined;
+  }
+
+  /** `count` picks the form when the message is a plural object. */
+  t(key: string, vars?: Vars): string {
+    const entry = lookup(translations[this.currentLocale], key) ?? lookup(translations[FALLBACK_LOCALE], key);
+    if (entry === undefined) {
+      if (import.meta.env.DEV && !this.missingReported.has(key)) {
+        this.missingReported.add(key);
+        console.warn(`[i18n] missing key: ${key}`);
       }
+      return key;
     }
+    const template = typeof entry === 'string' ? entry : this.pluralForm(entry, vars?.count);
+    return this.interpolate(template, vars);
   }
 
-  t(key: string, vars?: Record<string, string | number>): string {
-    const translation = this.getNestedValue(translations[this.currentLocale], key)
-      || this.getNestedValue(translations['ru'], key)
-      || key;
-
-    return this.interpolate(translation, vars);
+  number(value: number, options?: Intl.NumberFormatOptions): string {
+    return this.cached(`n:${JSON.stringify(options ?? {})}`, () => new Intl.NumberFormat(this.tag, options)).format(value);
   }
 
-  private getNestedValue(obj: Record<string, unknown>, path: string): string | undefined {
-    const keys = path.split('.');
-    let current: unknown = obj;
-
-    for (const key of keys) {
-      if (current === null || current === undefined || typeof current !== 'object') {
-        return undefined;
-      }
-      current = (current as Record<string, unknown>)[key];
+  /** Plain bytes use the long unit name: en's short form is the singular "byte". */
+  bytes(bytes: number, maximumFractionDigits = 2): string {
+    if (!Number.isFinite(bytes) || bytes < 1024) {
+      const whole = Number.isFinite(bytes) ? Math.max(0, Math.round(bytes)) : 0;
+      return this.number(whole, { style: 'unit', unit: 'byte', unitDisplay: 'long' });
     }
-
-    return typeof current === 'string' ? current : undefined;
+    const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), BYTE_UNITS.length - 1);
+    return this.number(bytes / 1024 ** exponent, {
+      style: 'unit',
+      unit: BYTE_UNITS[exponent],
+      unitDisplay: 'short',
+      maximumFractionDigits,
+    });
   }
 
-  private interpolate(str: string, vars?: Record<string, string | number>): string {
-    if (!vars) return str;
-    return str.replace(/\{(\w+)\}/g, (_, key) => vars[key]?.toString() ?? `{${key}}`);
+  date(value: Date | number, options: Intl.DateTimeFormatOptions): string {
+    return this.cached(`d:${JSON.stringify(options)}`, () => new Intl.DateTimeFormat(this.tag, options)).format(value);
+  }
+
+  relativeTime(value: Date | number): string {
+    const format = this.cached('rt', () => new Intl.RelativeTimeFormat(this.tag, { numeric: 'auto' }));
+    let amount = ((typeof value === 'number' ? value : value.getTime()) - Date.now()) / 1000;
+    for (const [unit, size] of RELATIVE_STEPS) {
+      if (Math.abs(amount) < size) return format.format(Math.round(amount), unit);
+      amount /= size;
+    }
+    return format.format(Math.round(amount), 'year');
+  }
+
+  private pluralForm(forms: PluralForms, count: string | number | undefined): string {
+    if (typeof count !== 'number') return forms.other;
+    const rules = this.cached('plural', () => new Intl.PluralRules(this.tag));
+    return forms[rules.select(count)] ?? forms.other;
+  }
+
+  private interpolate(template: string, vars?: Vars): string {
+    if (!vars) return template;
+    return template.replace(/\{(\w+)\}/g, (match, name: string) => {
+      const value = vars[name];
+      if (value === undefined) return match;
+      return typeof value === 'number' ? this.number(value) : value;
+    });
+  }
+
+  private cached<T extends Formatter>(id: string, create: () => T): T {
+    const key = `${this.tag}|${id}`;
+    let formatter = this.formatCache.get(key) as T | undefined;
+    if (!formatter) {
+      formatter = create();
+      this.formatCache.set(key, formatter);
+    }
+    return formatter;
   }
 }
 

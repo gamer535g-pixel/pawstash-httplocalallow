@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { i18n } from '$lib/i18n';
+
   interface Props {
     count?: number | string | null;
     variant?: 'tab' | 'header' | 'muted' | 'pill';
@@ -35,9 +37,9 @@
   let displayValue = $derived.by(() => {
     if (numericCount !== null) {
       if (max !== undefined && numericCount > max) {
-        return `${max.toLocaleString()}+`;
+        return `${i18n.number(max)}+`;
       }
-      return numericCount.toLocaleString();
+      return i18n.number(numericCount);
     }
     return String(count);
   });

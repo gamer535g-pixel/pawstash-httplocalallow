@@ -212,7 +212,7 @@
     use:motion={'sidebar-item'}
     onclick={() => navigationState.navigateRoot('feed')}
     class="sidebar-btn logo-btn"
-    aria-label="Pawstash Logo"
+    aria-label="Pawstash"
     use:tooltip={isCompact ? { text: 'Pawstash', placement: 'right' } : undefined}
   >
     <div class="sidebar-icon">

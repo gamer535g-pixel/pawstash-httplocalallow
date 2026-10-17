@@ -89,7 +89,7 @@
     if (schema?.auth_fields) {
       for (const field of schema.auth_fields) {
         if (field.required && !formData[field.key]?.trim()) {
-          errorMessage = `${i18n.t(field.label_key)} is required`;
+          errorMessage = i18n.t('common.field_required', { field: i18n.t(field.label_key) });
           return;
         }
       }

@@ -46,12 +46,12 @@ class SyncState {
           this.progressMessage = null;
         }
         if (payload.last_error && payload.last_error !== prevError) {
-          notify.error(i18n.t('sync.sync_failed') || 'Sync failed', payload.last_error, {
+          notify.error(i18n.t('sync.sync_failed'), payload.last_error, {
             action: {
-              label: i18n.t('common.copy') || 'Copy',
+              label: i18n.t('common.copy'),
               onclick: () => {
                 void navigator.clipboard?.writeText(payload.last_error || '');
-                notify.success(i18n.t('common.copied') || 'Copied');
+                notify.success(i18n.t('common.copied'));
               }
             }
           });

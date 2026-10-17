@@ -73,7 +73,7 @@
       if (!syncState.status.configured && activeView === 'create' && errStr.toLowerCase().includes('account already exists')) {
         notify.error(i18n.t('sync.account_taken'), undefined, {
           action: {
-            label: i18n.t('sync.generate_new_id') || 'New ID',
+            label: i18n.t('sync.generate_new_id'),
             onclick: () => {
               syncAccount = generateRandomId();
             }
@@ -83,11 +83,11 @@
       } else if (errStr.toLowerCase().includes('disconnect the current sync account first') || errStr.toLowerCase().includes('already configured')) {
         notify.error(i18n.t('sync.error'), errStr, {
           action: {
-            label: i18n.t('sync.disconnect') || 'Disconnect',
+            label: i18n.t('sync.disconnect'),
             onclick: async () => {
               try {
                 await syncState.disconnect();
-                notify.success(i18n.t('sync.disconnected') || 'Account disconnected');
+                notify.success(i18n.t('sync.disconnected'));
               } catch (e) {
                 notify.error(i18n.t('sync.error'), e);
               }
@@ -97,10 +97,10 @@
       } else {
         notify.error(i18n.t('sync.error'), errStr, {
           action: {
-            label: i18n.t('common.copy') || 'Copy',
+            label: i18n.t('common.copy'),
             onclick: () => {
               void navigator.clipboard?.writeText(errStr);
-              notify.success(i18n.t('common.copied') || 'Copied');
+              notify.success(i18n.t('common.copied'));
             }
           }
         });
@@ -126,10 +126,10 @@
         err,
         {
           action: {
-            label: i18n.t('common.copy') || 'Copy',
+            label: i18n.t('common.copy'),
             onclick: () => {
               void navigator.clipboard?.writeText(err);
-              notify.success(i18n.t('common.copied') || 'Copied');
+              notify.success(i18n.t('common.copied'));
             }
           }
         }
@@ -302,10 +302,10 @@
                     onclick={() => {
                       notify.error(i18n.t('sync.sync_failed'), syncState.status.last_error, {
                         action: {
-                          label: i18n.t('common.copy') || 'Copy',
+                          label: i18n.t('common.copy'),
                           onclick: () => {
                             void navigator.clipboard?.writeText(syncState.status.last_error || '');
-                            notify.success(i18n.t('common.copied') || 'Copied');
+                            notify.success(i18n.t('common.copied'));
                           }
                         }
                       });
@@ -570,7 +570,7 @@
               icon={IconKey}
               bind:value={syncPassword}
               type="password"
-              placeholder="•••••••••••• (min. 12 chars)"
+              placeholder={i18n.t('sync.password_placeholder')}
               autocomplete="new-password"
             />
           </div>
@@ -622,7 +622,7 @@
               icon={IconKey}
               bind:value={syncPassword}
               type="password"
-              placeholder="•••••••••••• (min. 12 chars)"
+              placeholder={i18n.t('sync.password_placeholder')}
               autocomplete="new-password"
             />
           </div>
@@ -715,7 +715,7 @@
               icon={IconKey}
               type="password"
               bind:value={newPassword}
-              placeholder="•••••••••••• (min. 12 chars)"
+              placeholder={i18n.t('sync.password_placeholder')}
               autocomplete="new-password"
             />
           </div>

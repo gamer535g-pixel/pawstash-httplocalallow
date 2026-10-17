@@ -327,7 +327,7 @@
       ]);
   let currentSort = $derived(activeTab === 'posts' ? postSort : creatorSort);
   let currentSortLabel = $derived(
-    sortOptions.find((o) => o.value === currentSort)?.label ?? (i18n.t('favorites.sort_by'))
+    sortOptions.find((o) => o.value === currentSort)?.label ?? i18n.t('favorites.sort_by')
   );
   let favoriteTabOptions = $derived<ChoiceOption<'posts' | 'creators'>[]>([
     {
@@ -558,7 +558,7 @@
       }
       notify.success(
         i18n.t('selection.save_to_library'),
-        `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
+        i18n.t('counts.posts', { count: items.length })
       );
       selectionState.exit();
     } catch (err) {
@@ -573,7 +573,7 @@
       const count = await downloadState.downloadPosts(items);
       notify.success(
         i18n.t('selection.download_all'),
-        `${count} ${count === 1 ? 'file' : 'files'}`
+        i18n.t('counts.files', { count: count })
       );
       selectionState.exit();
     } catch (err) {
@@ -590,7 +590,7 @@
       }
       notify.success(
         i18n.t('selection.unfavorite'),
-        `${items.length} ${items.length === 1 ? 'post' : 'posts'}`
+        i18n.t('counts.posts', { count: items.length })
       );
       await accountState.fetchFavorites('post', true);
       selectionState.exit();
@@ -620,7 +620,7 @@
       }
       notify.success(
         i18n.t('selection.unfavorite'),
-        `${items.length} ${items.length === 1 ? 'creator' : 'creators'}`
+        i18n.t('counts.creators', { count: items.length })
       );
       await accountState.fetchFavorites('creator', true);
       selectionState.exit();
@@ -1214,7 +1214,7 @@
       >
         <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
         <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{isSelectionActive ? (i18n.t('selection.exit')) : (i18n.t('selection.select_mode'))}</span>
+          <span class="text-sm font-semibold text-primary">{isSelectionActive ? i18n.t('selection.exit') : i18n.t('selection.select_mode')}</span>
         </div>
       </button>
 

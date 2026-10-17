@@ -50,7 +50,7 @@
       if (copyTimer) clearTimeout(copyTimer);
       copyTimer = setTimeout(() => { copied = null; }, 2000);
     } catch {
-      notify.error('Failed to copy');
+      notify.error(i18n.t('common.copy_failed'));
     }
   }
 </script>

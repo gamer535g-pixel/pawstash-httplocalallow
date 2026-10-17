@@ -205,12 +205,12 @@
     }
 
     const byKind: FileBadge[] = [
-      { key: 'images', icon: IconImage, count: fileCounts.images, tooltip: `${fileCounts.images} ${i18n.t('feed.photos')}` },
-      { key: 'videos', icon: IconVideo, count: fileCounts.videos, tooltip: `${fileCounts.videos} ${i18n.t('feed.videos')}` },
-      { key: 'audios', icon: IconMusic, count: fileCounts.audios, tooltip: `${fileCounts.audios} ${i18n.t('feed.audio')}` },
-      { key: 'archives', icon: IconFolderZip, count: fileCounts.archives, tooltip: `${fileCounts.archives} ${i18n.t('feed.archives')}` },
-      { key: 'documents', icon: IconDocument, count: fileCounts.documents, tooltip: `${fileCounts.documents} ${i18n.t('feed.documents')}` },
-      { key: 'clouds', icon: IconCloud, count: fileCounts.clouds, tooltip: `${fileCounts.clouds} ${i18n.t('feed.cloud_links')}`, cloud: true }
+      { key: 'images', icon: IconImage, count: fileCounts.images, tooltip: i18n.t('counts.photos', { count: fileCounts.images }) },
+      { key: 'videos', icon: IconVideo, count: fileCounts.videos, tooltip: i18n.t('counts.videos', { count: fileCounts.videos }) },
+      { key: 'audios', icon: IconMusic, count: fileCounts.audios, tooltip: i18n.t('counts.audio', { count: fileCounts.audios }) },
+      { key: 'archives', icon: IconFolderZip, count: fileCounts.archives, tooltip: i18n.t('counts.archives', { count: fileCounts.archives }) },
+      { key: 'documents', icon: IconDocument, count: fileCounts.documents, tooltip: i18n.t('counts.documents', { count: fileCounts.documents }) },
+      { key: 'clouds', icon: IconCloud, count: fileCounts.clouds, tooltip: i18n.t('counts.cloud_links', { count: fileCounts.clouds }), cloud: true }
     ].filter((badge) => badge.count > 0);
 
     if (byKind.length <= 2) return byKind;

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { i18n } from '$lib/i18n';
+  import { formatPercent } from '$lib/utils/formatters';
   import { themeState } from '$lib/theme/themeState.svelte';
   import type { CacheStats } from '$lib/utils/ipc';
 
@@ -75,21 +76,21 @@
         {formatBytes(fileBytes)}
       </span>
       <span class="text-xs text-ink/40 font-mono">
-        / {limitMb} MB
+        / {formatBytes(maxBytes)}
       </span>
       {#if stats?.file_count}
         <span class="text-[11px] text-ink/30 font-medium">
-          ({stats.file_count} {i18n.t('settings.cache_files').toLowerCase()})
+          ({i18n.t('counts.files', { count: stats.file_count })})
         </span>
       {/if}
     </div>
 
     <span class="text-xs font-mono font-medium {usedPercent > 85 ? 'text-amber-400' : 'text-ink/50'}">
-      {usedPercent.toFixed(1)}%
+      {formatPercent(usedPercent)}
     </span>
   </div>
 
-  <div class="storage-bar-track" title="{formatBytes(fileBytes)} / {limitMb} MB">
+  <div class="storage-bar-track" title="{formatBytes(fileBytes)} / {formatBytes(maxBytes)}">
     {#if categories.length === 0}
       <div class="h-full w-full bg-veil/[0.04]"></div>
     {:else}
@@ -98,7 +99,7 @@
           <div
             class="storage-bar-segment"
             style="width: {cat.shareOfUsed}%; background-color: {cat.color};"
-            title="{cat.label}: {formatBytes(cat.bytes)} ({cat.shareOfUsed.toFixed(1)}%)"
+            title="{cat.label}: {formatBytes(cat.bytes)} ({formatPercent(cat.shareOfUsed)})"
           ></div>
         {/each}
       </div>
