@@ -19,6 +19,8 @@ pub struct CloudNode {
     pub thumbnail_url: Option<String>,
     #[serde(default)]
     pub children: Option<Vec<CloudNode>>,
+    #[serde(default)]
+    pub is_encrypted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

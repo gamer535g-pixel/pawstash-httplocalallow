@@ -52,6 +52,7 @@ pub struct AppState {
     pub subscription_manager: Arc<SubscriptionManager>,
     pub sync_manager: Arc<SyncManager>,
     pub config_manager: Arc<ConfigManager>,
+    pub archives: Arc<crate::archive::ArchiveRegistry>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -295,6 +296,7 @@ pub async fn clear_all_content_cache(state: State<'_, AppState>) -> Result<Cache
 #[tauri::command]
 pub async fn wipe_all_data(state: State<'_, AppState>) -> Result<CacheStats, String> {
     state.download_manager.cancel_all();
+    state.archives.clear();
     with_content(&state, |content| content.wipe_all_data()).await
 }
 
@@ -3946,9 +3948,70 @@ pub fn update_boss_key(
     update_panic_key(shortcut, enabled, app_handle)
 }
 
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct CloudLinkContext {
+    pub service: String,
+    pub creator_id: String,
+    #[serde(default)]
+    pub post_text: Option<String>,
+}
+
+fn locked_link_id(url: &str) -> String {
+    use sha2::Digest;
+    format!("link:{:x}", sha2::Sha256::digest(url.as_bytes()))
+}
+
+async fn decrypt_with_candidates(
+    url: &str,
+    candidates: Vec<String>,
+) -> Result<Option<(String, String)>, String> {
+    let url = url.to_string();
+    tokio::task::spawn_blocking(move || {
+        for password in candidates {
+            match crate::cloud::mega::decrypt_protected_link(&url, &password) {
+                Ok(unlocked) => return Ok(Some((unlocked, password))),
+                Err(crate::cloud::mega::ProtectedLinkError::WrongPassword) => continue,
+                Err(crate::cloud::mega::ProtectedLinkError::Malformed) => {
+                    return Err("This MEGA link is damaged or incomplete".to_string())
+                }
+                Err(crate::cloud::mega::ProtectedLinkError::Unsupported) => {
+                    return Err(
+                        "This kind of password-protected MEGA link isn't supported".to_string()
+                    )
+                }
+            }
+        }
+        Ok(None)
+    })
+    .await
+    .map_err(|e| format!("MEGA password check failed: {e}"))?
+}
+
+async fn resolve_and_cache(
+    state: &AppState,
+    url: &str,
+    target: &str,
+) -> Result<crate::cloud::CloudFolderResult, String> {
+    let settings = state.config_manager.load()?;
+    if !settings.cloud_scraping_enabled {
+        return Err("Cloud link scraping is disabled in settings".to_string());
+    }
+    let result = crate::cloud::CloudResolver::new(&settings)?
+        .resolve(target)
+        .await?;
+    if let Err(error) = state
+        .content
+        .save_document("cloud_folder", url, "", "", &result)
+    {
+        tracing::warn!(%error, "Failed to cache resolved cloud link");
+    }
+    Ok(result)
+}
+
 #[tauri::command]
 pub async fn resolve_cloud_link(
     url: String,
+    context: Option<CloudLinkContext>,
     state: State<'_, AppState>,
 ) -> Result<crate::cloud::CloudFolderResult, String> {
     if let Ok(Some(mut cached)) = state
@@ -3965,18 +4028,40 @@ pub async fn resolve_cloud_link(
         }
     }
 
-    let settings = state.config_manager.load()?;
-    if !settings.cloud_scraping_enabled {
-        return Err("Cloud link scraping is disabled in settings".to_string());
-    }
-    let resolver = crate::cloud::CloudResolver::new(&settings)?;
-    match resolver.resolve(&url).await {
-        Ok(result) => {
-            let _ = state
-                .content
-                .save_document("cloud_folder", &url, "", "", &result);
-            Ok(result)
+    let passwords = state.archives.passwords();
+    let link_id = locked_link_id(&url);
+    let context = context.unwrap_or_default();
+    let target = if crate::cloud::mega::is_protected_link(&url) {
+        let mut candidates: Vec<String> = Vec::new();
+        candidates.extend(passwords.password_for_archive(&link_id)?);
+        candidates.extend(passwords.creator_passwords(&context.service, &context.creator_id)?);
+        if let Some(text) = context.post_text.as_deref() {
+            candidates.extend(crate::archive::extract_password_candidates(text));
         }
+        let mut seen = std::collections::HashSet::new();
+        candidates.retain(|candidate| seen.insert(candidate.clone()));
+        let Some((unlocked, password)) = decrypt_with_candidates(&url, candidates).await? else {
+            return Err("password_required".to_string());
+        };
+        passwords.remember(
+            &link_id,
+            &context.service,
+            &context.creator_id,
+            &password,
+            &url,
+        )?;
+        unlocked
+    } else if crate::cloud::mega::is_keyless_link(&url) {
+        match passwords.password_for_archive(&link_id)? {
+            Some(key) => format!("{url}#{key}"),
+            None => return Err("key_required".to_string()),
+        }
+    } else {
+        url.clone()
+    };
+
+    match resolve_and_cache(&state, &url, &target).await {
+        Ok(result) => Ok(result),
         Err(error) => {
             if let Ok(Some(mut cached)) = state
                 .content
@@ -3988,6 +4073,71 @@ pub async fn resolve_cloud_link(
             Err(error)
         }
     }
+}
+
+#[tauri::command]
+pub async fn unlock_cloud_link(
+    url: String,
+    secret: String,
+    context: Option<CloudLinkContext>,
+    state: State<'_, AppState>,
+) -> Result<crate::cloud::CloudFolderResult, String> {
+    let secret = secret.trim().to_string();
+    let context = context.unwrap_or_default();
+    let link_id = locked_link_id(&url);
+    let passwords = state.archives.passwords();
+
+    if crate::cloud::mega::is_protected_link(&url) {
+        let Some((unlocked, _)) = decrypt_with_candidates(&url, vec![secret.clone()]).await? else {
+            return Err("wrong_password".to_string());
+        };
+        let result = resolve_and_cache(&state, &url, &unlocked).await?;
+        passwords.remember(
+            &link_id,
+            &context.service,
+            &context.creator_id,
+            &secret,
+            &url,
+        )?;
+        return Ok(result);
+    }
+
+    if crate::cloud::mega::is_keyless_link(&url) {
+        let expected_len = if url.contains("/folder/") { 16 } else { 32 };
+        let key = secret.trim_start_matches('#').trim_end_matches('=');
+        let decoded =
+            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, key);
+        if decoded.map(|bytes| bytes.len()) != Ok(expected_len) {
+            return Err(crate::cloud::mega::WRONG_KEY.to_string());
+        }
+        let result = resolve_and_cache(&state, &url, &format!("{url}#{key}")).await?;
+        passwords.remember(&link_id, "", "", key, &url)?;
+        return Ok(result);
+    }
+
+    Err("This link is not locked".to_string())
+}
+
+#[tauri::command]
+pub fn password_hints(text: String) -> Vec<String> {
+    crate::archive::extract_password_candidates(&text)
+}
+
+#[tauri::command]
+pub async fn open_archive(
+    request: crate::archive::ArchiveOpenRequest,
+    state: State<'_, AppState>,
+) -> Result<crate::archive::ArchiveOpenResult, String> {
+    state.archives.open(request).await
+}
+
+#[tauri::command]
+pub async fn unlock_archive(
+    archive_id: String,
+    password: String,
+    state: State<'_, AppState>,
+) -> Result<crate::archive::ArchiveOpenResult, String> {
+    state.archives.unlock(&archive_id, &password).await
 }
 
 #[tauri::command]

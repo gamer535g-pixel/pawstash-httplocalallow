@@ -1,6 +1,6 @@
 [package]
 name = "pawstash"
-version = "26.10.1-1"
+version = "26.10.1-2"
 description = "A cross-platform client, downloader, and stash manager for archivers, with server e2ee library sync and more."
 authors = ["nichind"]
 license = "GPL-3.0-or-later"
@@ -60,6 +60,9 @@ async-stream = "0.3"
 bytes = "1.0"
 flate2 = "1.0"
 dunce = "1.0"
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2", "deflate64", "bzip2", "aes-crypto"] }
+pbkdf2 = "0.12"
+hmac = "0.12"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
@@ -87,6 +90,16 @@ debug = 0
 strip = "debuginfo"
 codegen-units = 1
 incremental = false
+
+# PBKDF2 for Mega password links runs 100k SHA-512 rounds per attempt; unoptimized that is seconds.
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.pbkdf2]
+opt-level = 3
+
+[profile.dev.package.hmac]
+opt-level = 3
 
 [profile.release]
 opt-level = 3

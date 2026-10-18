@@ -46,24 +46,99 @@ pub struct MediaServerState {
     pub allowed_roots: Vec<PathBuf>,
     pub config_manager: Arc<crate::config::ConfigManager>,
     pub token: String,
-    proxy_client: tokio::sync::RwLock<Option<CachedClients>>,
-    proxy_hosts: tokio::sync::Mutex<HashMap<String, Instant>>,
+    upstream: Arc<UpstreamGateway>,
+    archives: Arc<crate::archive::ArchiveRegistry>,
     resolved_roots: tokio::sync::RwLock<Option<ResolvedRoots>>,
 }
 
-impl MediaServerState {
-    fn new(
-        allowed_roots: Vec<PathBuf>,
-        config_manager: Arc<crate::config::ConfigManager>,
-        token: String,
-    ) -> Self {
+pub struct UpstreamGateway {
+    config_manager: Arc<crate::config::ConfigManager>,
+    proxy_client: tokio::sync::RwLock<Option<CachedClients>>,
+    proxy_hosts: tokio::sync::Mutex<HashMap<String, Instant>>,
+}
+
+impl UpstreamGateway {
+    pub fn new(config_manager: Arc<crate::config::ConfigManager>) -> Self {
         Self {
-            allowed_roots,
             config_manager,
-            token,
             proxy_client: tokio::sync::RwLock::new(None),
             proxy_hosts: tokio::sync::Mutex::new(HashMap::new()),
-            resolved_roots: tokio::sync::RwLock::new(None),
+        }
+    }
+
+    pub async fn send(
+        &self,
+        method: Method,
+        raw_url: &str,
+        range: Option<&str>,
+    ) -> Result<(reqwest::Response, reqwest::Url), (StatusCode, String)> {
+        let settings = self
+            .config_manager
+            .load()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        let (client, _) = self
+            .upstream_clients(&settings)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        let mut target_url = self.validate_target(raw_url).await?;
+        let mut redirect_count = 0;
+        loop {
+            let target_text = target_url.as_str();
+            let mut req = client
+                .request(method.clone(), target_url.clone())
+                .headers(crate::downloader::derive_download_headers(target_text));
+            if let Some(referer_url) = crate::downloader::derive_download_referer(target_text) {
+                if let Ok(ref_val) = header::HeaderValue::from_str(&referer_url) {
+                    req = req.header(header::REFERER, ref_val);
+                }
+            }
+            let resolved_cookie = settings
+                .resolve_cookie_for_url(target_text)
+                .unwrap_or_default();
+            if let Some(cookie_val) =
+                crate::downloader::derive_download_cookie(target_text, &resolved_cookie)
+            {
+                if let Ok(val) = header::HeaderValue::from_str(&cookie_val) {
+                    req = req.header(header::COOKIE, val);
+                }
+            }
+            if let Some(range) = range {
+                req = req.header(header::RANGE, range);
+            }
+            let response = req.send().await.map_err(|e| {
+                tracing::error!("Upstream request to '{target_url}' failed: {e}");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("Cloud upstream request failed: {e}"),
+                )
+            })?;
+            if !response.status().is_redirection() {
+                return Ok((response, target_url));
+            }
+            if redirect_count >= 5 {
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    "Cloud upstream exceeded the redirect limit".to_string(),
+                ));
+            }
+            let location = response
+                .headers()
+                .get(header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| {
+                    (
+                        StatusCode::BAD_GATEWAY,
+                        "Cloud upstream returned an invalid redirect".to_string(),
+                    )
+                })?;
+            let redirected = target_url.join(location).map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("Cloud upstream returned an invalid redirect URL: {e}"),
+                )
+            })?;
+            target_url = self.validate_target(redirected.as_str()).await?;
+            redirect_count += 1;
         }
     }
 
@@ -136,6 +211,80 @@ impl MediaServerState {
         hosts.insert(host.to_string(), Instant::now() + PROXY_HOST_TTL);
     }
 
+    async fn validate_target(&self, raw: &str) -> Result<reqwest::Url, (StatusCode, String)> {
+        let url = reqwest::Url::parse(raw)
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid cloud URL: {e}")))?;
+        if url.scheme() != "https"
+            || url.username() != ""
+            || url.password().is_some()
+            || url.port().is_some()
+        {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Cloud proxy only accepts credential-free HTTPS URLs on port 443".to_string(),
+            ));
+        }
+        let host = url
+            .host_str()
+            .ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "Cloud proxy URL has no host".to_string(),
+                )
+            })?
+            .to_ascii_lowercase();
+
+        if self.host_recently_validated(&host).await {
+            return Ok(url);
+        }
+
+        let addresses = tokio::net::lookup_host((host.as_str(), 443))
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::BAD_GATEWAY,
+                    format!("Cloud host lookup failed: {e}"),
+                )
+            })?;
+        let mut found = false;
+        for address in addresses {
+            found = true;
+            if !is_public_ip(address.ip()) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    "Cloud proxy cannot access local or private network addresses".to_string(),
+                ));
+            }
+        }
+        if !found {
+            return Err((
+                StatusCode::BAD_GATEWAY,
+                "Cloud host did not resolve to an address".to_string(),
+            ));
+        }
+        self.remember_validated_host(&host).await;
+        Ok(url)
+    }
+}
+
+impl MediaServerState {
+    fn new(
+        allowed_roots: Vec<PathBuf>,
+        config_manager: Arc<crate::config::ConfigManager>,
+        token: String,
+        upstream: Arc<UpstreamGateway>,
+        archives: Arc<crate::archive::ArchiveRegistry>,
+    ) -> Self {
+        Self {
+            allowed_roots,
+            config_manager,
+            token,
+            upstream,
+            archives,
+            resolved_roots: tokio::sync::RwLock::new(None),
+        }
+    }
+
     async fn allowed_roots_for(&self, download_dir: &str) -> Vec<PathBuf> {
         if let Some(cached) = self.resolved_roots.read().await.as_ref() {
             if cached.download_dir == download_dir {
@@ -181,6 +330,8 @@ impl MediaServer {
         allowed_roots: Vec<PathBuf>,
         config_manager: Arc<crate::config::ConfigManager>,
         token: String,
+        upstream: Arc<UpstreamGateway>,
+        archives: Arc<crate::archive::ArchiveRegistry>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let cors = CorsLayer::new()
             .allow_origin([
@@ -206,7 +357,13 @@ impl MediaServer {
                 header::CACHE_CONTROL,
             ]);
 
-        let state = Arc::new(MediaServerState::new(allowed_roots, config_manager, token));
+        let state = Arc::new(MediaServerState::new(
+            allowed_roots,
+            config_manager,
+            token,
+            upstream,
+            archives,
+        ));
 
         let app = Router::new()
             .route("/media/*file_path", get(serve_media_handler))
@@ -214,6 +371,10 @@ impl MediaServer {
             .route(
                 "/cloud_stream/proxy",
                 get(serve_cloud_proxy_stream_handler).head(serve_cloud_proxy_stream_handler),
+            )
+            .route(
+                "/cloud_stream/archive",
+                get(serve_archive_entry_handler).head(serve_archive_entry_handler),
             )
             .with_state(state)
             .layer(cors);
@@ -475,6 +636,7 @@ async fn serve_mega_stream_handler(
         .load()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let (_, client) = state
+        .upstream
         .upstream_clients(&settings)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -616,29 +778,21 @@ async fn serve_mega_stream_handler(
     Ok(response)
 }
 
-fn parse_range(range_str: &str, file_size: u64) -> Option<(u64, u64)> {
-    if !range_str.starts_with("bytes=") {
-        return None;
+pub(crate) fn parse_range(range_str: &str, file_size: u64) -> Option<(u64, u64)> {
+    let spec = range_str.strip_prefix("bytes=")?.split(',').next()?.trim();
+    let (start, end) = spec.split_once('-')?;
+    let last = file_size.checked_sub(1)?;
+    if start.is_empty() {
+        let suffix = end.parse::<u64>().ok().filter(|length| *length > 0)?;
+        return Some((file_size.saturating_sub(suffix), last));
     }
-
-    let range_val = &range_str[6..];
-    let parts: Vec<&str> = range_val.split('-').collect();
-    if parts.is_empty() {
-        return None;
-    }
-
-    let start = parts[0].parse::<u64>().ok()?;
-    let end = if parts.len() > 1 && !parts[1].is_empty() {
-        parts[1].parse::<u64>().ok()?
+    let start = start.parse::<u64>().ok()?;
+    let end = if end.is_empty() {
+        last
     } else {
-        file_size.saturating_sub(1)
+        end.parse::<u64>().ok()?.min(last)
     };
-
-    if start > end || end >= file_size {
-        return None;
-    }
-
-    Some((start, end))
+    (start <= end).then_some((start, end))
 }
 
 #[derive(Deserialize)]
@@ -660,77 +814,20 @@ async fn serve_cloud_proxy_stream_handler(
         .load()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let (client, _) = state
+        .upstream
         .upstream_clients(&settings)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let is_head = method == Method::HEAD;
     let normalized_url = crate::downloader::normalize_download_url(&params.url);
-    let mut target_url = validate_proxy_target(&state, &normalized_url).await?;
-    let mut redirect_count = 0;
-    let upstream = loop {
-        let target_text = target_url.as_str();
-        let mut req = if is_head {
-            client.head(target_url.clone())
-        } else {
-            client.get(target_url.clone())
-        };
-        req = req.headers(crate::downloader::derive_download_headers(target_text));
-        if let Some(referer_url) = crate::downloader::derive_download_referer(target_text) {
-            if let Ok(ref_val) = header::HeaderValue::from_str(&referer_url) {
-                req = req.header(header::REFERER, ref_val);
-            }
-        }
-        let resolved_cookie = settings
-            .resolve_cookie_for_url(target_text)
-            .unwrap_or_default();
-        if let Some(cookie_val) =
-            crate::downloader::derive_download_cookie(target_text, &resolved_cookie)
-        {
-            if let Ok(val) = header::HeaderValue::from_str(&cookie_val) {
-                req = req.header(header::COOKIE, val);
-            }
-        }
-        if let Some(range) = headers.get(header::RANGE) {
-            if let Ok(range_val) = range.to_str() {
-                req = req.header(header::RANGE, range_val);
-            }
-        }
-        let response = req.send().await.map_err(|e| {
-            tracing::error!("Cloud proxy stream request failed: {e}");
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("Cloud upstream request failed: {e}"),
-            )
-        })?;
-        if !response.status().is_redirection() {
-            break response;
-        }
-        if redirect_count >= 5 {
-            return Err((
-                StatusCode::BAD_GATEWAY,
-                "Cloud upstream exceeded the redirect limit".to_string(),
-            ));
-        }
-        let location = response
-            .headers()
-            .get(header::LOCATION)
-            .and_then(|value| value.to_str().ok())
-            .ok_or_else(|| {
-                (
-                    StatusCode::BAD_GATEWAY,
-                    "Cloud upstream returned an invalid redirect".to_string(),
-                )
-            })?;
-        let redirected = target_url.join(location).map_err(|e| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("Cloud upstream returned an invalid redirect URL: {e}"),
-            )
-        })?;
-        target_url = validate_proxy_target(&state, redirected.as_str()).await?;
-        redirect_count += 1;
-    };
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok());
+    let (upstream, target_url) = state
+        .upstream
+        .send(method.clone(), &normalized_url, range)
+        .await?;
 
     let status = upstream.status();
     if !status.is_success() && status != StatusCode::PARTIAL_CONTENT {
@@ -839,62 +936,27 @@ async fn serve_cloud_proxy_stream_handler(
     Ok(response)
 }
 
-async fn validate_proxy_target(
-    state: &MediaServerState,
-    raw: &str,
-) -> Result<reqwest::Url, (StatusCode, String)> {
-    let url = reqwest::Url::parse(raw)
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid cloud URL: {e}")))?;
-    if url.scheme() != "https"
-        || url.username() != ""
-        || url.password().is_some()
-        || url.port().is_some()
-    {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Cloud proxy only accepts credential-free HTTPS URLs on port 443".to_string(),
-        ));
-    }
-    let host = url
-        .host_str()
-        .ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                "Cloud proxy URL has no host".to_string(),
-            )
-        })?
-        .to_ascii_lowercase();
+#[derive(Deserialize)]
+struct ArchiveEntryParams {
+    token: String,
+    id: String,
+    entry: usize,
+}
 
-    if state.host_recently_validated(&host).await {
-        return Ok(url);
-    }
-
-    let addresses = tokio::net::lookup_host((host.as_str(), 443))
+async fn serve_archive_entry_handler(
+    State(state): State<Arc<MediaServerState>>,
+    method: Method,
+    Query(params): Query<ArchiveEntryParams>,
+    headers: HeaderMap,
+) -> Result<Response, (StatusCode, String)> {
+    require_token(&state, &params.token)?;
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok());
+    state
+        .archives
+        .serve_entry(&params.id, params.entry, method == Method::HEAD, range)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::BAD_GATEWAY,
-                format!("Cloud host lookup failed: {e}"),
-            )
-        })?;
-    let mut found = false;
-    for address in addresses {
-        found = true;
-        if !is_public_ip(address.ip()) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "Cloud proxy cannot access local or private network addresses".to_string(),
-            ));
-        }
-    }
-    if !found {
-        return Err((
-            StatusCode::BAD_GATEWAY,
-            "Cloud host did not resolve to an address".to_string(),
-        ));
-    }
-    state.remember_validated_host(&host).await;
-    Ok(url)
 }
 
 fn is_public_ip(ip: IpAddr) -> bool {
@@ -937,6 +999,21 @@ mod tests {
     use std::net::Ipv4Addr;
 
     #[test]
+    fn parses_byte_ranges_per_rfc_7233() {
+        assert_eq!(parse_range("bytes=0-3", 100), Some((0, 3)));
+        assert_eq!(parse_range("bytes=10-", 100), Some((10, 99)));
+        assert_eq!(parse_range("bytes=-30", 100), Some((70, 99)));
+        assert_eq!(parse_range("bytes=-500", 100), Some((0, 99)));
+        assert_eq!(parse_range("bytes=90-200", 100), Some((90, 99)));
+        assert_eq!(parse_range("bytes=0-1, 5-6", 100), Some((0, 1)));
+        assert_eq!(parse_range("bytes=100-", 100), None);
+        assert_eq!(parse_range("bytes=-0", 100), None);
+        assert_eq!(parse_range("bytes=5-1", 100), None);
+        assert_eq!(parse_range("bytes=0-1", 0), None);
+        assert_eq!(parse_range("items=0-1", 100), None);
+    }
+
+    #[test]
     fn test_is_public_ipv4_allows_fakeip_and_cgnat() {
         assert!(is_public_ipv4(Ipv4Addr::new(198, 18, 0, 1)));
         assert!(is_public_ipv4(Ipv4Addr::new(198, 18, 0, 37)));
@@ -961,19 +1038,17 @@ mod tests {
         assert!(!is_public_ipv4(Ipv4Addr::new(0, 0, 0, 0)));
     }
 
-    fn test_state() -> Option<MediaServerState> {
+    fn test_gateway() -> Option<UpstreamGateway> {
         let config_manager = crate::config::ConfigManager::new().ok()?;
-        Some(MediaServerState::new(
-            Vec::new(),
-            Arc::new(config_manager),
-            "test-token".to_string(),
-        ))
+        Some(UpstreamGateway::new(Arc::new(config_manager)))
     }
 
     #[tokio::test]
     async fn test_validate_proxy_target_dropbox() {
-        let Some(state) = test_state() else { return };
-        let res = validate_proxy_target(&state, crate::cloud::dropbox::example_url()).await;
+        let Some(state) = test_gateway() else { return };
+        let res = state
+            .validate_target(crate::cloud::dropbox::example_url())
+            .await;
 
         match res {
             Ok(_) => {}
@@ -984,7 +1059,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validated_host_is_cached_then_expires() {
-        let Some(state) = test_state() else { return };
+        let Some(state) = test_gateway() else { return };
         assert!(!state.host_recently_validated("example.com").await);
 
         state.remember_validated_host("example.com").await;
@@ -1000,8 +1075,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_private_targets_are_rejected_and_not_cached() {
-        let Some(state) = test_state() else { return };
-        let res = validate_proxy_target(&state, "https://localhost/file.mp4").await;
+        let Some(state) = test_gateway() else { return };
+        let res = state.validate_target("https://localhost/file.mp4").await;
         assert!(res.is_err(), "loopback target must be rejected");
         assert!(!state.host_recently_validated("localhost").await);
     }

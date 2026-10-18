@@ -124,6 +124,7 @@ pub async fn resolve_pixeldrain(
                     file.id
                 )),
                 children: None,
+                is_encrypted: false,
             });
         }
 
@@ -182,6 +183,7 @@ pub async fn resolve_pixeldrain(
                 file_data.id
             )),
             children: None,
+            is_encrypted: false,
         };
 
         Ok(CloudFolderResult {

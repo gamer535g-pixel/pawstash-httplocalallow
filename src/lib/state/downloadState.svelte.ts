@@ -16,6 +16,7 @@ import {
 } from '$lib/utils/ipc';
 import type { Post } from '$lib/types/content';
 import { getPostDownloadTargets } from '$lib/utils/media';
+import { cloudLinkContext } from '$lib/utils/cloudLink';
 import { contentState, postCacheKey } from '$lib/state/contentState.svelte';
 import { serverPortState } from '$lib/state/serverPort.svelte';
 import { configState } from '$lib/state/configState.svelte';
@@ -241,9 +242,10 @@ export class DownloadState {
     if (cloudLinks.length > 0) {
       await serverPortState.ensurePort();
       const port = serverPortState.port || 0;
+      const context = cloudLinkContext(fullPost);
       for (const cloudUrl of cloudLinks) {
         try {
-          const res = await apiResolveCloudLink(cloudUrl);
+          const res = await apiResolveCloudLink(cloudUrl, context);
           if (res?.nodes && Array.isArray(res.nodes)) {
             const fileNodes = res.nodes.filter((n) => !n.is_folder);
             for (const node of fileNodes) {

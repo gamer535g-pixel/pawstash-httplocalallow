@@ -127,6 +127,7 @@ pub async fn resolve_dropbox(client: &Client, url_str: &str) -> Result<CloudFold
         stream_url: Some(stream_url.clone()),
         thumbnail_url: if is_folder { None } else { Some(stream_url) },
         children: None,
+        is_encrypted: false,
     };
 
     let total_size = size.unwrap_or(0);
@@ -166,6 +167,7 @@ mod tests {
                 stream_url: Some("https://www.dropbox.com/s/xyz/video.mp4?dl=0".into()),
                 thumbnail_url: None,
                 children: None,
+                is_encrypted: false,
             }],
         };
 

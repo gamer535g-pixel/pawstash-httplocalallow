@@ -28,6 +28,8 @@
     onblur?: (e: Event) => void;
     onkeydown?: (e: KeyboardEvent) => void;
     autofocus?: boolean;
+    labelledby?: string;
+    describedby?: string;
     ref?: HTMLInputElement | null;
     size?: 'sm' | 'base' | 'md' | 'lg';
     class?: string;
@@ -43,6 +45,8 @@
     readonly = false,
     clearable = false,
     autofocus = false,
+    labelledby,
+    describedby,
     ref = $bindable(),
     size,
     icon: IconComponent,
@@ -104,6 +108,8 @@
     {autocomplete}
     {name}
     {autofocus}
+    aria-labelledby={labelledby}
+    aria-describedby={describedby}
     bind:value
     {oninput}
     {onchange}
@@ -172,7 +178,7 @@
           e.stopPropagation();
           onAction();
         }}
-        aria-label={actionTooltip || 'Action'}
+        aria-label={actionTooltip}
       >
         <ActionIconComponent style="width: 18px; height: 18px;" />
       </button>

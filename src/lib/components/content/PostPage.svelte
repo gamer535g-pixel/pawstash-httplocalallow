@@ -5,7 +5,7 @@
 </script>
 
 <script lang="ts">
-  import { onMount, onDestroy, untrack, getContext } from 'svelte';
+  import { onMount, onDestroy, untrack, getContext, tick } from 'svelte';
   import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
   import { contentState, postCacheKey, creatorCacheKey, normalizePostId, type CachedPost } from '$lib/state/contentState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
@@ -21,11 +21,12 @@
   import type { LibraryCollection } from '$lib/types/library';
   import { i18n } from '$lib/i18n';
   import { formatDate, formatBytes, parseTags, getPostTags, cleanPostTitle, parseDateTimestamp } from '$lib/utils/formatters';
-  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isSameAttachment, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, getUnsupportedContainerFormat, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, isPostUnarchived, getAttachmentDeclaredSize, type MediaFailureState } from '$lib/utils/media';
+  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isSameAttachment, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, getUnsupportedContainerFormat, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, isPostUnarchived, getAttachmentDeclaredSize, isOpenableArchive, type MediaFailureState } from '$lib/utils/media';
   import { seedFromImageUrl, seedFromThumbHash } from '$lib/theme/seedColor';
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import { extractDirectMediaLinks } from './RichContent.svelte';
-  import { apiResolveCloudLink } from '$lib/utils/ipc';
+  import { apiOpenArchive, apiResolveCloudLink } from '$lib/utils/ipc';
+  import { cloudLinkContext, cloudLockKind, postSecretText } from '$lib/utils/cloudLink';
   import { logger, logMediaError } from '$lib/utils/logger';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { getVideoThumbnail } from '$lib/utils/mediaThumbnail';
@@ -83,6 +84,7 @@
   import IconComment from '~icons/fluent/comment-24-regular';
   import IconFolder from '~icons/fluent/folder-24-regular';
   import IconFolderAdd from '~icons/fluent/folder-add-24-regular';
+  import IconFolderZip from '~icons/fluent/folder-zip-24-regular';
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
   import IconSparkle from '~icons/fluent/sparkle-24-regular';
@@ -92,8 +94,9 @@
   import IconCopy from '~icons/fluent/copy-24-regular';
   import IconArrowSort from '~icons/fluent/arrow-sort-24-regular';
   import CloudFolderModal from '$lib/components/content/CloudFolderModal.svelte';
+  import CloudLinkCard from '$lib/components/content/CloudLinkCard.svelte';
   import CodecGuideModal from '$lib/components/content/CodecGuideModal.svelte';
-  import type { CloudFolderResult, CloudNode } from '$lib/types/cloud';
+  import type { ArchiveAttachment, ArchiveOpenResult, CloudFolderResult, CloudLockKind, CloudNode } from '$lib/types/cloud';
   import { providerState } from '$lib/state/providerState.svelte';
   import { notify } from '$lib/utils/toast';
   import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
@@ -476,12 +479,57 @@
   let activeCloudModalInitialFolderId = $state<string | null>(null);
   let isCloudModalOpen = $state(false);
   let cloudFolderResults = $state<Map<string, CloudFolderResult>>(new Map(globalCloudFolderCache));
+  let lockedCloudLinks = $state<{ url: string; kind: CloudLockKind }[]>([]);
+  let unlockedCloudAttachments: Attachment[] = [];
+
+  function withUnlocked(resolved: Attachment[]): Attachment[] {
+    const extra = unlockedCloudAttachments.filter(
+      (att) => !resolved.some((existing) => isSameAttachment(existing, att))
+    );
+    return extra.length > 0 ? [...resolved, ...extra] : resolved;
+  }
+
+  let activeArchive = $state<ArchiveOpenResult | null>(null);
+  let activeArchiveFile = $state<ArchiveAttachment | null>(null);
+  let openingArchivePath = $state<string | null>(null);
 
   function openCloudFolderModal(folderResult?: CloudFolderResult, folderId?: string | null) {
     if (!folderResult) return;
+    activeArchive = null;
+    activeArchiveFile = null;
     activeCloudModalFolder = folderResult;
     activeCloudModalInitialFolderId = folderId || null;
     isCloudModalOpen = true;
+  }
+
+  async function openArchive(file: Attachment) {
+    if (!post || !file.path || !file.name || openingArchivePath) return;
+    const job = attachmentDownload(file);
+    const name = file.name;
+    const url = resolveAttachmentDownloadUrl(file);
+    const requestedFor = postKey;
+    openingArchivePath = file.path;
+    try {
+      const result = await apiOpenArchive({
+        url: url || null,
+        local_path: job?.status === 'completed' && job.final_path ? job.final_path : null,
+        name,
+        service: post.service,
+        creator_id: post.user,
+        post_id: post.id,
+        post_text: postSecretText(post) || null
+      });
+      if (postKey !== requestedFor) return;
+      activeArchive = result;
+      activeArchiveFile = { name, url, media_id: file.path, size: getEffectiveFileSize(file) || undefined };
+      activeCloudModalFolder = result.folder ?? null;
+      activeCloudModalInitialFolderId = null;
+      isCloudModalOpen = true;
+    } catch (error) {
+      notify.error(i18n.t('cloud.archive_open_failed'), error);
+    } finally {
+      openingArchivePath = null;
+    }
   }
 
   async function downloadCloudSubfolder(folderResult?: CloudFolderResult, folderId?: string | null) {
@@ -530,17 +578,51 @@
     );
   }
 
+  function markCloudLinkLocked(url: string, kind: CloudLockKind) {
+    lockedCloudLinks = [...lockedCloudLinks.filter((link) => link.url !== url), { url, kind }];
+  }
+
+  async function revealLockedCloudLink(url: string) {
+    await tick();
+    document
+      .querySelector(`[data-cloud-url="${CSS.escape(url)}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function handleCloudLinkUnlocked(url: string, res: CloudFolderResult) {
+    globalCloudFolderCache.set(url, res);
+    cloudFolderResults.set(url, res);
+    if (!lockedCloudLinks.some((link) => link.url === url)) return;
+    unlockedCloudAttachments = [...unlockedCloudAttachments, ...cloudResultAttachments(res)];
+    resolvedCloudAttachments = withUnlocked(resolvedCloudAttachments);
+    cloudResolvedVersion++;
+  }
+
   async function handleOpenCloudFromText(url: string) {
     let existing = cloudFolderResults.get(url) || globalCloudFolderCache.get(url);
+    if (!existing && lockedCloudLinks.some((link) => link.url === url)) {
+      void revealLockedCloudLink(url);
+      return;
+    }
     if (!existing && configState.settings.cloud_scraping_enabled !== false) {
+      const requestedFor = postKey;
       try {
-        existing = await apiResolveCloudLink(url);
+        existing = await apiResolveCloudLink(url, post ? cloudLinkContext(post) : undefined);
         cloudFolderResults.set(url, existing);
         globalCloudFolderCache.set(url, existing);
         cloudResolvedVersion++;
       } catch (err) {
+        const kind = cloudLockKind(err);
+        if (kind) {
+          if (postKey === requestedFor) {
+            markCloudLinkLocked(url, kind);
+            void revealLockedCloudLink(url);
+          }
+          return;
+        }
         logger.warn(`Failed to resolve cloud link from text: ${url}`, err);
       }
+      if (postKey !== requestedFor) return;
     }
     if (existing) {
       openCloudFolderModal(existing, null);
@@ -549,90 +631,100 @@
     }
   }
 
+  function cloudResultAttachments(res: CloudFolderResult): Attachment[] {
+    const fileNodes = res.nodes.filter((n) => !n.is_folder);
+    const nodesToDisplay = fileNodes.length > 0 ? fileNodes : res.nodes;
+    const singleFileSize = nodesToDisplay.length === 1 && res.total_size > 0 ? res.total_size : undefined;
+
+    return nodesToDisplay.map((node): Attachment => {
+      const shared = {
+        name: node.name,
+        server: '',
+        is_cloud: true,
+        is_cloud_folder: node.is_folder,
+        cloud_provider: res.provider,
+        cloud_node_id: node.id,
+        cloud_folder_title: res.title,
+        cloud_folder_result: res
+      };
+      if (node.is_folder) {
+        return {
+          ...shared,
+          path: `cloud_folder:${res.provider}:${node.id}`,
+          size: undefined,
+          cloud_child_count: res.nodes.filter((n) => n.parent_id === node.id).length
+        };
+      }
+      const url = node.stream_url || node.download_url || undefined;
+      return {
+        ...shared,
+        url,
+        path: url || `cloud:${res.provider}:${node.id}`,
+        size: node.size && node.size > 0 ? node.size : singleFileSize
+      };
+    });
+  }
+
   let lastResolvedKey = '';
+  let cloudResolveRun = 0;
   $effect(() => {
     const currentPostKey = postKey;
     const cloudUrls = configState.settings.cloud_scraping_enabled === false ? [] : post?.cloud_urls || [];
     const resolveKey = `${currentPostKey}:${cloudUrls.join('|')}`;
 
     untrack(() => {
+      const sameKey = resolveKey === lastResolvedKey;
+      lastResolvedKey = resolveKey;
+      if (!sameKey) {
+        lockedCloudLinks = [];
+        unlockedCloudAttachments = [];
+      }
       const cachedNodes = globalPostCloudNodes.get(currentPostKey);
       const hasMissingCloudSizes = cachedNodes?.some((n) => !n.is_cloud_folder && (!n.size || n.size === 0));
       if (cachedNodes && cachedNodes.length > 0 && !hasMissingCloudSizes) {
+        cloudResolveRun++;
         resolvedCloudAttachments = cachedNodes;
         cloudResolving = false;
         return;
       }
 
       if (cloudUrls.length === 0) {
+        cloudResolveRun++;
         resolvedCloudAttachments = [];
         globalPostCloudNodes.delete(currentPostKey);
         cloudResolving = false;
         return;
       }
 
-      if (lastResolvedKey === resolveKey && resolvedCloudAttachments.length > 0 && !resolvedCloudAttachments.some((n) => !n.is_cloud_folder && (!n.size || n.size === 0))) {
+      if (sameKey && resolvedCloudAttachments.length > 0 && !resolvedCloudAttachments.some((n) => !n.is_cloud_folder && (!n.size || n.size === 0))) {
         return;
       }
-      lastResolvedKey = resolveKey;
+      const run = ++cloudResolveRun;
+      const isCurrent = () => run === cloudResolveRun;
+      if (!sameKey) resolvedCloudAttachments = [];
       cloudResolving = true;
 
       (async () => {
         let currentResolved: Attachment[] = [];
+        const context = post ? cloudLinkContext(post) : undefined;
         const resolveSingleUrl = async (url: string): Promise<Attachment[]> => {
           try {
             let res = globalCloudFolderCache.get(url);
             const resHasMissingSizes = res?.nodes.some((n) => !n.is_folder && (!n.size || n.size === 0));
             if (!res || resHasMissingSizes) {
-              res = await apiResolveCloudLink(url);
+              res = await apiResolveCloudLink(url, context);
               globalCloudFolderCache.set(url, res);
               logger.info(`[Cloud] Resolved link: ${url} (${res.nodes.length} items)`);
             }
             cloudFolderResults.set(url, res);
-
-            const fileNodes = res.nodes.filter((n) => !n.is_folder);
-            const nodesToDisplay = fileNodes.length > 0 ? fileNodes : res.nodes;
-            const nodes: Attachment[] = [];
-
-            for (const node of nodesToDisplay) {
-              if (node.is_folder) {
-                const childrenCount = res.nodes.filter((n) => n.parent_id === node.id).length;
-                nodes.push({
-                  name: node.name,
-                  path: `cloud_folder:${res.provider}:${node.id}`,
-                  size: undefined,
-                  server: '',
-                  is_cloud: true,
-                  is_cloud_folder: true,
-                  cloud_provider: res.provider,
-                  cloud_node_id: node.id,
-                  cloud_folder_title: res.title,
-                  cloud_folder_result: res,
-                  cloud_child_count: childrenCount
-                } as any);
-              } else {
-                nodes.push({
-                  name: node.name,
-                  url: node.stream_url || node.download_url,
-                  path: node.stream_url || node.download_url || `cloud:${res.provider}:${node.id}`,
-                  size: typeof node.size === 'number' && node.size > 0
-                    ? node.size
-                    : (nodesToDisplay.length === 1 && typeof res.total_size === 'number' && res.total_size > 0)
-                      ? res.total_size
-                      : undefined,
-                  server: '',
-                  is_cloud: true,
-                  is_cloud_folder: false,
-                  cloud_provider: res.provider,
-                  cloud_node_id: node.id,
-                  cloud_folder_title: res.title,
-                  cloud_folder_result: res
-                } as any);
-              }
-            }
-            return nodes;
+            return cloudResultAttachments(res);
           } catch (err) {
-            logger.warn(`Failed to auto-resolve cloud link for post gallery: ${url}`, err);
+            const kind = cloudLockKind(err);
+            if (kind) {
+              if (isCurrent()) markCloudLinkLocked(url, kind);
+            } else {
+              logger.warn(`Failed to auto-resolve cloud link for post gallery: ${url}`, err);
+            }
             return [];
           }
         };
@@ -640,16 +732,16 @@
         await Promise.allSettled(
           cloudUrls.map(async (url) => {
             const nodes = await resolveSingleUrl(url);
-            if (nodes.length > 0 && postKey === currentPostKey) {
+            if (nodes.length > 0 && isCurrent()) {
               currentResolved = [...currentResolved, ...nodes];
-              resolvedCloudAttachments = currentResolved;
+              resolvedCloudAttachments = withUnlocked(currentResolved);
               cloudResolvedVersion++;
             }
           })
         );
 
-        if (postKey === currentPostKey) {
-          if (currentResolved.length > 0) {
+        if (isCurrent()) {
+          if (currentResolved.length > 0 && lockedCloudLinks.length === 0) {
             globalPostCloudNodes.set(currentPostKey, currentResolved);
           }
           cloudResolving = false;
@@ -2235,6 +2327,22 @@
         </span>
       </Button>
     {/if}
+    {#if !isUnarchived && isOpenableArchive(file.name)}
+      <Button
+        variant="ghost"
+        class="media-action-icon-btn"
+        disabled={openingArchivePath !== null}
+        onclick={() => void openArchive(file)}
+        tooltip={i18n.t('cloud.archive_open')}
+        aria-label={i18n.t('cloud.archive_open')}
+      >
+        {#if openingArchivePath === file.path}
+          <IconLoading class="w-[18px] h-[18px]" />
+        {:else}
+          <IconFolderZip class="w-[18px] h-[18px]" />
+        {/if}
+      </Button>
+    {/if}
   </div>
 {/snippet}
 
@@ -2626,6 +2734,19 @@
 
       {#if entry.loading && !entry.loaded}
         <div class="detail-loading">{i18n.t('feed.loading')}</div>
+      {/if}
+
+      {#if lockedCloudLinks.length > 0}
+        <div class="locked-cloud-links">
+          {#each lockedCloudLinks as link (link.url)}
+            <CloudLinkCard
+              url={link.url}
+              {post}
+              lock={link.kind}
+              onresolved={(res) => handleCloudLinkUnlocked(link.url, res)}
+            />
+          {/each}
+        </div>
       {/if}
 
       {#if media.length > 0 || hasEmbed}
@@ -3116,6 +3237,7 @@
                     {:else}
                       {@const ext = getFileExtension(file?.name).toUpperCase() || 'FILE'}
                       {@const isUnarchived = isFileUnarchived(file, Boolean(downloaded?.final_path))}
+                      {@const isArchiveFile = isOpenableArchive(file?.name)}
                       <div class="media-header">
                         <span class="media-filename">{file?.name || i18n.t('post.file')}</span>
                         {#if isCloud && (file as any).cloud_provider}
@@ -3128,8 +3250,8 @@
                           <p class="placeholder-text">{i18n.t('post.file_not_archived')}</p>
                         </div>
                       {:else}
-                        <button class="file-placeholder media-open-surface" type="button" onclick={() => openMediaViewer(file!, activeGalleryItems)} aria-label={`${i18n.t('post.viewer_open')}: ${file?.name || i18n.t('post.file')}`}>
-                          <IconDocument class="placeholder-icon" />
+                        <button class="file-placeholder media-open-surface" type="button" onclick={() => (isArchiveFile ? void openArchive(file!) : openMediaViewer(file!, activeGalleryItems))} aria-label={`${i18n.t(isArchiveFile ? 'cloud.archive_open' : 'post.viewer_open')}: ${file?.name || i18n.t('post.file')}`}>
+                          {#if isArchiveFile}<IconFolderZip class="placeholder-icon" />{:else}<IconDocument class="placeholder-icon" />{/if}
                           <p class="placeholder-text">{ext}</p>
                         </button>
                       {/if}
@@ -3453,6 +3575,8 @@
   initialFolderId={activeCloudModalInitialFolderId}
   post={post}
   open={isCloudModalOpen}
+  archive={activeArchive}
+  archiveFile={activeArchiveFile}
   onclose={() => isCloudModalOpen = false}
 />
 
@@ -4406,6 +4530,13 @@
   .media-item :global(svg) {
     width: 16px;
     height: 16px;
+  }
+
+  .locked-cloud-links {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space-2) * var(--ui-scale, 1));
+    margin-bottom: calc(var(--space-4) * var(--ui-scale, 1));
   }
 
   .media-section {

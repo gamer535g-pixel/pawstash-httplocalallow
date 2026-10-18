@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { i18n } from '$lib/i18n';
 import { logger } from '$lib/utils/logger';
 import { notify } from '$lib/utils/toast';
-import type { CloudFolderResult } from '$lib/types/cloud';
+import type { ArchiveOpenRequest, ArchiveOpenResult, CloudFolderResult, CloudLinkContext } from '$lib/types/cloud';
 import type { AppSettings } from '$lib/types/config';
 import type { DownloadItem } from '$lib/types/download';
 import type { CreatorSubscription, SubscriptionInput } from '$lib/types/subscription';
@@ -445,8 +445,20 @@ export const apiUpdatePanicKey = (shortcut: string, enabled: boolean) =>
 export const apiUpdateBossKey = (shortcut: string, enabled: boolean) =>
   apiUpdatePanicKey(shortcut, enabled);
 
-export const apiResolveCloudLink = (url: string) =>
-  invoke<CloudFolderResult>('resolve_cloud_link', { url });
+export const apiResolveCloudLink = (url: string, context?: CloudLinkContext) =>
+  invoke<CloudFolderResult>('resolve_cloud_link', { url, context });
+
+export const apiUnlockCloudLink = (url: string, secret: string, context?: CloudLinkContext) =>
+  invoke<CloudFolderResult>('unlock_cloud_link', { url, secret, context });
+
+export const apiPasswordHints = (text: string) =>
+  invoke<string[]>('password_hints', { text });
+
+export const apiOpenArchive = (request: ArchiveOpenRequest) =>
+  invoke<ArchiveOpenResult>('open_archive', { request });
+
+export const apiUnlockArchive = (archiveId: string, password: string) =>
+  invoke<ArchiveOpenResult>('unlock_archive', { archiveId, password });
 
 export const apiGetProviderAuthSchema = (providerId: string) =>
   invoke<ProviderAuthSchema>('get_provider_auth_schema', { providerId });

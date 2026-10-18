@@ -183,7 +183,9 @@ pub fn extract_supported_urls(raw: &str) -> Vec<String> {
         if (candidate.contains("mega.nz/folder/") || candidate.contains("mega.nz/file/"))
             && !candidate.contains('#')
         {
-            if let Some(key) = extract_adjacent_mega_key(&tail[end..]) {
+            if let Some(key) =
+                extract_adjacent_mega_key(&tail[end..], candidate.contains("mega.nz/folder/"))
+            {
                 candidate = format!("{candidate}#{key}");
             }
         }
@@ -195,9 +197,12 @@ pub fn extract_supported_urls(raw: &str) -> Vec<String> {
     urls
 }
 
-fn extract_adjacent_mega_key(text: &str) -> Option<String> {
-    let window_len = text.len().min(250);
-    let window = &text[..window_len];
+fn extract_adjacent_mega_key(text: &str, is_folder: bool) -> Option<String> {
+    let mut window_len = text.len().min(250);
+    while !text.is_char_boundary(window_len) {
+        window_len -= 1;
+    }
+    let window = text[..window_len].replace('：', ":");
     let lower = window.to_ascii_lowercase();
     for prefix in [
         "code:",
@@ -215,7 +220,7 @@ fn extract_adjacent_mega_key(text: &str) -> Option<String> {
             let after = &window[pos + prefix.len()..];
             let trimmed = after.trim_start();
             let key_len = trimmed
-                .find(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
                 .unwrap_or(trimmed.len());
             let key = &trimmed[..key_len];
             if (20..=50).contains(&key.len()) {
@@ -223,7 +228,19 @@ fn extract_adjacent_mega_key(text: &str) -> Option<String> {
             }
         }
     }
-    None
+
+    let expected_len = if is_folder { 22 } else { 43 };
+    window
+        .split(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"' | '\'' | '#'))
+        .filter(|token| !token.is_empty())
+        .take(4)
+        .find(|token| {
+            token.len() == expected_len
+                && token
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+        .map(str::to_string)
 }
 
 pub(crate) fn url_host_matches(url: &str, domains: &[&str]) -> bool {
@@ -254,6 +271,34 @@ mod tests {
             extract_supported_urls(raw),
             vec!["https://mega.nz/folder/xyz#abc&node=123".to_string()]
         );
+    }
+
+    #[test]
+    fn extracts_fullwidth_and_unlabelled_mega_keys() {
+        assert_eq!(
+            extract_supported_urls(
+                "https://mega.nz/folder/Jj1liCiQ   Key：TeHAplSadyE1w--Mt861ig    リンク"
+            ),
+            vec!["https://mega.nz/folder/Jj1liCiQ#TeHAplSadyE1w--Mt861ig".to_string()]
+        );
+        assert_eq!(
+            extract_supported_urls(
+                "<a>https://mega.nz/file/jPwAmYqZ</a>     V4qd52dIsjW4Qi3zfkfESL0TrwzLZIt13C27R6c30R4"
+            ),
+            vec!["https://mega.nz/file/jPwAmYqZ#V4qd52dIsjW4Qi3zfkfESL0TrwzLZIt13C27R6c30R4".to_string()]
+        );
+        assert_eq!(
+            extract_supported_urls("https://mega.nz/folder/Jj1liCiQ and see you next month"),
+            vec!["https://mega.nz/folder/Jj1liCiQ".to_string()]
+        );
+    }
+
+    #[test]
+    fn adjacent_key_window_respects_char_boundaries() {
+        let text = format!("{}Key：TeHAplSadyE1w--Mt861ig", " ".repeat(245));
+        assert_eq!(extract_adjacent_mega_key(&text, true), None);
+        let text = format!("{}リンクは月初めに更新予定です", " ".repeat(248));
+        assert_eq!(extract_adjacent_mega_key(&text, true), None);
     }
 
     #[test]

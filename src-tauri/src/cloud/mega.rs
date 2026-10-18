@@ -16,6 +16,8 @@ use serde_json::{json, Value};
 
 type Aes128CbcDec = cbc::Decryptor<Aes128>;
 
+pub const WRONG_KEY: &str = "wrong_key";
+
 #[derive(Debug)]
 pub enum MegaLink {
     Folder { id: String, key: String },
@@ -73,6 +75,92 @@ pub fn parse_mega_url(url_str: &str) -> Option<MegaLink> {
     }
 
     None
+}
+
+pub fn is_protected_link(url: &str) -> bool {
+    supports_url(url) && url.contains("#P!")
+}
+
+pub fn is_keyless_link(url: &str) -> bool {
+    supports_url(url)
+        && !is_protected_link(url)
+        && parse_mega_url(url).is_none()
+        && (url.contains("/folder/") || url.contains("/file/"))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ProtectedLinkError {
+    Malformed,
+    Unsupported,
+    WrongPassword,
+}
+
+const PROTECTED_SALT_LEN: usize = 32;
+const PROTECTED_MAC_LEN: usize = 32;
+
+/// Mega's password-protected `#P!` links, per `exportPassword` in meganz/webclient `js/ui/export.js`.
+pub fn decrypt_protected_link(url: &str, password: &str) -> Result<String, ProtectedLinkError> {
+    use hmac::{Hmac, Mac};
+    use sha2::{Sha256, Sha512};
+
+    let payload = url
+        .split_once("#P!")
+        .map(|(_, rest)| rest.trim_end_matches('='))
+        .ok_or(ProtectedLinkError::Malformed)?;
+    let data = URL_SAFE_NO_PAD
+        .decode(payload)
+        .map_err(|_| ProtectedLinkError::Malformed)?;
+    if data.len() < 2 {
+        return Err(ProtectedLinkError::Malformed);
+    }
+    let algorithm = data[0];
+    let rounds = match algorithm {
+        0 => 1_000,
+        1 | 2 => 100_000,
+        _ => return Err(ProtectedLinkError::Unsupported),
+    };
+    let (kind, key_len) = match data[1] {
+        0 => ("folder", 16),
+        1 => ("file", 32),
+        _ => return Err(ProtectedLinkError::Unsupported),
+    };
+    let key_start = 2 + 6 + PROTECTED_SALT_LEN;
+    let mac_start = key_start + key_len;
+    if data.len() != mac_start + PROTECTED_MAC_LEN {
+        return Err(ProtectedLinkError::Malformed);
+    }
+
+    let mut derived = [0u8; 64];
+    pbkdf2::pbkdf2_hmac::<Sha512>(
+        password.trim().as_bytes(),
+        &data[8..key_start],
+        rounds,
+        &mut derived,
+    );
+    let (authenticated, tag) = data.split_at(mac_start);
+    let mac_key = &derived[32..];
+    // Algorithm 1 shipped with the HMAC key and message swapped; Mega still accepts those links.
+    let (hmac_key, message) = if algorithm == 1 {
+        (authenticated, mac_key)
+    } else {
+        (mac_key, authenticated)
+    };
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(hmac_key)
+        .map_err(|_| ProtectedLinkError::Malformed)?;
+    mac.update(message);
+    mac.verify_slice(tag)
+        .map_err(|_| ProtectedLinkError::WrongPassword)?;
+
+    let key: Vec<u8> = data[key_start..mac_start]
+        .iter()
+        .zip(&derived[..key_len])
+        .map(|(a, b)| a ^ b)
+        .collect();
+    Ok(format!(
+        "https://mega.nz/{kind}/{}#{}",
+        URL_SAFE_NO_PAD.encode(&data[2..8]),
+        URL_SAFE_NO_PAD.encode(key)
+    ))
 }
 
 fn mega_base64_decode(raw: &str) -> Result<Vec<u8>, String> {
@@ -180,9 +268,11 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                 .map_err(|e| format!("Failed to deserialize MEGA nodes: {e}"))?;
 
             let raw_nodes = folder_res.f.unwrap_or_default();
+            let raw_nodes_empty = raw_nodes.is_empty();
             let mut nodes: Vec<CloudNode> = Vec::new();
             let mut total_size: u64 = 0;
             let mut folder_title = format!("MEGA Folder ({id})");
+            let mut decrypted_any = false;
 
             for n in raw_nodes {
                 let is_folder = n.t == 1;
@@ -340,6 +430,7 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
 
                 if let Some(p_name) = decrypted_name {
                     name = p_name;
+                    decrypted_any = true;
                 }
 
                 if n.p.is_none() && is_folder {
@@ -378,7 +469,12 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                     stream_url,
                     thumbnail_url: None,
                     children: None,
+                    is_encrypted: false,
                 });
+            }
+
+            if !raw_nodes_empty && !decrypted_any {
+                return Err(WRONG_KEY.into());
             }
 
             Ok(CloudFolderResult {
@@ -429,12 +525,13 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
             let mut name = format!("mega_file_{id}");
 
             if let Some(at_str) = first_val.get("at").and_then(|v| v.as_str()) {
-                if let Ok(at_bytes) = mega_base64_decode(at_str) {
-                    if let Ok(dec_attr) = decrypt_aes_cbc_zeros(&file_key, at_bytes) {
-                        if let Some(parsed_name) = parse_attributes(&dec_attr) {
-                            name = parsed_name;
-                        }
-                    }
+                let parsed_name = mega_base64_decode(at_str)
+                    .ok()
+                    .and_then(|at_bytes| decrypt_aes_cbc_zeros(&file_key, at_bytes).ok())
+                    .and_then(|dec_attr| parse_attributes(&dec_attr));
+                match parsed_name {
+                    Some(parsed_name) => name = parsed_name,
+                    None => return Err(WRONG_KEY.into()),
                 }
             }
 
@@ -455,6 +552,7 @@ pub async fn resolve_mega(client: &Client, url_str: &str) -> Result<CloudFolderR
                 stream_url,
                 thumbnail_url: None,
                 children: None,
+                is_encrypted: false,
             };
 
             Ok(CloudFolderResult {
@@ -509,5 +607,130 @@ mod tests {
         }
 
         assert!(parse_mega_url("https://example.com/file/123").is_none());
+    }
+
+    fn protect_link(
+        algorithm: u8,
+        kind: u8,
+        handle: &[u8; 6],
+        key: &[u8],
+        password: &str,
+    ) -> String {
+        use hmac::{Hmac, Mac};
+        use sha2::{Sha256, Sha512};
+        let salt = [7u8; PROTECTED_SALT_LEN];
+        let rounds = if algorithm == 0 { 1_000 } else { 100_000 };
+        let mut derived = [0u8; 64];
+        pbkdf2::pbkdf2_hmac::<Sha512>(password.as_bytes(), &salt, rounds, &mut derived);
+        let mut data = vec![algorithm, kind];
+        data.extend_from_slice(handle);
+        data.extend_from_slice(&salt);
+        data.extend(key.iter().zip(&derived).map(|(a, b)| a ^ b));
+        let (hmac_key, message) = if algorithm == 1 {
+            (data.clone(), derived[32..].to_vec())
+        } else {
+            (derived[32..].to_vec(), data.clone())
+        };
+        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&hmac_key).unwrap();
+        mac.update(&message);
+        data.extend_from_slice(&mac.finalize().into_bytes());
+        format!("https://mega.nz/#P!{}", URL_SAFE_NO_PAD.encode(data))
+    }
+
+    #[test]
+    fn key_derivation_matches_mega_test_vector() {
+        let salt = [
+            249, 222, 39, 45, 138, 76, 162, 1, 58, 133, 114, 25, 155, 230, 53, 69, 70, 86, 71, 13,
+            67, 20, 31, 114, 54, 212, 140, 210, 73, 113, 159, 42,
+        ];
+        let expected = [
+            48, 187, 136, 114, 157, 183, 46, 234, 79, 28, 129, 167, 193, 163, 64, 247, 225, 177,
+            128, 107, 165, 148, 22, 244, 105, 58, 92, 117, 51, 64, 167, 48, 170, 18, 86, 112, 231,
+            115, 99, 59, 58, 122, 59, 138, 176, 106, 236, 106, 137, 83, 53, 32, 192, 217, 56, 55,
+            226, 93, 180, 31, 61, 148, 56, 172,
+        ];
+        let mut derived = [0u8; 64];
+        pbkdf2::pbkdf2_hmac::<sha2::Sha512>(
+            b"correct horse battery staple",
+            &salt,
+            1_000,
+            &mut derived,
+        );
+        assert_eq!(derived, expected);
+    }
+
+    #[test]
+    fn protected_links_round_trip_for_every_algorithm_and_kind() {
+        let handle = [1u8, 2, 3, 4, 5, 6];
+        let folder_key = [0x11u8; 16];
+        let file_key = [0x22u8; 32];
+        for algorithm in [0u8, 1, 2] {
+            let folder = protect_link(algorithm, 0, &handle, &folder_key, "hunter2");
+            assert_eq!(
+                decrypt_protected_link(&folder, " hunter2 ").unwrap(),
+                format!(
+                    "https://mega.nz/folder/{}#{}",
+                    URL_SAFE_NO_PAD.encode(handle),
+                    URL_SAFE_NO_PAD.encode(folder_key)
+                )
+            );
+            assert_eq!(
+                decrypt_protected_link(&folder, "hunter3"),
+                Err(ProtectedLinkError::WrongPassword)
+            );
+            let file = protect_link(algorithm, 1, &handle, &file_key, "пароль");
+            assert_eq!(
+                decrypt_protected_link(&file, "пароль").unwrap(),
+                format!(
+                    "https://mega.nz/file/{}#{}",
+                    URL_SAFE_NO_PAD.encode(handle),
+                    URL_SAFE_NO_PAD.encode(file_key)
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn real_protected_link_rejects_a_wrong_password() {
+        let url = "https://mega.nz/#P!AgHEnCCRIkhv6Ny-CPml0t4TbDvzrDnUqm2VtANrA7APZ4DV4vsIOFmevFD6lh_KAkcfoUCknhh77OG4G47yEXE0DDeqXrldDLBo1fXTEbxa1kNJt6imo2wXPWL-FS8LxTfgsoV8cVw";
+        assert!(is_protected_link(url));
+        assert_eq!(
+            decrypt_protected_link(url, "not-the-password"),
+            Err(ProtectedLinkError::WrongPassword)
+        );
+    }
+
+    #[test]
+    fn malformed_and_unsupported_protected_links() {
+        assert_eq!(
+            decrypt_protected_link("https://mega.nz/#P!AgHEnCCR", "x"),
+            Err(ProtectedLinkError::Malformed)
+        );
+        let drop_link = format!(
+            "https://mega.nz/#P!{}",
+            URL_SAFE_NO_PAD.encode([2u8, 2, 0, 0])
+        );
+        assert_eq!(
+            decrypt_protected_link(&drop_link, "x"),
+            Err(ProtectedLinkError::Unsupported)
+        );
+        let future = format!(
+            "https://mega.nz/#P!{}",
+            URL_SAFE_NO_PAD.encode([9u8, 0, 0, 0])
+        );
+        assert_eq!(
+            decrypt_protected_link(&future, "x"),
+            Err(ProtectedLinkError::Unsupported)
+        );
+    }
+
+    #[test]
+    fn keyless_links_are_detected() {
+        assert!(is_keyless_link("https://mega.nz/folder/Jj1liCiQ"));
+        assert!(is_keyless_link("https://mega.nz/file/jPwAmYqZ"));
+        assert!(!is_keyless_link(
+            "https://mega.nz/folder/Jj1liCiQ#TeHAplSadyE1w--Mt861ig"
+        ));
+        assert!(!is_keyless_link("https://mega.nz/#P!AgHEnCCR"));
     }
 }

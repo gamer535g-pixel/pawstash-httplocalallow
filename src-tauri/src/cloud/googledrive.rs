@@ -37,6 +37,7 @@ pub async fn resolve_googledrive(
             stream_url: Some(direct_url.clone()),
             thumbnail_url: None,
             children: None,
+            is_encrypted: false,
         };
 
         return Ok(CloudFolderResult {
@@ -180,6 +181,7 @@ pub async fn resolve_googledrive(
         stream_url: Some(direct_url),
         thumbnail_url,
         children: None,
+        is_encrypted: false,
     };
 
     let total_size = size.unwrap_or(0);

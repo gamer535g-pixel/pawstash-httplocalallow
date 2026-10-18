@@ -365,6 +365,12 @@
     --floating-section-tracking: 0.08em;
     --floating-section-color: var(--text-muted);
 
+    --file-row-min-height: 52px;
+    --file-row-thumb: 36px;
+    --file-row-icon: 22px;
+    --file-tile-min: 120px;
+    --file-tile-icon: 36px;
+
     --text-primary: #faf2f0;
     --text-secondary: #b0a9a8;
     --text-muted: #7a7473;

@@ -987,6 +987,11 @@ export function getFileExtension(filename?: string): string {
   return ext.length > 6 ? 'FILE' : ext.toUpperCase();
 }
 
+// Mirrors `detect_format` in archive/mod.rs: the formats `open_archive` recognises.
+export function isOpenableArchive(filename?: string): boolean {
+  return /\.(zip|cbz|rar|cbr|7z|cb7|7z\.\d+)$/i.test(filename?.trim() ?? '');
+}
+
 export function getUnsupportedContainerFormat(filename?: string, url?: string): string | null {
   const target = (filename || url || '').split('?')[0].split('#')[0].toLowerCase();
   const match = target.match(/\.(avi|wmv|asf|flv|f4v|rmvb|rm|vob|divx|xvid|m2ts|ts)(?:$|[?#])/i);

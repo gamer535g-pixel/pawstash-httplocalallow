@@ -1,4 +1,5 @@
 pub mod api;
+pub mod archive;
 pub mod cloud;
 pub mod commands;
 pub mod config;
@@ -97,6 +98,22 @@ pub fn run() {
     ));
     let sync_repository = Arc::new(SyncRepository::new().expect("Failed to initialize sync state"));
     let sync_manager = Arc::new(SyncManager::new(sync_repository, config_manager.clone()));
+    let upstream = Arc::new(server::axum_server::UpstreamGateway::new(
+        config_manager.clone(),
+    ));
+    let archives = Arc::new(
+        archive::ArchiveRegistry::new(
+            upstream.clone(),
+            content.clone(),
+            Arc::new(
+                db::archives::ArchivePasswordRepository::new()
+                    .expect("Failed to initialize archive passwords"),
+            ),
+            axum_port.clone(),
+            axum_token.clone(),
+        )
+        .expect("Failed to initialize archive support"),
+    );
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
@@ -168,7 +185,13 @@ pub fn run() {
             let media_download_dir = settings.download_dir.clone();
             let server_config_manager = config_manager.clone();
             let server_token = axum_token.clone();
+            let server_archives = archives.clone();
             tauri::async_runtime::spawn(async move {
+                match tokio::task::spawn_blocking(archive::clear_extraction_cache).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => tracing::warn!(%error, "Archive cache cleanup failed"),
+                    Err(error) => tracing::warn!(%error, "Archive cache cleanup task failed"),
+                }
                 let mut roots = vec![
                     std::path::PathBuf::from(&media_download_dir),
                     db::storage::content_cache_path(),
@@ -197,8 +220,14 @@ pub fn run() {
                     )));
                     roots.push(std::path::PathBuf::from("/sdcard/Download/Pawstash"));
                 }
-                if let Ok(server) =
-                    MediaServer::start(roots, server_config_manager, server_token).await
+                if let Ok(server) = MediaServer::start(
+                    roots,
+                    server_config_manager,
+                    server_token,
+                    upstream,
+                    server_archives,
+                )
+                .await
                 {
                     server_port.store(server.port, Ordering::Release);
                 }
@@ -235,6 +264,7 @@ pub fn run() {
                 subscription_manager: subscription_manager.clone(),
                 sync_manager: sync_manager.clone(),
                 config_manager: config_manager.clone(),
+                archives: archives.clone(),
             });
             db::compaction::spawn(app.handle().clone());
 
@@ -299,6 +329,10 @@ pub fn run() {
             get_cached_post,
             resolve_external_post_link,
             resolve_cloud_link,
+            unlock_cloud_link,
+            password_hints,
+            open_archive,
+            unlock_archive,
             fetch_account_favorites,
             set_post_favorite,
             set_creator_favorite,

@@ -187,7 +187,7 @@
     x: number;
     y: number;
     canOpenInApp: boolean;
-    isCloud?: boolean;
+    cloudUrl?: string;
     resolvedPost?: ResolvedPostLink;
   }
 
@@ -204,10 +204,10 @@
     anchor.title = i18n.t(resolved ? 'post.link_open_internal' : 'post.link_open_external');
   }
 
-  function isCloudLink(raw: string): boolean {
+  function matchCloudUrl(raw: string): string | undefined {
     try {
       const normalized = new URL(raw).href;
-      return cloudUrls.some((candidate) => {
+      return cloudUrls.find((candidate) => {
         try {
           return new URL(candidate).href === normalized;
         } catch {
@@ -215,7 +215,7 @@
         }
       });
     } catch {
-      return false;
+      return undefined;
     }
   }
 
@@ -226,7 +226,7 @@
     const anchors = [...root.querySelectorAll<HTMLAnchorElement>('a[href]')];
     const smartAnchors: HTMLAnchorElement[] = [];
     for (const anchor of anchors) {
-      if (isCloudLink(anchor.href)) {
+      if (matchCloudUrl(anchor.href)) {
         anchor.dataset.linkPlatform = 'cloud';
         anchor.dataset.smartState = 'resolved';
         continue;
@@ -269,13 +269,14 @@
     event.stopPropagation();
 
     const url = anchor.href;
-    if (isCloudLink(url)) {
+    const cloudUrl = matchCloudUrl(url);
+    if (cloudUrl) {
       linkPopover = {
         url,
         x: event.clientX,
         y: event.clientY,
         canOpenInApp: Boolean(onopencloud),
-        isCloud: true
+        cloudUrl
       };
       return;
     }
@@ -330,8 +331,8 @@
           onclick={() => {
             const state = linkPopover!;
             linkPopover = null;
-            if (state.isCloud && onopencloud) {
-              onopencloud(state.url);
+            if (state.cloudUrl && onopencloud) {
+              onopencloud(state.cloudUrl);
             } else if (state.resolvedPost) {
               if (state.resolvedPost.link_type === 'creator' || !state.resolvedPost.post_id) {
                 navigationState.openCreator(state.resolvedPost.service, state.resolvedPost.creator_id);
