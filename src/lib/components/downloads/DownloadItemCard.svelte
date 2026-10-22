@@ -1,14 +1,18 @@
 <script lang="ts">
+  import { haptic } from '$lib/utils/haptics';
+  import { videoPoster } from '$lib/utils/media';
   import { isAutoRetryPending, type DownloadItem } from '$lib/types/download';
   import { downloadState } from '$lib/state/downloadState.svelte';
   import { configState } from '$lib/state/configState.svelte';
   import { i18n } from '$lib/i18n';
-  import { formatBytes, formatSpeed } from '$lib/utils/formatters';
+  import { formatBytes, formatDuration, formatSpeed } from '$lib/utils/formatters';
   import { notify } from '$lib/utils/toast';
   import { ripple, tooltip } from '$lib/motion';
   import { selectionState } from '$lib/state/selectionState.svelte';
+  import { contextMenuState } from '$lib/state/contextMenuState.svelte';
+  import { downloadMenuItems } from '$lib/utils/contextMenus';
   import { apiOpenDownloadFile, apiShowInFolder } from '$lib/utils/ipc';
-  import IconCheckmark from '~icons/fluent/checkmark-20-regular';
+  import IconCheckmark from '~icons/fluent/checkmark-20-filled';
   import IconDownload from '~icons/fluent/arrow-download-24-regular';
   import IconError from '~icons/fluent/error-circle-24-filled';
   import IconPause from '~icons/fluent/pause-20-regular';
@@ -53,17 +57,6 @@
   let extension = $derived(item.filename.includes('.') ? (item.filename.split('.').pop() || '').toLowerCase() : '');
   let mediaKind = $derived(/^(avif|bmp|gif|jpe?g|png|webp)$/.test(extension) ? 'image' : /^(m4v|mkv|mov|mp4|webm)$/.test(extension) ? 'video' : /^(aac|flac|m4a|mp3|ogg|opus|wav)$/.test(extension) ? 'audio' : 'file');
 
-  function formatVideoDuration(seconds?: number): string {
-    if (!seconds || isNaN(seconds) || !isFinite(seconds) || seconds <= 0) return '';
-    const total = Math.floor(seconds);
-    const hrs = Math.floor(total / 3600);
-    const mins = Math.floor((total % 3600) / 60);
-    const secs = total % 60;
-    if (hrs > 0) {
-      return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    }
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  }
 
   let videoDuration = $derived.by(() => {
     if (mediaKind !== 'video') return undefined;
@@ -74,7 +67,7 @@
   let metaBadge = $derived.by(() => {
     const ext = extension ? extension.toUpperCase() : '';
     if (mediaKind === 'video' && videoDuration && videoDuration > 0) {
-      const dur = formatVideoDuration(videoDuration);
+      const dur = formatDuration(videoDuration);
       return ext ? `${ext} · ${dur}` : dur;
     }
     return ext;
@@ -137,20 +130,17 @@
 
   let lastContextTime = 0;
 
+  function toggleSelected(range = false) {
+    selectionState.toggle('downloads', item.id, item, orderedKeys, range, itemsMap);
+  }
+
   function handleCardClick(event: MouseEvent) {
     if (Date.now() - lastContextTime < 500) return;
 
-    if (event.ctrlKey || event.metaKey) {
+    if (event.ctrlKey || event.metaKey || isSelectionActive) {
       event.preventDefault();
       event.stopPropagation();
-      selectionState.toggle('downloads', item.id, item, orderedKeys, false, itemsMap);
-      return;
-    }
-
-    if (isSelectionActive) {
-      event.preventDefault();
-      event.stopPropagation();
-      selectionState.toggle('downloads', item.id, item, orderedKeys, event.shiftKey, itemsMap);
+      toggleSelected(event.shiftKey && !event.ctrlKey && !event.metaKey);
       return;
     }
 
@@ -160,13 +150,14 @@
   function handleContextMenu(event: MouseEvent) {
     event.preventDefault();
     lastContextTime = Date.now();
-    try { navigator.vibrate?.(35); } catch {}
-    selectionState.toggle('downloads', item.id, item, orderedKeys, false, itemsMap);
+    haptic();
+    if (isSelectionActive) toggleSelected();
+    else contextMenuState.show(event, item.filename, downloadMenuItems(item, { onselect: () => toggleSelected(), onopen, hasPost: Boolean(item.post_id) }));
   }
 
   function handleSelectCheckbox(event: MouseEvent) {
     event.stopPropagation();
-    selectionState.toggle('downloads', item.id, item, orderedKeys, event.shiftKey, itemsMap);
+    toggleSelected(event.shiftKey);
   }
 
   async function openFileExternally() {
@@ -201,6 +192,7 @@
   class:completed={item.status === 'completed'}
   style:aspect-ratio={ratio}
   data-download-id={item.id}
+  data-select-key={item.id}
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
 >
@@ -219,6 +211,8 @@
       class:checked={selected}
       onclick={handleSelectCheckbox}
       aria-label={i18n.t('selection.select_download')}
+      aria-checked={selected}
+      role="checkbox"
     >
       {#if selected}
         <IconCheckmark class="w-[14px] h-[14px]" />
@@ -229,6 +223,7 @@
       <PopoverMenu
         bind:open={playMenuOpen}
         align="left"
+        width="auto"
         menuClass="download-play-popover"
       >
         {#snippet trigger({ toggle })}
@@ -249,39 +244,39 @@
             {#if onopen}
               <button
                 type="button"
-                class="download-play-menu-item"
+                class="floating-item is-two-line"
                 use:ripple
                 onclick={(e) => { e.stopPropagation(); close(); onopen?.(true); }}
               >
-                <IconDocument class="download-play-menu-icon" />
-                <div class="download-play-menu-text">
-                  <span class="download-play-menu-title">{i18n.t('downloads.open_in_post')}</span>
-                  <span class="download-play-menu-desc">{i18n.t('downloads.open_in_post_desc')}</span>
+                <IconDocument />
+                <div class="floating-item-text">
+                  <span>{i18n.t('downloads.open_in_post')}</span>
+                  <span class="floating-item-desc">{i18n.t('downloads.open_in_post_desc')}</span>
                 </div>
               </button>
             {/if}
             <button
               type="button"
-              class="download-play-menu-item"
+              class="floating-item is-two-line"
               use:ripple
               onclick={(e) => { e.stopPropagation(); close(); void openFileExternally(); }}
             >
-              <IconOpen class="download-play-menu-icon" />
-              <div class="download-play-menu-text">
-                <span class="download-play-menu-title">{i18n.t('downloads.open_in_system')}</span>
-                <span class="download-play-menu-desc">{i18n.t('downloads.open_in_system_desc')}</span>
+              <IconOpen />
+              <div class="floating-item-text">
+                <span>{i18n.t('downloads.open_in_system')}</span>
+                <span class="floating-item-desc">{i18n.t('downloads.open_in_system_desc')}</span>
               </div>
             </button>
             <button
               type="button"
-              class="download-play-menu-item"
+              class="floating-item is-two-line"
               use:ripple
               onclick={(e) => { e.stopPropagation(); close(); void showFileInFolder(); }}
             >
-              <IconFolder class="download-play-menu-icon" />
-              <div class="download-play-menu-text">
-                <span class="download-play-menu-title">{i18n.t('downloads.show_in_folder')}</span>
-                <span class="download-play-menu-desc">{i18n.t('downloads.show_in_folder_desc')}</span>
+              <IconFolder />
+              <div class="floating-item-text">
+                <span>{i18n.t('downloads.show_in_folder')}</span>
+                <span class="floating-item-desc">{i18n.t('downloads.show_in_folder_desc')}</span>
               </div>
             </button>
           </div>
@@ -316,6 +311,7 @@
       bind:this={videoEl}
       class="grid-tile-media grid-tile-hover-video"
       src={previewUrl}
+      poster={videoPoster()}
       muted
       loop
       playsinline
@@ -336,7 +332,7 @@
   <div class="grid-tile-shade"></div>
 
   <div class="download-actions tile-toolbar">
-    {#if ['downloading', 'resolving', 'verifying', 'queued'].includes(item.status)}
+    {#if active}
       <button class="grid-tile-action download-action" onclick={(event) => action(event, () => downloadState.pause(item.id))} use:tooltip={i18n.t('downloads.pause')} aria-label={i18n.t('downloads.pause')}><IconPause /></button>
       <button class="grid-tile-action download-action grid-tile-action-danger" onclick={(event) => action(event, () => downloadState.remove(item.id))} use:tooltip={i18n.t('downloads.cancel')} aria-label={i18n.t('downloads.cancel')}><IconDismiss /></button>
     {:else if item.status === 'paused'}
@@ -386,20 +382,19 @@
   :global(.grid-tile-hover-video) { pointer-events: none !important; }
   .download-format-badge {
     font-variant-numeric: tabular-nums;
-    font-size: calc(10px * var(--grid-scale, 1));
+    font-size: calc(var(--type-label-sm-size) * var(--grid-scale, 1));
     font-weight: 600;
     color: var(--on-media-muted);
-    letter-spacing: 0.02em;
     text-transform: uppercase;
   }
   .download-placeholder { gap: calc(8px * var(--grid-scale, 1)); color: var(--text-muted); }
   .download-placeholder :global(svg) { width: calc(34px * var(--grid-scale, 1)); height: calc(34px * var(--grid-scale, 1)); }
   .download-placeholder span { font-size: calc(9px * var(--grid-scale, 1)); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
   .download-tile .grid-tile-title { word-break: break-word; }
-  .download-post-title { width: 100%; margin: 0; color: var(--on-media-secondary); font-size: calc(10.5px * var(--grid-scale, 1)); font-weight: 500; line-height: 1.25; text-align: left; overflow-wrap: anywhere; word-break: break-word; display: -webkit-box; line-clamp: 1; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
-  .download-actions-left { position: absolute; z-index: 6; top: calc(8px * var(--grid-scale, 1)); left: calc(8px * var(--grid-scale, 1)); transform-origin: top left; }
+  .download-post-title { width: 100%; margin: 0; color: var(--on-media-secondary); font-size: calc(var(--type-label-sm-size) * var(--grid-scale, 1)); font-weight: 500; line-height: 1.25; text-align: left; overflow-wrap: anywhere; word-break: break-word; display: -webkit-box; line-clamp: 1; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+  .download-actions-left { position: absolute; z-index: 6; top: var(--tile-chip-inset); left: var(--tile-chip-inset); }
   .download-actions-left .download-action { position: relative; inset: auto; flex: none; }
-  .download-actions { position: absolute; z-index: 6; top: calc(8px * var(--grid-scale, 1)); right: calc(8px * var(--grid-scale, 1)); }
+  .download-actions { position: absolute; z-index: 6; top: var(--tile-chip-inset); right: var(--tile-chip-inset); }
   .download-actions .download-action { position: relative; inset: auto; flex: none; }
   .download-status-row { pointer-events: none !important; }
   .download-status-row > :global(svg) { width: calc(15px * var(--grid-scale, 1)); height: calc(15px * var(--grid-scale, 1)); flex: none; color: var(--on-media-secondary); }
@@ -408,54 +403,7 @@
   .download-play-menu {
     display: flex;
     flex-direction: column;
-    gap: var(--floating-gap);
-    padding: 0;
-  }
-  .download-play-menu-item {
-    display: flex;
-    align-items: center;
-    gap: var(--floating-item-gap);
-    width: 100%;
-    padding: 6px var(--floating-item-px);
-    border: none;
-    border-radius: var(--floating-item-radius) !important;
-    background: transparent;
-    color: var(--text-primary);
-    text-align: left;
-    cursor: pointer;
-    box-sizing: border-box;
-    transition: background var(--duration-fast) var(--ease-expo);
-  }
-  .download-play-menu-item:hover {
-    background: rgba(var(--surface-tint-rgb), 0.06);
-  }
-  .download-play-menu-item:active {
-    background: rgba(var(--surface-tint-rgb), 0.1);
-  }
-  :global(.download-play-menu-icon) {
-    width: var(--floating-item-icon-size) !important;
-    height: var(--floating-item-icon-size) !important;
-    flex-shrink: 0;
-    color: var(--accent);
-  }
-  .download-play-menu-text {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-  .download-play-menu-title {
-    font-size: var(--floating-card-title-size, 13px);
-    font-weight: var(--floating-card-title-weight, 600);
-    color: var(--text-primary);
-    line-height: var(--floating-card-title-line-height, 1.25);
-    white-space: nowrap;
-  }
-  .download-play-menu-desc {
-    font-size: var(--floating-card-desc-size, 11px);
-    font-weight: var(--floating-card-desc-weight, 400);
-    color: var(--floating-card-desc-color, var(--text-muted));
-    line-height: var(--floating-card-desc-line-height, 1.25);
-    white-space: nowrap;
+    min-width: 260px;
+    max-width: min(360px, calc(100vw - 32px));
   }
 </style>

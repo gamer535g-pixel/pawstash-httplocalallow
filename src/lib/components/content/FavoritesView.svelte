@@ -1,6 +1,11 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick, getContext } from 'svelte';
+  import { haptic } from '$lib/utils/haptics';
+  import { paintSelect } from '$lib/actions/paintSelect';
+  import { onMount, onDestroy, getContext } from 'svelte';
   import { accountState } from '$lib/state/accountState.svelte';
+  import { favoriteActions } from '$lib/state/favoriteActions.svelte';
+  import { contextMenuState } from '$lib/state/contextMenuState.svelte';
+  import { creatorMenuItems } from '$lib/utils/contextMenus';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { contentState, postCacheKey } from '$lib/state/contentState.svelte';
   import { configState } from '$lib/state/configState.svelte';
@@ -13,19 +18,16 @@
   import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
   import type { Creator, Favorite, Post } from '$lib/types/content';
   import PageShell from '$lib/components/layout/PageShell.svelte';
-  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import HeaderActions from '$lib/components/layout/HeaderActions.svelte';
-  import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
   import PostGrid from './PostGrid.svelte';
   import ServiceIcon from './ServiceIcon.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import Input from '$lib/components/ui/Input.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
-  import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
-  import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
+  import SortSection from '$lib/components/layout/SortSection.svelte';
+  import type { MenuItem } from '$lib/components/layout/OverflowMenu.svelte';
   import SkeletonGrid from '$lib/components/ui/SkeletonGrid.svelte';
   import { GridHandoff } from '$lib/motion/gridHandoff.svelte';
   import { ripple, tooltip } from '$lib/motion';
@@ -33,18 +35,15 @@
   import { libraryState } from '$lib/state/libraryState.svelte';
   import { downloadState } from '$lib/state/downloadState.svelte';
   import { subscriptionState } from '$lib/state/subscriptionState.svelte';
-  import { getPostDownloadTargets } from '$lib/utils/media';
   import { apiSetPostFavorite, apiSetCreatorFavorite } from '$lib/utils/ipc';
   import { notify } from '$lib/utils/toast';
   import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
-  import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconHeart from '~icons/fluent/heart-24-regular';
   import IconHeartFilled from '~icons/fluent/heart-24-filled';
   import IconHeartOff from '~icons/fluent/heart-broken-24-regular';
   import IconOptions from '~icons/fluent/options-24-regular';
-  import IconArrowSort from '~icons/fluent/arrow-sort-24-regular';
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconImage from '~icons/fluent/image-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
@@ -55,13 +54,12 @@
   import IconPeople from '~icons/fluent/people-24-regular';
   import IconSearch from '~icons/fluent/search-24-regular';
   import IconCheckboxChecked from '~icons/fluent/checkbox-checked-24-regular';
-  import IconCheckmark from '~icons/fluent/checkmark-20-regular';
+  import IconCheckmark from '~icons/fluent/checkmark-20-filled';
   import IconFolder from '~icons/fluent/folder-24-regular';
   import IconArrowDownload from '~icons/fluent/arrow-download-24-regular';
   import IconBookmarkAdd from '~icons/fluent/bookmark-add-24-regular';
   import IconPersonAdd from '~icons/fluent/person-add-24-regular';
   import IconPersonSubscribed from '~icons/fluent/person-available-24-filled';
-  import IconMoreVertical from '~icons/fluent/more-vertical-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
 
   import type { FilterMap } from '$lib/types/filter';
@@ -142,8 +140,6 @@
   let formatFilters = $state<FilterMap>(savedState?.formatFilters ?? {});
   let onlyWithAttachments = $state<boolean>(savedState?.onlyWithAttachments ?? false);
   let filtersOpen = $state(false);
-  let stickyFiltersOpen = $state(false);
-  let mobileMoreOpen = $state(false);
   let initialized = $state(false);
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let visibleCreatorsCount = $state(80);
@@ -326,9 +322,6 @@
         { value: 'title_desc', label: i18n.t('favorites.sort_name_desc') }
       ]);
   let currentSort = $derived(activeTab === 'posts' ? postSort : creatorSort);
-  let currentSortLabel = $derived(
-    sortOptions.find((o) => o.value === currentSort)?.label ?? i18n.t('favorites.sort_by')
-  );
   let favoriteTabOptions = $derived<ChoiceOption<'posts' | 'creators'>[]>([
     {
       value: 'posts',
@@ -422,7 +415,6 @@
     };
   }
 
-
   function favoriteOrder(item: Post | Creator) {
     const favedAt = (item as any).faved_at || (item as any).created_at || (item as any).faved_date;
     if (favedAt) {
@@ -492,14 +484,6 @@
     formatFilters = toggleFilterKey(formatFilters, format);
   }
 
-  function resetFilters() {
-    clearServices();
-    if (activeTab === 'posts') {
-      formatFilters = {};
-      onlyWithAttachments = false;
-    }
-  }
-
   const formatList = [
     { id: 'image', label: () => i18n.t('feed.format_photo'), icon: IconImage },
     { id: 'video', label: () => i18n.t('feed.format_video'), icon: IconVideo },
@@ -530,7 +514,6 @@
     activeTab = tab;
     searchQuery = '';
     filtersOpen = false;
-    stickyFiltersOpen = false;
     visibleCreatorsCount = 80;
     if (selectionState.active) selectionState.clear();
   }
@@ -664,9 +647,11 @@
   function handleCreatorContextMenu(event: MouseEvent, creator: Creator) {
     event.preventDefault();
     lastContextTime = Date.now();
-    try { navigator.vibrate?.(35); } catch {}
+    haptic();
     const key = `${creator.service}:${creator.id}`;
-    selectionState.toggle('creators', key, creator, creatorKeys, false, creatorsMap);
+    const select = () => selectionState.toggle('creators', key, creator, creatorKeys, false, creatorsMap);
+    if (isSelectionActive) select();
+    else contextMenuState.show(event, creator.name || creator.id, creatorMenuItems(creator, select));
   }
 
   function handleCreatorCheckbox(event: MouseEvent, creator: Creator) {
@@ -675,29 +660,10 @@
     selectionState.toggle('creators', key, creator, creatorKeys, event.shiftKey, creatorsMap);
   }
 
-  let tilePending = $state<Record<string, boolean>>({});
-
-  async function toggleCreatorFavorite(event: MouseEvent, creator: Creator) {
+  function toggleCreatorFavorite(event: MouseEvent, creator: Creator) {
     event.stopPropagation();
     event.preventDefault();
-    const key = `fav:${creator.service}:${creator.id}`;
-    if (tilePending[key]) return;
-    tilePending[key] = true;
-    const target = !accountState.isCreatorFavorite(creator.service, creator.id);
-    try {
-      await apiSetCreatorFavorite(creator.service, creator.id, target);
-      if (target) {
-        accountState.addCreatorFavoriteOptimistic(creator);
-        notify.success(i18n.t('post.added_to_favorites'), { description: creator.name, glyph: 'favorited' });
-      } else {
-        accountState.removeCreatorFavoriteOptimistic(creator.service, creator.id);
-        notify.success(i18n.t('post.removed_from_favorites'), { description: creator.name, glyph: 'unfavorited' });
-      }
-    } catch (err) {
-      notify.error(i18n.t('post.favorite_failed'), err);
-    } finally {
-      tilePending[key] = false;
-    }
+    void favoriteActions.toggleCreator(creator);
   }
 
   function handleSubscriptionClick(event: MouseEvent, creator: Creator) {
@@ -709,11 +675,6 @@
       creatorName: creator.name || creator.id,
       avatarUrl: creator.avatar_url
     });
-  }
-
-  function closeSearch() {
-    searchOpen = false;
-    searchQuery = '';
   }
 
   function handleCreatorWheel(event: WheelEvent) {
@@ -733,11 +694,23 @@
     if (!initialized) void loadFavorites();
   });
 
-  $effect(() => {
-    if (!searchOpen) return;
-    const input = document.querySelector('.favorites-search-input') as HTMLInputElement | null;
-    input?.focus();
-  });
+  let pageMenu = $derived<MenuItem[]>([
+    {
+      group: 'page',
+      label: i18n.t(isSelectionActive ? 'selection.exit' : 'selection.select_mode'),
+      icon: IconCheckboxChecked,
+      active: isSelectionActive,
+      onclick: () =>
+        isSelectionActive ? selectionState.exit() : selectionState.enter(activeTab === 'posts' ? 'posts' : 'creators')
+    },
+    {
+      group: 'page',
+      label: i18n.t('common.refresh'),
+      icon: IconArrowClockwise,
+      disabled: loading,
+      onclick: () => void loadFavorites(true)
+    }
+  ]);
 </script>
 
 {#snippet favoriteTabs()}
@@ -747,20 +720,7 @@
     onchange={(val) => selectTab(val as 'posts' | 'creators')}
     align="left"
     class="favorites-mode-choice"
-  >
-    {#snippet activeAddon()}
-      <Select
-        options={sortOptions}
-        value={currentSort}
-        onchange={handleSort}
-        class="favorites-sort-select"
-        icon={IconArrowSort}
-        iconOnly={true}
-        ariaLabel={`${i18n.t('favorites.sort_by')}: ${currentSortLabel}`}
-        align="right"
-      />
-    {/snippet}
-  </ChoiceGroup>
+  />
 {/snippet}
 
 {#snippet filterContent()}
@@ -841,7 +801,6 @@
           }
         }}
       >
-        <IconDocument class="view-option-icon" />
         <span>
           <strong>{i18n.t('feed.with_attachments')}</strong>
           <small>{i18n.t('feed.with_attachments_desc')}</small>
@@ -856,102 +815,36 @@
   {/if}
 {/snippet}
 
-{#snippet actionsCluster(sticky = false)}
+{#snippet favoritesFilter()}
+  <PopoverMenu
+    bind:open={filtersOpen}
+    title={i18n.t('feed.filters')}
+    badge={activeFilterCount}
+    active={activeFilterCount > 0}
+    icon={IconOptions}
+  >
+    <SortSection options={sortOptions} value={currentSort} onchange={handleSort} />
+    {@render filterContent()}
+  </PopoverMenu>
+{/snippet}
+
+{#snippet search()}
   <HeaderActions
+    pinOpen
     bind:searchOpen
     bind:searchQuery
     searchPlaceholder={activeTab === 'posts' ? i18n.t('feed.search_placeholder') : i18n.t('creators.search_placeholder')}
-  >
-    {#if !layoutState.isMobile}
-      <Button
-        variant={isSelectionActive ? 'accent' : 'ghost'}
-        class="btn-icon"
-        onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter(activeTab === 'posts' ? 'posts' : 'creators'))}
-        title={i18n.t('selection.select_mode')}
-        aria-label={i18n.t('selection.select_mode')}
-      >
-        <IconCheckboxChecked class="w-5 h-5" />
-      </Button>
-      <Button variant="ghost" class="btn-icon" disabled={loading} onclick={() => void loadFavorites(true)} title={i18n.t('feed.refresh')} aria-label={i18n.t('feed.refresh')}>
-        {#if loading}<IconLoading class="w-5 h-5" />{:else}<IconArrowClockwise class="w-5 h-5" />{/if}
-      </Button>
-      {#if sticky}
-        <PopoverMenu
-          bind:open={stickyFiltersOpen}
-          title={i18n.t('feed.filters')}
-          badge={activeFilterCount}
-          active={activeFilterCount > 0}
-          icon={IconOptions}
-        >
-          {@render filterContent()}
-        </PopoverMenu>
-      {:else}
-        <PopoverMenu
-          bind:open={filtersOpen}
-          title={i18n.t('feed.filters')}
-          badge={activeFilterCount}
-          active={activeFilterCount > 0}
-          icon={IconOptions}
-        >
-          {@render filterContent()}
-        </PopoverMenu>
-      {/if}
-    {:else}
-      {#if sticky}
-        <PopoverMenu
-          bind:open={stickyFiltersOpen}
-          title={i18n.t('feed.filters')}
-          badge={activeFilterCount}
-          active={activeFilterCount > 0}
-          icon={IconOptions}
-        >
-          {@render filterContent()}
-        </PopoverMenu>
-      {:else}
-        <PopoverMenu
-          bind:open={filtersOpen}
-          title={i18n.t('feed.filters')}
-          badge={activeFilterCount}
-          active={activeFilterCount > 0}
-          icon={IconOptions}
-        >
-          {@render filterContent()}
-        </PopoverMenu>
-      {/if}
-
-      <Button
-        variant="ghost"
-        class="btn-icon"
-        onclick={() => (mobileMoreOpen = true)}
-        title={i18n.t('common.more')}
-        aria-label={i18n.t('common.more')}
-      >
-        <IconMoreVertical class="w-5 h-5" />
-      </Button>
-    {/if}
-  </HeaderActions>
+  />
 {/snippet}
 
-<PageShell scrollable={true} scrollKey={navigationState.entryKey} onrefresh={() => accountState.refresh()}>
-  {#snippet overlay()}
-    <StickyHeader threshold={120}>
-      {#snippet center()}
-        {@render favoriteTabs()}
-      {/snippet}
-      {#snippet trailing()}
-        {@render actionsCluster(true)}
-      {/snippet}
-    </StickyHeader>
-  {/snippet}
-
-  <PageHeader>
-    {#snippet tabs()}
-      {@render favoriteTabs()}
-    {/snippet}
-    {#snippet actions()}
-      {@render actionsCluster(false)}
-    {/snippet}
-  </PageHeader>
+<PageShell title={i18n.t('nav.favorites')} menu={pageMenu} scrollKey={navigationState.entryKey} onrefresh={() => accountState.refresh()}
+  selectionTotal={activeTab === 'posts' ? filteredPosts.length : filteredCreators.length}
+  onSelectAll={handleSelectAll}
+  {selectionActions}
+>
+  {#snippet views()}{@render favoriteTabs()}{/snippet}
+  {#snippet filter()}{@render favoritesFilter()}{/snippet}
+  {#snippet actions()}{@render search()}{/snippet}
 
   {#if error && currentCount === 0}
     <div class="status-container error">
@@ -978,6 +871,7 @@
     <div class="grid-stack">
       <div
         class="creators-grid"
+        use:paintSelect={{ scope: 'creators', keys: creatorKeys, items: creatorsMap }}
         {@attach ctrlWheel(handleCreatorWheel)}
         style={`--favorites-card-width: ${targetCardWidth}px; --favorites-gap: ${gap}px;`}
       >
@@ -988,8 +882,7 @@
         {@const avatarSrc = creatorAvatarSrc(creator)}
         {@const isCreatorFav = accountState.isCreatorFavorite(creator.service, creator.id)}
         {@const creatorSub = subscriptionState.forCreator(creator.service, creator.id)}
-        {@const favPending = tilePending[`fav:${creatorKey}`]}
-        {@const subPending = tilePending[`sub:${creatorKey}`]}
+        {@const favPending = favoriteActions.isCreatorPending(creator)}
         {@const enterDelay = creatorsHandoff.delayFor(index)}
         <article
           class="grid-tile"
@@ -998,6 +891,7 @@
           style:aspect-ratio={ratio}
           style:--tile-enter-delay={enterDelay !== null ? `${enterDelay}ms` : null}
           data-creator-key={creatorKey}
+          data-select-key={creatorKey}
         >
           <button
             class="grid-tile-open"
@@ -1115,10 +1009,7 @@
   {#if error && currentCount > 0}<p class="inline-error">{error}</p>{/if}
 </PageShell>
 
-<SelectionActionBar
-  totalCount={activeTab === 'posts' ? filteredPosts.length : filteredCreators.length}
-  onSelectAll={handleSelectAll}
->
+{#snippet selectionActions()}
   {#if activeTab === 'posts'}
     <Select
       options={stashOptions}
@@ -1127,174 +1018,66 @@
       onchange={handleBatchToggleStash}
       createLabel={i18n.t('library.new_stash')}
       onCreate={handleBatchCreateAndAddToStash}
-      variant={batchSelectedStashes.length > 0 ? 'accent' : 'ghost'}
+      variant="ghost"
       multi={true}
       closeOnChange={false}
       icon={IconFolder}
-      class="selection-stash-select"
+      iconOnly={true}
+      ariaLabel={i18n.t('library.add_to_stash')}
       align="right"
     />
 
     <Button
       variant="ghost"
-      size="sm"
-      class="selection-btn"
+      class="btn-icon"
       onclick={batchSaveToLibrary}
       title={i18n.t('selection.save_to_library')}
     >
-      <IconBookmarkAdd class="w-[16px] h-[16px]" />
-      <span>{i18n.t('selection.save_to_library')}</span>
+      <IconBookmarkAdd />
     </Button>
 
     <Button
       variant="ghost"
-      size="sm"
-      class="selection-btn"
+      class="btn-icon"
       onclick={batchDownloadPosts}
       title={i18n.t('selection.download_all')}
     >
-      <IconArrowDownload class="w-[16px] h-[16px]" />
-      <span>{i18n.t('selection.download_all')}</span>
+      <IconArrowDownload />
     </Button>
 
     <Button
-      variant="danger"
-      size="sm"
-      class="selection-btn"
+      variant="ghost"
+      class="btn-icon"
       onclick={batchUnfavoritePosts}
       title={i18n.t('selection.unfavorite')}
     >
-      <IconHeartOff class="w-[16px] h-[16px]" />
-      <span>{i18n.t('selection.unfavorite')}</span>
+      <IconHeartOff />
     </Button>
   {:else}
     <Button
       variant="ghost"
-      size="sm"
-      class="selection-btn"
+      class="btn-icon"
       onclick={batchSubscribeCreators}
       title={i18n.t('selection.subscribe')}
     >
-      <IconPersonAdd class="w-[16px] h-[16px]" />
-      <span>{i18n.t('selection.subscribe')}</span>
+      <IconPersonAdd />
     </Button>
 
     <Button
-      variant="danger"
-      size="sm"
-      class="selection-btn"
+      variant="ghost"
+      class="btn-icon"
       onclick={batchUnfavoriteCreators}
       title={i18n.t('selection.unfavorite')}
     >
-      <IconHeartOff class="w-[16px] h-[16px]" />
-      <span>{i18n.t('selection.unfavorite')}</span>
+      <IconHeartOff />
     </Button>
   {/if}
-</SelectionActionBar>
-
-{#if layoutState.isMobile}
-  <BottomSheet
-    open={mobileMoreOpen}
-    title={i18n.t('common.more')}
-    onclose={() => (mobileMoreOpen = false)}
-  >
-    <div class="flex flex-col gap-1 py-1">
-      <button
-        type="button"
-        class="sheet-action-item"
-        use:ripple
-        onclick={() => {
-          mobileMoreOpen = false;
-          if (isSelectionActive) {
-            selectionState.exit();
-          } else {
-            selectionState.enter(activeTab === 'posts' ? 'posts' : 'creators');
-          }
-        }}
-      >
-        <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
-        <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{isSelectionActive ? i18n.t('selection.exit') : i18n.t('selection.select_mode')}</span>
-        </div>
-      </button>
-
-      <button
-        type="button"
-        class="sheet-action-item"
-        disabled={loading}
-        use:ripple
-        onclick={() => {
-          mobileMoreOpen = false;
-          void loadFavorites(true);
-        }}
-      >
-        {#if loading}
-          <IconLoading class="text-accent" />
-        {:else}
-          <IconArrowClockwise class="text-secondary" />
-        {/if}
-        <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh')}</span>
-        </div>
-      </button>
-    </div>
-  </BottomSheet>
-{/if}
+{/snippet}
 
 <style>
   :global(.favorites-mode-choice) {
     flex-shrink: 0 !important;
   }
-
-  :global(.favorites-sort-select) {
-    width: auto !important;
-    max-width: none !important;
-    flex-shrink: 0 !important;
-  }
-
-  :global(.favorites-sort-select .select-trigger),
-  :global(.favorites-sort-select .select-trigger.icon-only) {
-    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    padding: 0 calc(3px * var(--ui-scale, 1)) 0 0 !important;
-    background: var(--accent-container) !important;
-    color: var(--accent-on-container) !important;
-    border-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1))
-                   min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
-                   min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
-                   calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
-    border-top-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
-    border-bottom-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
-    border-top-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
-    border-bottom-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
-    border: none !important;
-    box-shadow: none !important;
-    transition:
-      background var(--duration-fast) var(--ease-expo),
-      color var(--duration-fast) var(--ease-expo),
-      opacity var(--duration-fast) var(--ease-expo) !important;
-  }
-
-  :global(.favorites-sort-select .select-trigger:hover),
-  :global(.favorites-sort-select .select-trigger.icon-only:hover) {
-    background: color-mix(in srgb, var(--accent-container) 70%, var(--accent-primary)) !important;
-    color: var(--accent-on-container) !important;
-  }
-
-  :global(.favorites-sort-select .select-trigger:active),
-  :global(.favorites-sort-select .select-trigger.icon-only:active) {
-    opacity: 0.85 !important;
-  }
-
-  :global(.favorites-sort-select .select-trigger svg),
-  :global(.favorites-sort-select .select-trigger.icon-only svg) {
-    width: 20px !important;
-    height: 20px !important;
-    color: var(--accent-on-container) !important;
-    opacity: 1 !important;
-  }
-
 
   .creators-grid {
     display: grid;

@@ -29,6 +29,7 @@ class SyncState {
   }
 
   private initialized = false;
+  statusLoaded = $state(false);
   private unlistenStatus?: UnlistenFn;
   private unlistenProgress?: UnlistenFn;
 
@@ -85,6 +86,7 @@ class SyncState {
     try {
       const st = await apiGetSyncStatus();
       this.status = st;
+      this.statusLoaded = true;
       if (!st.syncing) {
         this.phase = 'idle';
         this.progress = null;

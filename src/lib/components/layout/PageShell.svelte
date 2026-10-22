@@ -7,12 +7,26 @@
   } from '$lib/actions/scrollable';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
-  import { configState } from '$lib/state/configState.svelte';
   import PullToRefresh from '$lib/components/ui/PullToRefresh.svelte';
+  import TopAppBar from './TopAppBar.svelte';
+  import type { MenuItem } from './OverflowMenu.svelte';
 
   interface Props {
+    title?: string;
+    heading?: Snippet<[boolean]>;
+    titleAfter?: number;
+    titleTrigger?: HTMLElement | null;
+    largeTitle?: boolean;
+    back?: boolean | (() => void);
+    views?: Snippet;
+    filter?: Snippet;
+    actions?: Snippet;
+    menu?: MenuItem[];
+    selectionActions?: Snippet;
+    selectionTotal?: number;
+    onSelectAll?: () => void;
+    hideOnScroll?: boolean;
     scrollable?: boolean;
-    toolbar?: Snippet;
     children?: Snippet;
     overlay?: Snippet;
     class?: string;
@@ -23,8 +37,21 @@
   }
 
   let {
+    title,
+    heading,
+    titleAfter,
+    titleTrigger,
+    largeTitle = false,
+    back,
+    views,
+    filter,
+    actions,
+    menu,
+    selectionActions,
+    selectionTotal = 0,
+    onSelectAll,
+    hideOnScroll,
     scrollable = true,
-    toolbar,
     children,
     overlay,
     class: extraClass = '',
@@ -37,79 +64,70 @@
   const scrollContext = $state<ScrollableContext>({ viewport: null });
   setContext(SCROLLABLE_CONTEXT, scrollContext);
 
-  let isScrolledTop = $state(false);
-  let isScrolledBottom = $state(false);
-  let scrollContent = $state<HTMLElement | null>(null);
+  let barHeight = $state(0);
+  let barHidden = $state(false);
+  let largeTitleHeight = $state(0);
+  let scrolled = $state(false);
+  let showLargeTitle = $derived(largeTitle && layoutState.isMobile && Boolean(title));
 
-  let scrollHeight = 0;
-  let clientHeight = 0;
-
-  function updateScrollState(vp: HTMLElement | null) {
-    if (!vp) return;
-    const top = vp.scrollTop;
-    isScrolledTop = top > 60;
-    isScrolledBottom = (scrollHeight - top - clientHeight) > 16;
-  }
-
-  function measure(vp: HTMLElement) {
-    scrollHeight = vp.scrollHeight;
-    clientHeight = vp.clientHeight;
-    updateScrollState(vp);
-  }
-
-  $effect(() => {
-    const vp = scrollContext.viewport;
-    if (!vp || !scrollContent) return;
-    const observer = new ResizeObserver(() => measure(vp));
-    observer.observe(vp);
-    observer.observe(scrollContent);
-    return () => observer.disconnect();
-  });
-
-  let maskClass = $derived.by(() => {
-    // WebKitGTK re-renders a masked ancestor of the scroller offscreen on every scroll frame.
-    if (layoutState.isLinux || configState.settings.scroll_edge_mask === false) return '';
-    if (isScrolledTop && isScrolledBottom) return 'mask-both';
-    if (isScrolledTop) return 'mask-top';
-    if (isScrolledBottom) return 'mask-bottom';
-    return '';
-  });
+  let fades = $derived(!showLargeTitle);
+  let fadeTop = $derived(
+    !layoutState.isMobile ? '0px' : barHidden ? 'var(--mobile-status-bar-height)' : `${barHeight}px`
+  );
 </script>
 
 <div
-  class="page-shell h-full w-full flex flex-col overflow-hidden relative animate-page-in {extraClass}"
+  class="page-shell animate-page-in {extraClass}"
   class:mobile={layoutState.isMobile}
+  style:--page-bar-space={layoutState.isMobile ? `${barHeight}px` : '0px'}
 >
-  {#if toolbar}
-    <div class="page-toolbar shrink-0">
-      {@render toolbar()}
-    </div>
-  {/if}
+  <TopAppBar
+    {title}
+    {heading}
+    titleAfter={showLargeTitle ? largeTitleHeight : titleAfter}
+    {titleTrigger}
+    {back}
+    {views}
+    {filter}
+    {actions}
+    {menu}
+    selection={selectionActions ? { total: selectionTotal, onSelectAll, actions: selectionActions } : undefined}
+    hideOnScroll={showLargeTitle ? false : hideOnScroll}
+    solid={showLargeTitle}
+    bind:height={barHeight}
+    bind:hidden={barHidden}
+  />
 
   {#if scrollable}
     <div
       data-overlayscrollbars-initialize
-      class="flex-1 min-h-0 relative overflow-hidden w-full page-scroll-wrapper {maskClass}"
+      class="page-body"
+      class:fades
+      class:is-scrolled={scrolled}
+      style:--fade-top={fadeTop}
       use:scrollAction={{
         initialScrollTop: scrollKey ? navigationState.scrollFor(scrollKey) : 0,
         onScroll: (top) => {
+          scrolled = top > 0;
           if (scrollKey) navigationState.rememberScroll(scrollKey, top);
-          updateScrollState(scrollContext.viewport);
           onscroll?.(top);
         },
         onReady: (vp) => {
           scrollContext.viewport = vp;
           viewport = vp;
-          if (vp) measure(vp);
+          scrolled = (vp?.scrollTop ?? 0) > 0;
         }
       }}
     >
-      <div class="page-scroll-content w-full" bind:this={scrollContent}>
+      <div class="page-content">
+        {#if showLargeTitle}
+          <h1 class="page-large-title" bind:clientHeight={largeTitleHeight}>{title}</h1>
+        {/if}
         {@render children?.()}
       </div>
     </div>
   {:else}
-    <div class="page-static-content flex-1 min-h-0 relative overflow-hidden w-full">
+    <div class="page-body page-content is-static">
       {@render children?.()}
     </div>
   {/if}
@@ -124,62 +142,93 @@
 </div>
 
 <style>
+  @property --fade-top {
+    syntax: '<length>';
+    inherits: false;
+    initial-value: 0px;
+  }
+
+  @property --fade-size {
+    syntax: '<length>';
+    inherits: false;
+    initial-value: 0px;
+  }
+
   .page-shell {
-    padding-left: 36px;
+    --content-top: 24px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    overflow: hidden;
   }
 
-  .page-toolbar {
-    padding-top: 48px;
-    padding-right: 36px;
+  .page-body {
+    position: relative;
+    flex: 1 1 0;
+    min-height: 0;
+    width: 100%;
+    padding-inline-end: var(--edge-right, 0px);
+    overflow: hidden;
   }
 
-  .page-scroll-content,
-  .page-static-content {
-    padding: 48px 36px 24px 0;
+  .page-body.fades {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--content-top));
+    mask-image: linear-gradient(to bottom, transparent 0, #000 var(--content-top));
   }
 
-  .page-shell.mobile {
-    padding-left: 12px;
+  .page-shell.mobile .page-body.fades {
+    --fade-size: 0px;
+    -webkit-mask-image: linear-gradient(to bottom, transparent var(--fade-top), #000 calc(var(--fade-top) + var(--fade-size)));
+    mask-image: linear-gradient(to bottom, transparent var(--fade-top), #000 calc(var(--fade-top) + var(--fade-size)));
+    transition:
+      --fade-top var(--duration-normal) var(--ease-standard),
+      --fade-size var(--duration-fast) var(--ease-standard);
   }
 
-  .page-shell.mobile .page-toolbar {
-    padding-top: calc(var(--mobile-status-bar-height) + 8px);
-    padding-right: 12px;
+  .page-shell.mobile .page-body.fades.is-scrolled {
+    --fade-size: 32px;
   }
 
-  .page-shell.mobile .page-scroll-content,
-  .page-shell.mobile .page-static-content {
-    padding: 12px 12px calc(var(--mobile-nav-height) + max(16px, env(safe-area-inset-bottom, 16px))) 0;
+  /* WebKitGTK repaints a masked ancestor of the scroller offscreen on every scroll frame. */
+  :global(html.webkitgtk) .page-body.fades {
+    -webkit-mask-image: none;
+    mask-image: none;
   }
 
-  .page-shell.mobile:not(:has(.page-toolbar)) .page-scroll-content,
-  .page-shell.mobile:not(:has(.page-toolbar)) .page-static-content {
-    padding-top: calc(var(--mobile-status-bar-height) + 12px);
+  :global(html.webkitgtk) .page-body.fades::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1;
+    height: var(--content-top);
+    background: linear-gradient(to bottom, var(--surface), transparent);
+    pointer-events: none;
   }
 
-  .page-scroll-wrapper.mask-both {
-    -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2) 0px, black 120px, black calc(100% - 40px), rgba(0, 0, 0, 0.2) 100%);
-    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2) 0px, black 120px, black calc(100% - 40px), rgba(0, 0, 0, 0.2) 100%);
+  .page-content {
+    box-sizing: border-box;
+    width: 100%;
+    padding: var(--content-top) var(--gutter) 24px;
   }
 
-  .page-scroll-wrapper.mask-top {
-    -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2) 0px, black 120px, black 100%);
-    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2) 0px, black 120px, black 100%);
+  .page-shell.mobile .page-content {
+    padding-top: calc(var(--page-bar-space) + 8px);
+    padding-bottom: var(--dock-space);
   }
 
-  .page-scroll-wrapper.mask-bottom {
-    -webkit-mask-image: linear-gradient(to bottom, black 0px, black calc(100% - 40px), rgba(0, 0, 0, 0.2) 100%);
-    mask-image: linear-gradient(to bottom, black 0px, black calc(100% - 40px), rgba(0, 0, 0, 0.2) 100%);
-  }
-
-  .page-shell.mobile .page-scroll-wrapper.mask-both {
-    -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2) 0px, rgba(0, 0, 0, 0.2) 20px, black 200px, black calc(100% - 48px), rgba(0, 0, 0, 0.2) 100%);
-    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2) 0px, rgba(0, 0, 0, 0.2) 20px, black 200px, black calc(100% - 48px), rgba(0, 0, 0, 0.2) 100%);
-  }
-
-  .page-shell.mobile .page-scroll-wrapper.mask-top {
-    -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2) 0px, rgba(0, 0, 0, 0.2) 20px, black 200px, black 100%);
-    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.2) 0px, rgba(0, 0, 0, 0.2) 20px, black 200px, black 100%);
+  .page-large-title {
+    margin: 0;
+    padding: 16px 0 24px;
+    color: var(--text-primary);
+    font-family: var(--font-display);
+    font-size: var(--type-headline-size);
+    line-height: var(--type-headline-line);
+    font-weight: 400;
   }
 
   @keyframes pageFadeIn {
@@ -192,6 +241,6 @@
   }
 
   .animate-page-in {
-    animation: pageFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation: pageFadeIn var(--duration-normal) var(--ease-expo) backwards;
   }
 </style>

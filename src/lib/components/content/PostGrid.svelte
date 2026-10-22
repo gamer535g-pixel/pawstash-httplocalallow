@@ -3,6 +3,7 @@
 </script>
 
 <script lang="ts">
+  import { paintSelect } from '$lib/actions/paintSelect';
   import { getContext, onDestroy } from 'svelte';
   import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
   import type { Post } from '$lib/types/content';
@@ -64,8 +65,8 @@
   const ratioValues = { square: 1, portrait: 4 / 5, landscape: 3 / 2, widescreen: 16 / 9 } as const;
   const overscanRows = 3;
 
-  let postKeys = $derived(posts.map((p) => `${p.service}:${p.user}:${p.id}`));
-  let postsMap = $derived(new Map(posts.map((p) => [`${p.service}:${p.user}:${p.id}`, p])));
+  let postKeys = $derived(posts.map((p) => `${(p.service || '').toLowerCase()}:${p.user}:${p.id}`));
+  let postsMap = $derived(new Map(posts.map((p) => [`${(p.service || '').toLowerCase()}:${p.user}:${p.id}`, p])));
 
   $effect(() => {
     selectionState.setContext('posts', postKeys, postsMap);
@@ -280,6 +281,7 @@
 <div
   bind:this={root}
   class="grid-root"
+  use:paintSelect={{ scope: 'posts', keys: postKeys, items: postsMap }}
   role="feed"
   aria-label={ariaLabel}
   {@attach ctrlWheel(handleWheel)}
@@ -338,7 +340,6 @@
   .virtual-row { position: absolute; top: 0; left: 0; right: 0; display: grid; align-items: start; will-change: transform; }
   /* Per-row layers cost WebKitGTK more than repainting the moved rows. */
   :global(html.webkitgtk) .virtual-row { will-change: auto; }
-  .scale-indicator { position: fixed; z-index: 80; left: 50%; bottom: 34px; transform: translateX(-50%); padding: 7px 12px; border: 1px solid rgba(247, 247, 248, .14); border-radius: 999px; background: var(--on-media-scrim-strong); color: var(--on-media); font-size: 12px; font-weight: 650; backdrop-filter: blur(14px); pointer-events: none; }
   .loading-tail { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; color: var(--text-muted); font-size: 11px; }
   .load-sentinel { width: 100%; height: 1px; pointer-events: none; }
   .loading-tail :global(svg) { width: 20px; height: 20px; color: var(--text-primary); }

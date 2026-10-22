@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { i18n } from '$lib/i18n';
   import { notify } from '$lib/utils/toast';
   import { formatProviderName } from '$lib/utils/media';
@@ -37,7 +38,8 @@
   const providerName = $derived(formatProviderName(provider.name || provider.id));
 
   $effect(() => {
-    if (isOpen && provider) {
+    if (!isOpen) return;
+    untrack(() => {
       step = 'login';
       errorMessage = null;
       formData = {
@@ -45,39 +47,21 @@
         username: provider.username || ''
       };
       void loadSchema();
-    }
+    });
   });
+
+  function errorText(error: unknown, fallback: string): string {
+    if (typeof error === 'string') return error;
+    return (error as { message?: string } | null)?.message || fallback;
+  }
 
   async function loadSchema() {
     loadingSchema = true;
     try {
       schema = await apiGetProviderAuthSchema(provider.id);
-    } catch {
-      schema = {
-        provider_id: provider.id,
-        supports_auth: true,
-        supports_remote_favorites: false,
-        supports_push_favorites: false,
-        auth_fields: [
-          {
-            key: 'username',
-            label_key: 'settings.username',
-            field_type: 'text',
-            placeholder: 'Username',
-            help_text_key: undefined,
-            required: true
-          },
-          {
-            key: 'password',
-            label_key: 'settings.password',
-            field_type: 'password',
-            placeholder: '••••••••',
-            help_text_key: undefined,
-            required: true
-          }
-        ],
-        help_url: provider.api_url
-      };
+    } catch (error) {
+      schema = null;
+      errorMessage = errorText(error, i18n.t('settings.auth_login_failed'));
     } finally {
       loadingSchema = false;
     }
@@ -99,15 +83,14 @@
     try {
       await apiLoginProvider(provider.id, formData);
       notify.success(i18n.t('settings.auth_login_success', { provider: providerName }));
-      
       if (schema?.supports_remote_favorites) {
         step = 'sync_prompt';
       } else {
         onsuccess?.();
         onclose();
       }
-    } catch (e: any) {
-      errorMessage = typeof e === 'string' ? e : e?.message || 'Login failed';
+    } catch (error) {
+      errorMessage = errorText(error, i18n.t('settings.auth_login_failed'));
     } finally {
       isSubmitting = false;
     }
@@ -126,8 +109,8 @@
       );
       onsuccess?.();
       onclose();
-    } catch (e: any) {
-      errorMessage = typeof e === 'string' ? e : e?.message || 'Sync failed';
+    } catch (error) {
+      errorMessage = errorText(error, i18n.t('settings.auth_sync_failed'));
       step = 'sync_prompt';
     }
   }
@@ -141,32 +124,28 @@
 {#snippet authContent()}
   {#if step === 'login'}
     {#if errorMessage}
-      <div class="mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
-        <IconDismiss class="w-4 h-4 shrink-0" />
-        <span>{errorMessage}</span>
-      </div>
+      {@render authError(errorMessage)}
     {/if}
 
     {#if schema?.auth_fields}
-      <div class="flex flex-col gap-3 mb-3">
+      <div class="auth-fields">
         {#each schema.auth_fields as field (field.key)}
-          <div class="flex flex-col gap-1.5">
-            <label for={`auth-field-${field.key}`} class="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+          <div class="auth-field">
+            <span id={`auth-field-${field.key}`} class="auth-label">
               {i18n.t(field.label_key)}
-              {#if field.required}<span class="text-rose-400 ml-0.5">*</span>{/if}
-            </label>
+              {#if field.required}<span class="auth-required" aria-hidden="true">*</span>{/if}
+            </span>
             <Input
               type={field.field_type === 'password' ? 'password' : 'text'}
               value={formData[field.key] || ''}
               placeholder={field.placeholder || ''}
+              labelledby={`auth-field-${field.key}`}
               oninput={(e) => {
                 formData[field.key] = (e.target as HTMLInputElement).value;
               }}
             />
             {#if field.help_text_key}
-              <p class="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-                {i18n.t(field.help_text_key)}
-              </p>
+              <p class="auth-help">{i18n.t(field.help_text_key)}</p>
             {/if}
           </div>
         {/each}
@@ -178,19 +157,21 @@
     </p>
 
     {#if errorMessage}
-      <div class="mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
-        <IconDismiss class="w-4 h-4 shrink-0" />
-        <span>{errorMessage}</span>
-      </div>
+      {@render authError(errorMessage)}
     {/if}
   {:else if step === 'syncing'}
-    <div class="flex flex-col items-center justify-center py-6 gap-3">
-      <IconLoading class="w-8 h-8 text-[var(--accent)]" />
-      <p class="modal-confirm-desc text-center !p-0">
-        {i18n.t('settings.auth_syncing')}
-      </p>
+    <div class="auth-syncing">
+      <IconLoading />
+      <p>{i18n.t('settings.auth_syncing')}</p>
     </div>
   {/if}
+{/snippet}
+
+{#snippet authError(message: string)}
+  <div class="auth-error" role="alert">
+    <IconDismiss />
+    <span>{message}</span>
+  </div>
 {/snippet}
 
 {#snippet authActions()}
@@ -211,7 +192,7 @@
         size="md"
         class="justify-center"
         onclick={handleSubmitLogin}
-        disabled={isSubmitting || loadingSchema}
+        disabled={isSubmitting || loadingSchema || !schema}
       >
         {#if isSubmitting}
           <IconLoading class="w-5 h-5 mr-1.5 shrink-0" />
@@ -279,3 +260,78 @@
     </div>
   </Modal>
 {/if}
+
+<style>
+  .auth-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .auth-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .auth-label {
+    padding-inline: 4px;
+    color: var(--text-secondary);
+    font-size: var(--type-label-lg-size);
+    line-height: var(--type-label-lg-line);
+    font-weight: 500;
+  }
+
+  .auth-required {
+    margin-inline-start: 2px;
+    color: var(--status-error);
+  }
+
+  .auth-help {
+    margin: 0;
+    padding-inline: 4px;
+    color: var(--text-secondary);
+    font-size: var(--type-body-sm-size);
+    line-height: var(--type-body-sm-line);
+  }
+
+  .auth-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--status-error) 14%, transparent);
+    color: var(--status-error);
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-line);
+  }
+
+  .auth-error :global(svg) {
+    flex: none;
+    width: 20px;
+    height: 20px;
+  }
+
+  .auth-syncing {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding-block: 24px;
+    color: var(--text-secondary);
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-line);
+  }
+
+  .auth-syncing p {
+    margin: 0;
+  }
+
+  .auth-syncing :global(svg) {
+    width: 32px;
+    height: 32px;
+    color: var(--accent-primary);
+  }
+</style>

@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { tick } from 'svelte';
+  import { templatePreview } from '$lib/utils/templatePreview';
   import { computePosition, autoUpdate, flip, shift, offset, size as floatingSize } from '@floating-ui/dom';
+  import { FLOATING_EDGE, FLOATING_OFFSET } from '$lib/utils/floating';
   import { portal } from '$lib/actions/portal';
   import { scrollable } from '$lib/actions/scrollable';
   import { i18n } from '$lib/i18n';
@@ -60,95 +62,7 @@
     );
   });
 
-  function getPreview(template: string, type: 'creator' | 'post' | 'file'): string {
-    let t = (template || '').trim();
-    if (type === 'creator') {
-      if (!t) t = '{creator}';
-      return t
-        .replaceAll('{creator}', 'AuthorName')
-        .replaceAll('{author}', 'AuthorName')
-        .replaceAll('{name}', 'AuthorName')
-        .replaceAll('{service}', 'Platform')
-        .replaceAll('{platform}', 'Platform')
-        .replaceAll('{creator_id}', '12345')
-        .replaceAll('{id}', '12345')
-        .replaceAll('{date}', '2024-08-20')
-        .replaceAll('{published}', '2024-08-20')
-        .replaceAll('{date_compact}', '20240820')
-        .replaceAll('{date_dots}', '2024.08.20')
-        .replaceAll('{year}', '2024')
-        .replaceAll('{yyyy}', '2024')
-        .replaceAll('{year_short}', '24')
-        .replaceAll('{yy}', '24')
-        .replaceAll('{month}', '08')
-        .replaceAll('{mm}', '08')
-        .replaceAll('{day}', '20')
-        .replaceAll('{dd}', '20')
-        .replaceAll('{year_month}', '2024-08');
-    }
-    if (type === 'post') {
-      if (!t) t = '{post_title}';
-      return t
-        .replaceAll('{post_title}', 'PostTitle')
-        .replaceAll('{title}', 'PostTitle')
-        .replaceAll('{post_id}', '67890')
-        .replaceAll('{id}', '67890')
-        .replaceAll('{creator}', 'AuthorName')
-        .replaceAll('{author}', 'AuthorName')
-        .replaceAll('{name}', 'AuthorName')
-        .replaceAll('{service}', 'Platform')
-        .replaceAll('{platform}', 'Platform')
-        .replaceAll('{date}', '2024-08-20')
-        .replaceAll('{published}', '2024-08-20')
-        .replaceAll('{date_compact}', '20240820')
-        .replaceAll('{date_dots}', '2024.08.20')
-        .replaceAll('{year}', '2024')
-        .replaceAll('{yyyy}', '2024')
-        .replaceAll('{year_short}', '24')
-        .replaceAll('{yy}', '24')
-        .replaceAll('{month}', '08')
-        .replaceAll('{mm}', '08')
-        .replaceAll('{day}', '20')
-        .replaceAll('{dd}', '20')
-        .replaceAll('{year_month}', '2024-08');
-    }
-    if (!t) t = '{post_title} - {filename}';
-    let res = t
-      .replaceAll('{post_title}', 'PostTitle')
-      .replaceAll('{title}', 'PostTitle')
-      .replaceAll('{post_id}', '67890')
-      .replaceAll('{creator}', 'AuthorName')
-      .replaceAll('{author}', 'AuthorName')
-      .replaceAll('{service}', 'Platform')
-      .replaceAll('{platform}', 'Platform')
-      .replaceAll('{filename}', 'OriginalFilename.png')
-      .replaceAll('{original_name}', 'OriginalFilename.png')
-      .replaceAll('{name}', 'OriginalFilename')
-      .replaceAll('{ext}', 'png')
-      .replaceAll('{index}', '1')
-      .replaceAll('{date}', '2024-08-20')
-      .replaceAll('{published}', '2024-08-20')
-      .replaceAll('{date_compact}', '20240820')
-      .replaceAll('{date_dots}', '2024.08.20')
-      .replaceAll('{year}', '2024')
-      .replaceAll('{yyyy}', '2024')
-      .replaceAll('{year_short}', '24')
-      .replaceAll('{yy}', '24')
-      .replaceAll('{month}', '08')
-      .replaceAll('{mm}', '08')
-      .replaceAll('{day}', '20')
-      .replaceAll('{dd}', '20')
-      .replaceAll('{year_month}', '2024-08')
-      .replaceAll('{media_id}', 'MediaID');
-
-    if (res.toLowerCase().endsWith('.png')) {
-      return res;
-    }
-    const cleanStem = res.replace(/\.png/gi, '');
-    return `${cleanStem}.png`;
-  }
-
-  let previewValue = $derived(getPreview(value, previewType));
+  let previewValue = $derived(templatePreview(value, previewType));
 
   async function updatePosition() {
     if (!rootEl || !dropdownEl) return;
@@ -156,11 +70,11 @@
       placement: 'bottom-start',
       strategy: 'fixed',
       middleware: [
-        offset(6),
-        flip({ fallbackPlacements: ['top-start', 'bottom-end', 'top-end'], padding: 12 }),
-        shift({ padding: 12 }),
+        offset(FLOATING_OFFSET),
+        flip({ fallbackPlacements: ['top-start', 'bottom-end', 'top-end'], padding: FLOATING_EDGE }),
+        shift({ padding: FLOATING_EDGE }),
         floatingSize({
-          padding: 12,
+          padding: FLOATING_EDGE,
           apply({ availableHeight, elements }: { availableHeight: number; elements: any }) {
             Object.assign(elements.floating.style, {
               maxHeight: `${Math.min(availableHeight, 320)}px`
@@ -222,6 +136,7 @@
 
     if (lastOpenBrace > lastCloseBrace) {
       filterQuery = beforeCursor.slice(lastOpenBrace);
+      selectedIndex = 0;
       isOpen = true;
     } else {
       filterQuery = '';
@@ -312,7 +227,7 @@
       {#if previewValue}
         <button
           type="button"
-          class="icon-btn"
+          class="field-action"
           use:ripple
           use:tooltip={previewValue}
           onclick={(e) => {
@@ -328,7 +243,7 @@
 
       <button
         type="button"
-        class="icon-btn"
+        class="field-action"
         class:is-active={isOpen}
         use:ripple
         use:tooltip={i18n.t('settings.insert_variable')}
@@ -354,7 +269,7 @@
   <div
     use:portal={'body'}
     bind:this={dropdownEl}
-    class="template-dropdown"
+    class="template-dropdown floating-surface"
     role="listbox"
     tabindex="-1"
   >
@@ -362,8 +277,7 @@
       {#each filteredTags as item, i (item.tag)}
         <button
           type="button"
-          class="tag-item"
-          class:is-selected={i === selectedIndex}
+          class="floating-item tag-item"
           use:ripple
           onmousedown={(e) => {
             e.preventDefault();
@@ -373,8 +287,8 @@
           role="option"
           aria-selected={i === selectedIndex}
         >
-          <span class="tag-label">{item.label}</span>
-          <code class="tag-badge">{item.tag}</code>
+          <span class="floating-item-label">{item.label}</span>
+          <code class="floating-item-detail is-mono">{item.tag}</code>
         </button>
       {/each}
     </div>
@@ -452,7 +366,6 @@
     pointer-events: none;
   }
 
-
   .native-input {
     flex: 1;
     min-width: 0;
@@ -466,11 +379,6 @@
     font-size: calc(var(--control-font-size, 13px) * var(--ui-scale, 1));
     font-family: var(--font-sans);
     box-sizing: border-box;
-  }
-
-  .icon-btn :global(svg) {
-    width: calc(var(--control-icon-size, 16px) * var(--ui-scale, 1)) !important;
-    height: calc(var(--control-icon-size, 16px) * var(--ui-scale, 1)) !important;
   }
 
   .native-input:focus,
@@ -493,46 +401,15 @@
     margin-left: auto;
   }
 
-  .icon-btn {
-    width: 24px;
-    height: 24px;
-    border: none;
-    outline: none;
-    background: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-primary);
-    opacity: 0.45;
-    cursor: pointer;
-    padding: 0;
-    border-radius: var(--radius-sm, 6px);
-    transition: opacity 160ms ease, color 160ms ease;
-  }
-
-  .icon-btn:hover,
-  .icon-btn.is-active,
-  .icon-btn:focus-visible {
-    opacity: 0.95;
-    color: var(--accent);
-  }
-
   .template-dropdown {
     position: fixed;
     z-index: 10000;
-    width: min(320px, calc(100vw - 32px));
-    background: var(--floating-bg);
-    backdrop-filter: var(--floating-backdrop);
-    -webkit-backdrop-filter: var(--floating-backdrop);
-    border: var(--floating-border);
-    border-radius: var(--floating-radius, 18px);
-    box-shadow: var(--floating-shadow);
-    overflow: hidden;
     display: flex;
     flex-direction: column;
+    width: min(320px, calc(100vw - 32px));
+    overflow: hidden;
     visibility: hidden;
-    padding: var(--floating-padding, 6px);
-    animation: dropdownFadeIn 140ms var(--ease-expo);
+    animation: dropdownFadeIn var(--duration-fast) var(--ease-standard);
   }
 
   @keyframes dropdownFadeIn {
@@ -549,11 +426,9 @@
   .dropdown-list {
     display: flex;
     flex-direction: column;
-    padding: 0;
-    max-height: 240px;
     width: 100%;
+    max-height: 240px;
     box-sizing: border-box;
-    gap: var(--floating-gap, 2px);
   }
 
   .dropdown-list :global(.os-viewport) {
@@ -566,53 +441,14 @@
     flex-direction: column !important;
     width: 100% !important;
     box-sizing: border-box !important;
-    gap: var(--floating-gap, 2px) !important;
   }
 
-  .tag-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--floating-item-gap, 10px);
-    width: 100%;
-    height: var(--floating-item-height, 36px);
-    padding: 0 var(--floating-item-px, 12px);
-    border-radius: var(--floating-item-radius, 12px);
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    text-align: left;
-    transition: background var(--duration-fast), color var(--duration-fast);
-    box-sizing: border-box;
-    flex-shrink: 0;
-  }
-
-  .tag-item:hover,
-  .tag-item.is-selected {
-    background: rgba(var(--surface-tint-rgb), 0.06);
-  }
-
-  .tag-item.is-selected {
-    color: var(--accent);
-  }
-
-  .tag-label {
-    font-size: 13px;
-    font-weight: 500;
+  .tag-item[aria-selected='true'] {
+    background: var(--state-layer-hover);
     color: var(--text-primary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
-  .tag-badge {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--accent);
-    background: rgba(var(--surface-tint-rgb), 0.06);
-    padding: 2px 6px;
-    border-radius: 4px;
-    flex-shrink: 0;
+  .tag-item .floating-item-detail {
+    color: var(--accent-on-surface);
   }
 </style>

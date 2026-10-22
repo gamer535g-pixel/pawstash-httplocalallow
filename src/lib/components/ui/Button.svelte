@@ -59,8 +59,10 @@
     line-height: normal;
     cursor: pointer;
     border-radius: var(--radius-full);
-    transition: all var(--duration-fast) var(--ease-expo);
-    border: var(--border-width) solid transparent;
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard),
+                opacity var(--duration-fast) var(--ease-standard);
+    border: 0;
     outline: none;
     box-sizing: border-box;
     white-space: nowrap;
@@ -77,8 +79,19 @@
     flex-shrink: 0;
   }
 
+  @media (hover: hover) {
+    .btn:hover {
+      background-image: linear-gradient(var(--state-layer-hover), var(--state-layer-hover));
+    }
+  }
+
   .btn:active {
-    transform: scale(0.98);
+    background-image: linear-gradient(var(--state-layer-pressed), var(--state-layer-pressed));
+  }
+
+  .btn:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
   }
 
   .btn:disabled {
@@ -88,59 +101,43 @@
   }
 
   .btn-primary {
-    background: var(--bg-card);
-    border-color: var(--border-color);
+    background-color: var(--surface-container-highest);
     color: var(--text-primary);
   }
 
-  .btn-primary:hover {
-    background: var(--bg-card-hover);
-    border-color: var(--border-color-hover);
-  }
-
   .btn-accent {
-    background: color-mix(in srgb, var(--accent-primary) 90%, transparent);
-    border-color: transparent;
-    color: var(--text-on-accent, var(--text-primary));
-  }
-
-  .btn-accent:hover {
-    background: var(--accent-primary);
-    border-color: transparent;
-    color: var(--text-on-accent, var(--text-primary));
+    background-color: var(--accent-primary);
+    color: var(--accent-on-primary);
   }
 
   .btn-tonal {
-    background: var(--accent-container);
-    border-color: var(--accent-subtle);
-    color: var(--accent-on-container);
-  }
-
-  .btn-tonal:hover {
-    background: color-mix(in srgb, var(--accent-container) 80%, var(--accent-primary));
-    border-color: var(--accent-primary);
+    background-color: var(--accent-container);
     color: var(--accent-on-container);
   }
 
   .btn-ghost {
-    background: transparent;
-    color: color-mix(in srgb, var(--text-primary) 70%, var(--text-secondary));
+    background-color: transparent;
+    color: var(--text-secondary);
   }
 
-  .btn-ghost:hover {
-    background: var(--bg-card-hover);
-    color: var(--text-primary);
+  @media (hover: hover) {
+    .btn-ghost:hover {
+      color: var(--text-primary);
+    }
+  }
+
+  .btn-ghost[aria-pressed='true'],
+  .btn-ghost.is-on {
+    color: var(--accent-primary);
+  }
+
+  .btn-ghost[aria-expanded='true'] {
+    background-color: var(--state-layer-pressed);
   }
 
   .btn-danger {
-    background: color-mix(in srgb, var(--status-error) 12%, transparent);
-    border-color: color-mix(in srgb, var(--status-error) 24%, transparent);
+    background-color: color-mix(in srgb, var(--status-error) 16%, transparent);
     color: var(--status-error);
-  }
-
-  .btn-danger:hover {
-    background: color-mix(in srgb, var(--status-error) 20%, transparent);
-    border-color: color-mix(in srgb, var(--status-error) 36%, transparent);
   }
 
   .btn-sm {

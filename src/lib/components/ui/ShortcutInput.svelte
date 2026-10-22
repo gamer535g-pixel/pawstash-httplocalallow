@@ -35,10 +35,7 @@
   let finalizeTimer: ReturnType<typeof setTimeout> | undefined;
 
   let displayTokens = $derived.by(() => {
-    if (isRecording) {
-      if (liveKeys.length > 0) return liveKeys;
-      return [];
-    }
+    if (isRecording) return liveKeys;
     if (!value || value.trim().length === 0) return [];
     return value.split('+').map((token) => token.trim()).filter(Boolean);
   });
@@ -60,14 +57,20 @@
   }
 
   function finalizeRecording() {
-    if (finalizeTimer) clearTimeout(finalizeTimer);
     if (pendingValue) {
       value = pendingValue;
       onchange?.(pendingValue);
     }
-    isRecording = false;
-    liveKeys = [];
-    pendingValue = null;
+    stopRecording();
+  }
+
+  function heldModifiers(event: KeyboardEvent): string[] {
+    const modifiers: string[] = [];
+    if (event.ctrlKey) modifiers.push('Control');
+    if (event.altKey) modifiers.push('Alt');
+    if (event.shiftKey) modifiers.push('Shift');
+    if (event.metaKey) modifiers.push('Super');
+    return modifiers;
   }
 
   function normalizeKeyName(key: string, code: string): string | null {
@@ -103,12 +106,7 @@
     event.preventDefault();
     event.stopPropagation();
 
-    const modifiers: string[] = [];
-    if (event.ctrlKey) modifiers.push('Control');
-    if (event.altKey) modifiers.push('Alt');
-    if (event.shiftKey) modifiers.push('Shift');
-    if (event.metaKey) modifiers.push('Super');
-
+    const modifiers = heldModifiers(event);
     const primaryKey = normalizeKeyName(event.key, event.code);
 
     if (primaryKey) {
@@ -138,12 +136,7 @@
       return;
     }
 
-    const modifiers: string[] = [];
-    if (event.ctrlKey) modifiers.push('Control');
-    if (event.altKey) modifiers.push('Alt');
-    if (event.shiftKey) modifiers.push('Shift');
-    if (event.metaKey) modifiers.push('Super');
-    liveKeys = modifiers;
+    liveKeys = heldModifiers(event);
   }
 
   function handleBlur() {
@@ -156,24 +149,10 @@
     }
   }
 
-  function applyPreset(preset: string) {
+  function assign(next: string) {
     if (disabled) return;
-    value = preset;
-    onchange?.(preset);
-    if (isRecording) stopRecording();
-  }
-
-  function resetToDefault() {
-    if (disabled) return;
-    value = defaultValue;
-    onchange?.(defaultValue);
-    if (isRecording) stopRecording();
-  }
-
-  function clearShortcut() {
-    if (disabled) return;
-    value = '';
-    onchange?.('');
+    value = next;
+    onchange?.(next);
     if (isRecording) stopRecording();
   }
 </script>
@@ -207,7 +186,7 @@
           <span class="plus-sep">+</span>
         {/if}
       {/each}
-      {#if isRecording}
+      {#if isRecording && !pendingValue}
         <span class="plus-sep">+</span>
         <span class="waiting-chip">?</span>
       {/if}
@@ -220,13 +199,13 @@
 
   <div class="right-actions">
     {#if presets.length > 0}
-      <PopoverMenu align="right" width="220px">
+      <PopoverMenu align="right" width="220px" menuClass="preset-menu">
         {#snippet trigger({ toggle, open })}
           <button
             type="button"
             use:ripple
             use:tooltip={i18n.t('settings.panic_key_presets')}
-            class="icon-btn"
+            class="field-action"
             class:is-open={open}
             onclick={(e) => {
               e.stopPropagation();
@@ -235,7 +214,7 @@
             aria-label={i18n.t('common.presets')}
             tabindex="-1"
           >
-            <IconList style="width: 18px; height: 18px;" />
+            <IconList />
           </button>
         {/snippet}
         {#snippet children({ close })}
@@ -243,17 +222,17 @@
             {#each presets as preset}
               <button
                 type="button"
-                class="preset-item"
-                class:selected={value === preset}
+                class="floating-item"
+                role="menuitemradio"
+                aria-checked={value === preset}
+                use:ripple
                 onclick={() => {
-                  applyPreset(preset);
+                  assign(preset);
                   close();
                 }}
               >
-                <code class="preset-badge">{preset}</code>
-                {#if value === preset}
-                  <IconCheck style="width: 15px; height: 15px; color: var(--accent); flex-shrink: 0;" />
-                {/if}
+                <code class="floating-item-label preset-code">{preset}</code>
+                {#if value === preset}<IconCheck />{/if}
               </button>
             {/each}
           </div>
@@ -264,34 +243,34 @@
     {#if value && value !== defaultValue}
       <button
         type="button"
-        class="icon-btn"
+        class="field-action"
         use:ripple
         use:tooltip={i18n.t('settings.panic_key_reset')}
         onclick={(e) => {
           e.stopPropagation();
-          resetToDefault();
+          assign(defaultValue);
         }}
         aria-label={i18n.t('settings.panic_key_reset')}
         tabindex="-1"
       >
-        <IconArrowReset style="width: 16px; height: 16px;" />
+        <IconArrowReset />
       </button>
     {/if}
 
     {#if value}
       <button
         type="button"
-        class="icon-btn"
+        class="field-action"
         use:ripple
         use:tooltip={i18n.t('settings.panic_key_clear')}
         onclick={(e) => {
           e.stopPropagation();
-          clearShortcut();
+          assign('');
         }}
         aria-label={i18n.t('settings.panic_key_clear')}
         tabindex="-1"
       >
-        <IconDismiss style="width: 16px; height: 16px;" />
+        <IconDismiss />
       </button>
     {/if}
   </div>
@@ -458,72 +437,13 @@
     margin-left: auto;
   }
 
-  .icon-btn {
-    width: 24px;
-    height: 24px;
-    border: none;
-    outline: none;
-    background: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-primary);
-    opacity: 0.45;
-    cursor: pointer;
-    padding: 0;
-    border-radius: var(--radius-sm, 6px);
-    transition: opacity 160ms ease, color 160ms ease;
-  }
-
-  .icon-btn:hover,
-  .icon-btn.is-open {
-    opacity: 0.95;
-    color: var(--accent);
-  }
-
   .preset-menu-list {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    padding: 2px;
-    width: 100%;
-    box-sizing: border-box;
   }
 
-  .preset-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    width: 100%;
-    padding: 8px 12px;
-    border-radius: var(--radius-md, 8px);
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    text-align: left;
-    transition: background var(--duration-fast), color var(--duration-fast);
-    box-sizing: border-box;
-    flex-shrink: 0;
-  }
-
-  .preset-item:hover,
-  .preset-item.selected {
-    background: rgba(var(--surface-tint-rgb), 0.08);
-  }
-
-  .preset-item.selected {
-    box-shadow: inset 2px 0 0 var(--accent);
-  }
-
-  .preset-badge {
+  .preset-code {
     font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--accent);
-    background: rgba(var(--surface-tint-rgb), 0.06);
-    padding: 2px 6px;
-    border-radius: 4px;
-    flex-shrink: 0;
+    font-size: var(--type-body-sm-size);
   }
 </style>

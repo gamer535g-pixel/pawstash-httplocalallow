@@ -23,17 +23,18 @@
 </script>
 
 <script lang="ts">
+  import { sanitizeEmbedHtml } from './RichContent.svelte';
   import { onMount, onDestroy, tick } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { portal } from '$lib/actions/portal';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { i18n } from '$lib/i18n';
-  import { formatBytes } from '$lib/utils/formatters';
+  import { formatBytes, formatDuration } from '$lib/utils/formatters';
   import { tooltip } from '$lib/motion';
   import { playbackState } from '$lib/state/playbackState.svelte';
   import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
   import { logMediaError } from '$lib/utils/logger';
-  import { diagnoseVideoFailure, diagnoseVideoFailureAsync, getUnsupportedContainerFormat, getFileExtension, type MediaFailureState } from '$lib/utils/media';
+  import { diagnoseVideoFailure, diagnoseVideoFailureAsync, getUnsupportedContainerFormat, getFileExtension, videoPoster, type MediaFailureState } from '$lib/utils/media';
   import { openDownloadedFile } from '$lib/utils/ipc';
   import { getVideoThumbnail, isFrameBlankOrBlack } from '$lib/utils/mediaThumbnail';
   import Button from '$lib/components/ui/Button.svelte';
@@ -205,17 +206,6 @@
   let videoThumbnails = $state<Record<number, string>>({});
   let activeVideoDuration = $state(0);
 
-  function formatVideoDuration(seconds?: number): string {
-    if (!seconds || isNaN(seconds) || !isFinite(seconds) || seconds <= 0) return '';
-    const total = Math.floor(seconds);
-    const hrs = Math.floor(total / 3600);
-    const mins = Math.floor((total % 3600) / 60);
-    const secs = total % 60;
-    if (hrs > 0) {
-      return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    }
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  }
 
   function getVideoDuration(item: MediaViewerItem, itemIndex: number): number | undefined {
     if (item.duration && item.duration > 0) return item.duration;
@@ -794,7 +784,7 @@
   }
 
   $effect(() => {
-    const _ = index;
+    index;
     currentId;
     resetTransform();
     loadedWidth = 0;
@@ -949,7 +939,7 @@
             style:transform={dismissOffsetY !== 0 ? `translate3d(0, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
           >
             <div class="viewer-embed-iframe-wrapper">
-              {@html current.html}
+              {@html sanitizeEmbedHtml(current.html)}
             </div>
           </div>
         {:else if current.kind === 'video' && (current.isUnarchived || current.isUnavailable || videoErrors[index] || getUnsupportedContainerFormat(current?.name, current?.url))}
@@ -1021,7 +1011,7 @@
             class="media-viewer-media"
             style:transform={dismissOffsetY !== 0 ? `translate3d(0, ${dismissOffsetY}px, 0) scale(${dismissScale})` : undefined}
             src={current.url}
-            poster={current.poster || videoThumbnails[index]}
+            poster={videoPoster(current.poster || videoThumbnails[index])}
             controls
             autoplay
             playsinline
@@ -1173,7 +1163,7 @@
                       <span class="filmstrip-badge" aria-hidden="true">
                         <IconVideo />
                         {#if duration}
-                          <span class="filmstrip-duration">{formatVideoDuration(duration)}</span>
+                          <span class="filmstrip-duration">{formatDuration(duration)}</span>
                         {/if}
                       </span>
                     {:else}
@@ -1188,7 +1178,7 @@
                       {#if duration}
                         <span class="filmstrip-badge" aria-hidden="true">
                           <IconVideo />
-                          <span class="filmstrip-duration">{formatVideoDuration(duration)}</span>
+                          <span class="filmstrip-duration">{formatDuration(duration)}</span>
                         </span>
                       {/if}
                     </div>
@@ -1217,7 +1207,8 @@
     inset: 0;
     z-index: var(--z-viewer, 2147483000);
     overflow: hidden;
-    background: rgba(0, 0, 0, 0.96);
+    /* Opaque: with a translucent window backdrop any alpha lets the page and the desktop through. */
+    background: #000;
     color: var(--text-primary);
     outline: none;
     animation: viewer-enter 180ms var(--ease-expo, ease-out);
@@ -1465,8 +1456,6 @@
     cursor: grabbing;
   }
 
-
-
   .media-viewer-media:is(video) {
     width: min(100%, 1600px);
     max-height: 100%;
@@ -1633,9 +1622,8 @@
     padding: 2px 6px;
     height: 18px;
     border-radius: 4px;
-    background: rgba(0, 0, 0, 0.82);
-    backdrop-filter: blur(4px);
-    color: var(--text-primary);
+    background: var(--on-media-scrim-strong);
+    color: var(--on-media);
     font-size: 11px;
     font-weight: 550;
     line-height: 1;

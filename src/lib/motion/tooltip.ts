@@ -1,4 +1,5 @@
 import { computePosition, autoUpdate, flip, shift, offset } from '@floating-ui/dom';
+import { FLOATING_EDGE } from '$lib/utils/floating';
 
 export type TooltipPlacement = 'top' | 'bottom' | 'left' | 'right';
 
@@ -12,225 +13,149 @@ export type TooltipOptions = {
 
 export type TooltipParam = string | undefined | null | TooltipOptions;
 
-const OPPOSITE_SIDES: Record<TooltipPlacement, readonly TooltipPlacement[]> = {
-  top: ['bottom', 'right', 'left'],
+const GAP = 6;
+const HIDE_MS = 120;
+const WARM_MS = 600;
+
+const FALLBACKS: Record<TooltipPlacement, TooltipPlacement[]> = {
   bottom: ['top', 'right', 'left'],
-  left: ['right', 'top', 'bottom'],
-  right: ['left', 'top', 'bottom']
+  top: ['bottom', 'right', 'left'],
+  left: ['right', 'bottom', 'top'],
+  right: ['left', 'bottom', 'top']
 };
 
-const SIDE_TO_ARROW: Record<string, TooltipPlacement> = {
-  top: 'bottom',
-  bottom: 'top',
-  left: 'right',
-  right: 'left'
-};
+let lastHiddenAt = 0;
+
+const canHover = () => typeof window !== 'undefined' && window.matchMedia('(hover: hover)').matches;
 
 function parseParam(param: TooltipParam, defaultDelay: number) {
-  if (typeof param === 'string') {
-    return {
-      text: param.trim() || undefined,
-      placement: undefined,
-      delay: defaultDelay,
-      open: undefined as boolean | undefined,
-      variant: 'default' as 'default' | 'accent'
-    };
-  }
-  if (param && typeof param === 'object') {
-    return {
-      text: param.text?.trim() || undefined,
-      placement: param.placement,
-      delay: param.delay ?? defaultDelay,
-      open: param.open,
-      variant: param.variant ?? ('default' as const)
-    };
-  }
+  const options: TooltipOptions = typeof param === 'string' ? { text: param } : (param ?? {});
   return {
-    text: undefined,
-    placement: undefined,
-    delay: defaultDelay,
-    open: undefined as boolean | undefined,
-    variant: 'default' as 'default' | 'accent'
+    text: options.text?.trim() || undefined,
+    placement: options.placement ?? ('bottom' as TooltipPlacement),
+    delay: options.delay ?? defaultDelay,
+    open: options.open,
+    variant: options.variant ?? ('default' as const)
   };
 }
 
-export function tooltip(node: HTMLElement, param: TooltipParam, defaultDelay = 120) {
-  let activeEl: HTMLElement | null = null;
-  let textEl: HTMLElement | null = null;
+export function tooltip(node: HTMLElement, param: TooltipParam, defaultDelay = 400) {
+  let el: HTMLElement | null = null;
   let showTimer: ReturnType<typeof setTimeout> | undefined;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
-  let cleanupAutoUpdate: (() => void) | undefined;
-
+  let stopAutoUpdate: (() => void) | undefined;
   let config = parseParam(param, defaultDelay);
 
-  async function updatePosition() {
-    if (!activeEl || !config.text) return;
-
-    const initialPlacement = config.placement || 'top';
-    const fallbackPlacements = OPPOSITE_SIDES[initialPlacement] ?? OPPOSITE_SIDES.top;
-
-    const { x, y, placement } = await computePosition(node, activeEl, {
-      placement: initialPlacement,
+  async function place() {
+    if (!el) return;
+    const { x, y, placement } = await computePosition(node, el, {
+      placement: config.placement,
       strategy: 'fixed',
       middleware: [
-        offset(6),
-        flip({
-          fallbackPlacements: [...fallbackPlacements],
-          padding: 8
-        }),
-        shift({
-          padding: 8
-        })
+        offset(GAP),
+        flip({ fallbackPlacements: FALLBACKS[config.placement], padding: FLOATING_EDGE }),
+        shift({ padding: FLOATING_EDGE })
       ]
     });
+    if (!el) return;
+    el.dataset.side = placement.split('-')[0];
+    el.style.left = `${Math.round(x)}px`;
+    el.style.top = `${Math.round(y)}px`;
+  }
 
-    if (!activeEl) return;
-
-    const side = placement.split('-')[0];
-    const arrowSide = SIDE_TO_ARROW[side] ?? 'bottom';
-    const nodeRect = node.getBoundingClientRect();
-    const tooltipRect = activeEl.getBoundingClientRect();
-
-    if (arrowSide === 'top' || arrowSide === 'bottom') {
-      const relX = nodeRect.left + nodeRect.width / 2 - x;
-      const clampedX = Math.max(14, Math.min(tooltipRect.width - 14, relX));
-      activeEl.style.setProperty('--arrow-x', `${Math.round(clampedX)}px`);
-    } else {
-      const relY = nodeRect.top + nodeRect.height / 2 - y;
-      const clampedY = Math.max(10, Math.min(tooltipRect.height - 10, relY));
-      activeEl.style.setProperty('--arrow-y', `${Math.round(clampedY)}px`);
+  function render() {
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'app-tooltip';
+      el.setAttribute('role', 'tooltip');
+      document.body.appendChild(el);
     }
-
-    activeEl.setAttribute('data-side', arrowSide);
-    activeEl.style.left = `${Math.round(x)}px`;
-    activeEl.style.top = `${Math.round(y)}px`;
+    el.textContent = config.text ?? '';
+    el.classList.toggle('is-accent', config.variant === 'accent');
   }
 
   function show() {
     if (!config.text) return;
-    if (showTimer) clearTimeout(showTimer);
-
+    clearTimeout(showTimer);
+    const warm = performance.now() - lastHiddenAt < WARM_MS;
     showTimer = setTimeout(async () => {
-      const textToShow = config.text;
-      if (!textToShow) return;
-
-      if (hideTimer) {
-        clearTimeout(hideTimer);
-        hideTimer = undefined;
-      }
-
-      if (!activeEl) {
-        activeEl = document.createElement('div');
-        activeEl.className = 'app-tooltip';
-
-        textEl = document.createElement('span');
-        textEl.className = 'app-tooltip-text';
-
-        const arrow = document.createElement('div');
-        arrow.className = 'app-tooltip-arrow';
-        arrow.innerHTML = '<svg viewBox="0 0 14 5" aria-hidden="true"><path d="M 0 0 L 5.6 4.1 Q 7 5 8.4 4.1 L 14 0 Z" /></svg>';
-
-        activeEl.append(textEl, arrow);
-        document.body.appendChild(activeEl);
-      }
-
-      if (textEl) {
-        textEl.textContent = textToShow;
-      }
-      activeEl.classList.toggle('is-accent', config.variant === 'accent');
-
-      await updatePosition();
-      if (!activeEl) return;
-
-      cleanupAutoUpdate?.();
-      cleanupAutoUpdate = autoUpdate(node, activeEl, () => {
-        void updatePosition();
-      });
-
+      if (!config.text) return;
+      clearTimeout(hideTimer);
+      hideTimer = undefined;
+      render();
+      await place();
+      if (!el) return;
+      stopAutoUpdate?.();
+      stopAutoUpdate = autoUpdate(node, el, () => void place());
       requestAnimationFrame(() => {
-        activeEl?.classList.add('is-visible');
+        if (!hideTimer) el?.classList.add('is-visible');
       });
-    }, config.delay);
+    }, warm || config.open ? 0 : config.delay);
   }
 
   function hide() {
-    if (showTimer) {
-      clearTimeout(showTimer);
-      showTimer = undefined;
-    }
-    if (cleanupAutoUpdate) {
-      cleanupAutoUpdate();
-      cleanupAutoUpdate = undefined;
-    }
-    if (activeEl) {
-      const el = activeEl;
-      el.classList.remove('is-visible');
-      if (hideTimer) clearTimeout(hideTimer);
-      hideTimer = setTimeout(() => {
-        el.remove();
-        if (activeEl === el) {
-          activeEl = null;
-          textEl = null;
-        }
-        hideTimer = undefined;
-      }, 130);
-    }
+    clearTimeout(showTimer);
+    showTimer = undefined;
+    stopAutoUpdate?.();
+    stopAutoUpdate = undefined;
+    if (!el) return;
+    const leaving = el;
+    if (leaving.classList.contains('is-visible')) lastHiddenAt = performance.now();
+    leaving.classList.remove('is-visible');
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      leaving.remove();
+      if (el === leaving) el = null;
+      hideTimer = undefined;
+    }, HIDE_MS);
   }
 
-  function showOnTrigger() {
-    if (config.open === undefined) show();
-  }
-
-  function hideOnTrigger() {
+  // Touch has no hover: a tap would flash the tooltip. Only explicitly opened ones (slider values) show there.
+  const onEnter = () => {
+    if (config.open === undefined && canHover()) show();
+  };
+  const onFocus = () => {
+    if (config.open === undefined && node.matches(':focus-visible')) show();
+  };
+  const onLeave = () => {
     if (config.open === undefined) hide();
-  }
+  };
 
-  node.addEventListener('mouseenter', showOnTrigger);
-  node.addEventListener('mouseleave', hideOnTrigger);
-  node.addEventListener('focusin', showOnTrigger);
-  node.addEventListener('focusout', hideOnTrigger);
-  node.addEventListener('click', hideOnTrigger);
-  node.addEventListener('pointerdown', hideOnTrigger);
+  node.addEventListener('mouseenter', onEnter);
+  node.addEventListener('mouseleave', onLeave);
+  node.addEventListener('focusin', onFocus);
+  node.addEventListener('focusout', onLeave);
+  node.addEventListener('click', onLeave);
+  node.addEventListener('pointerdown', onLeave);
 
   if (config.open) show();
 
   return {
-    update(newParam: TooltipParam) {
-      config = parseParam(newParam, defaultDelay);
+    update(next: TooltipParam) {
+      config = parseParam(next, defaultDelay);
       if (!config.text) {
         hide();
         return;
       }
-      if (textEl) {
-        textEl.textContent = config.text;
+      if (el) {
+        render();
+        void place();
       }
-      activeEl?.classList.toggle('is-accent', config.variant === 'accent');
-      if (activeEl) {
-        void updatePosition();
-      }
-      if (config.open === true) {
-        if (!activeEl || hideTimer) show();
-      } else if (config.open === false) {
-        hide();
-      }
+      if (config.open === true && (!el || hideTimer)) show();
+      else if (config.open === false) hide();
     },
     destroy() {
-      hide();
-      if (hideTimer) {
-        clearTimeout(hideTimer);
-        hideTimer = undefined;
-      }
-      if (activeEl) {
-        activeEl.remove();
-        activeEl = null;
-        textEl = null;
-      }
-      node.removeEventListener('mouseenter', showOnTrigger);
-      node.removeEventListener('mouseleave', hideOnTrigger);
-      node.removeEventListener('focusin', showOnTrigger);
-      node.removeEventListener('focusout', hideOnTrigger);
-      node.removeEventListener('click', hideOnTrigger);
-      node.removeEventListener('pointerdown', hideOnTrigger);
+      clearTimeout(showTimer);
+      clearTimeout(hideTimer);
+      stopAutoUpdate?.();
+      el?.remove();
+      el = null;
+      node.removeEventListener('mouseenter', onEnter);
+      node.removeEventListener('mouseleave', onLeave);
+      node.removeEventListener('focusin', onFocus);
+      node.removeEventListener('focusout', onLeave);
+      node.removeEventListener('click', onLeave);
+      node.removeEventListener('pointerdown', onLeave);
     }
   };
 }

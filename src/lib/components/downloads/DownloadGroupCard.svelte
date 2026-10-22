@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { haptic } from '$lib/utils/haptics';
+  import { parentFolder, videoPoster } from '$lib/utils/media';
   import type { DownloadItem } from '$lib/types/download';
   import { downloadState } from '$lib/state/downloadState.svelte';
   import { configState } from '$lib/state/configState.svelte';
@@ -7,6 +9,11 @@
   import { notify } from '$lib/utils/toast';
   import { tooltip } from '$lib/motion';
   import { apiShowInFolder } from '$lib/utils/ipc';
+  import { selectionState } from '$lib/state/selectionState.svelte';
+  import { contextMenuState } from '$lib/state/contextMenuState.svelte';
+  import { downloadGroupMenuItems } from '$lib/utils/contextMenus';
+  import IconCheckmark from '~icons/fluent/checkmark-20-filled';
+  import IconPartial from '~icons/fluent/subtract-20-filled';
   import IconDownload from '~icons/fluent/arrow-download-24-regular';
   import IconFolder from '~icons/fluent/folder-24-regular';
   import IconPause from '~icons/fluent/pause-20-regular';
@@ -60,6 +67,10 @@
   let totalBytes = $derived(items.reduce((sum, item) => sum + Math.max(item.total_bytes, item.downloaded_bytes), 0));
   let downloadedBytes = $derived(items.reduce((sum, item) => sum + item.downloaded_bytes, 0));
   let progress = $derived(totalBytes > 0 ? Math.min(100, Math.round(downloadedBytes / totalBytes * 100)) : 0);
+  let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'downloads');
+  let selectedCount = $derived(isSelectionActive ? items.filter((item) => selectionState.isSelected(item.id)).length : 0);
+  let selected = $derived(selectedCount > 0 && selectedCount === items.length);
+  let partial = $derived(selectedCount > 0 && !selected);
   let videoEl = $state<HTMLVideoElement | null>(null);
   let playTimeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -117,6 +128,30 @@
     }
   });
 
+  let lastContextTime = 0;
+
+  function toggleSelected() {
+    selectionState.toggleMany('downloads', items.map((item) => ({ key: item.id, item })));
+  }
+
+  function handleOpen(event: MouseEvent) {
+    if (Date.now() - lastContextTime < 500) return;
+    if (isSelectionActive || event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      toggleSelected();
+      return;
+    }
+    onopen?.();
+  }
+
+  function handleContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    lastContextTime = Date.now();
+    haptic();
+    if (isSelectionActive) toggleSelected();
+    else contextMenuState.show(event, title, downloadGroupMenuItems(items, { onselect: toggleSelected, onopen, oncreator }));
+  }
+
   async function runGroup(event: MouseEvent, jobs: DownloadItem[], operation: (id: string) => Promise<void>) {
     event.stopPropagation();
     if (busy || !jobs.length) return;
@@ -129,11 +164,25 @@
 
 <article
   class="grid-tile download-group-tile"
+  class:selected={selected || partial}
   style:aspect-ratio={ratio}
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
 >
-  {#if onopen}<button class="grid-tile-open" type="button" onclick={onopen} aria-label={title}></button>{/if}
+  <button class="grid-tile-open" type="button" onclick={handleOpen} oncontextmenu={handleContextMenu} aria-label={title}></button>
+  {#if isSelectionActive}
+    <button
+      type="button"
+      class="grid-tile-select-checkbox"
+      class:checked={selected || partial}
+      onclick={(event) => { event.stopPropagation(); toggleSelected(); }}
+      aria-label={i18n.t('selection.select_download')}
+      aria-checked={partial ? 'mixed' : selected}
+      role="checkbox"
+    >
+      {#if selected}<IconCheckmark class="w-[14px] h-[14px]" />{:else if partial}<IconPartial class="w-[14px] h-[14px]" />{/if}
+    </button>
+  {/if}
   {#if effectiveThumbnail}
     <img
       class="grid-tile-media"
@@ -157,6 +206,7 @@
       bind:this={videoEl}
       class="grid-tile-media grid-tile-hover-video"
       src={previewUrl}
+      poster={videoPoster()}
       muted
       loop
       playsinline
@@ -168,45 +218,44 @@
   {/if}
   <div class="grid-tile-shade"></div>
 
-  <div class="group-actions tile-toolbar">
-    {#if busy}
-      <span class="grid-tile-action group-action busy"><IconLoading /></span>
-    {:else}
-      {#if pausableItems.length}
-        <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, pausableItems, (id) => downloadState.pause(id))} use:tooltip={i18n.t('downloads.pause')} aria-label={i18n.t('downloads.pause')}><IconPause /></button>
-        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} use:tooltip={i18n.t('downloads.cancel')} aria-label={i18n.t('downloads.cancel')}><IconDismiss /></button>
-      {:else if pausedItems.length}
-        <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, pausedItems, (id) => downloadState.resume(id))} use:tooltip={i18n.t('downloads.resume')} aria-label={i18n.t('downloads.resume')}><IconPlay /></button>
-        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} use:tooltip={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
-      {:else if retryItems.length}
-        <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, retryItems, (id) => downloadState.retry(id))} use:tooltip={i18n.t('downloads.retry')} aria-label={i18n.t('downloads.retry')}><IconRetry /></button>
-        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} use:tooltip={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
-      {:else if completedItems.length === items.length}
-        <button
-          class="grid-tile-action group-action"
-          onclick={async (event) => {
-            event.stopPropagation();
-            const first = completedItems[0];
-            if (first) {
-              const p = first.final_path;
-              const lastSlash = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
-              const folder = lastSlash > 0 ? p.slice(0, lastSlash) : p;
-              try {
-                await apiShowInFolder(folder);
-              } catch (error) {
-                notify.error(i18n.t('downloads.show_in_folder_failed'), error);
+  {#if !isSelectionActive}
+    <div class="group-actions tile-toolbar">
+      {#if busy}
+        <span class="grid-tile-action group-action busy"><IconLoading /></span>
+      {:else}
+        {#if pausableItems.length}
+          <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, pausableItems, (id) => downloadState.pause(id))} use:tooltip={i18n.t('downloads.pause')} aria-label={i18n.t('downloads.pause')}><IconPause /></button>
+          <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} use:tooltip={i18n.t('downloads.cancel')} aria-label={i18n.t('downloads.cancel')}><IconDismiss /></button>
+        {:else if pausedItems.length}
+          <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, pausedItems, (id) => downloadState.resume(id))} use:tooltip={i18n.t('downloads.resume')} aria-label={i18n.t('downloads.resume')}><IconPlay /></button>
+          <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} use:tooltip={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
+        {:else if retryItems.length}
+          <button class="grid-tile-action group-action" onclick={(event) => runGroup(event, retryItems, (id) => downloadState.retry(id))} use:tooltip={i18n.t('downloads.retry')} aria-label={i18n.t('downloads.retry')}><IconRetry /></button>
+          <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} use:tooltip={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
+        {:else if completedItems.length === items.length}
+          <button
+            class="grid-tile-action group-action"
+            onclick={async (event) => {
+              event.stopPropagation();
+              const first = completedItems[0];
+              if (first) {
+                try {
+                  await apiShowInFolder(parentFolder(first.final_path));
+                } catch (error) {
+                  notify.error(i18n.t('downloads.show_in_folder_failed'), error);
+                }
               }
-            }
-          }}
-          use:tooltip={i18n.t('downloads.open_post_folder')}
-          aria-label={i18n.t('downloads.open_post_folder')}
-        >
-          <IconFolder />
-        </button>
-        <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} use:tooltip={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
+            }}
+            use:tooltip={i18n.t('downloads.open_post_folder')}
+            aria-label={i18n.t('downloads.open_post_folder')}
+          >
+            <IconFolder />
+          </button>
+          <button class="grid-tile-action group-action grid-tile-action-danger" onclick={(event) => runGroup(event, items, (id) => downloadState.remove(id))} use:tooltip={i18n.t('downloads.remove')} aria-label={i18n.t('downloads.remove')}><IconDelete /></button>
+        {/if}
       {/if}
-    {/if}
-  </div>
+    </div>
+  {/if}
 
   <div class="grid-tile-footer">
     <h2 class="grid-tile-title">{title}</h2>
@@ -232,7 +281,7 @@
   .group-placeholder { color: var(--text-muted); }
   .group-placeholder :global(svg) { width: calc(38px * var(--grid-scale, 1)); height: calc(38px * var(--grid-scale, 1)); }
   .download-group-tile .grid-tile-title { overflow-wrap: anywhere; word-break: break-word; }
-  .group-actions { position: absolute; z-index: 6; top: calc(8px * var(--grid-scale, 1)); right: calc(8px * var(--grid-scale, 1)); }
+  .group-actions { position: absolute; z-index: 6; top: var(--tile-chip-inset); right: var(--tile-chip-inset); }
   .group-actions .group-action { position: relative; inset: auto; flex: none; }
   .group-action.busy { opacity: 1; cursor: wait; }
   .group-media-row { pointer-events: auto !important; justify-content: flex-start; text-align: left; cursor: pointer; }

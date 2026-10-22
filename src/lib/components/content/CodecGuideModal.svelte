@@ -8,7 +8,8 @@
   import Button from '$lib/components/ui/Button.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import IconCopy from '~icons/fluent/copy-24-regular';
-  import IconCheck from '~icons/fluent/checkmark-20-regular';
+  import IconCheck from '~icons/fluent/checkmark-24-regular';
+  import { tooltip } from '$lib/motion';
   import IconOpen from '~icons/fluent/open-24-regular';
   import IconWindows from '~icons/fluent/desktop-24-regular';
   import IconLinux from '~icons/fluent/laptop-24-regular';
@@ -38,9 +39,11 @@
     { value: 'linux', label: 'Linux', icon: IconLinux }
   ];
 
-  const UBUNTU_CMD = 'sudo apt install gstreamer1.0-plugins-bad gstreamer1.0-libav';
-  const ARCH_CMD = 'sudo pacman -S gst-plugins-bad gst-libav';
-  const FEDORA_CMD = 'sudo dnf install gstreamer1-plugins-bad-freeworld gstreamer1-libav';
+  const LINUX_COMMANDS = [
+    { distro: 'Ubuntu / Debian', command: 'sudo apt install gstreamer1.0-plugins-bad gstreamer1.0-libav' },
+    { distro: 'Arch Linux', command: 'sudo pacman -S gst-plugins-bad gst-libav' },
+    { distro: 'Fedora', command: 'sudo dnf install gstreamer1-plugins-bad-freeworld gstreamer1-libav' }
+  ];
 
   async function copy(text: string) {
     try {
@@ -49,8 +52,8 @@
       notify.success(i18n.t('post.codec_copied'), { glyph: 'copied' });
       if (copyTimer) clearTimeout(copyTimer);
       copyTimer = setTimeout(() => { copied = null; }, 2000);
-    } catch {
-      notify.error(i18n.t('common.copy_failed'));
+    } catch (error) {
+      notify.error(i18n.t('common.copy_failed'), error);
     }
   }
 </script>
@@ -72,15 +75,15 @@
 
     {#if activeTab === 'windows'}
       <div class="tab-content">
-        <span class="cmd-label">Microsoft Store:</span>
-        <div class="store-row">
+        <div class="cmd-group">
+          <span class="cmd-label">Microsoft Store</span>
           <Button
-            variant="ghost"
+            variant="tonal"
             class="store-btn"
             onclick={() => void openExternalUrl('https://apps.microsoft.com/detail/9nmzlz57r3t7')}
           >
-            <IconOpen class="w-[15px] h-[15px]" />
-            <span>{i18n.t('post.codec_windows_m2_btn')}</span>
+            <IconOpen class="mr-2" />
+            {i18n.t('post.codec_windows_m2_btn')}
           </Button>
         </div>
 
@@ -90,29 +93,17 @@
       </div>
     {:else if activeTab === 'linux'}
       <div class="tab-content">
-        <span class="cmd-label">Ubuntu / Debian:</span>
-        <div class="cmd-box">
-          <code class="cmd-text">{UBUNTU_CMD}</code>
-          <button type="button" class="copy-btn" onclick={() => void copy(UBUNTU_CMD)} title={i18n.t('common.copy')} aria-label={i18n.t('common.copy')}>
-            {#if copied === UBUNTU_CMD}<IconCheck class="w-[15px] h-[15px] text-[var(--accent-primary)]" />{:else}<IconCopy class="w-[15px] h-[15px]" />{/if}
-          </button>
-        </div>
-
-        <span class="cmd-label mt-2">Arch Linux:</span>
-        <div class="cmd-box">
-          <code class="cmd-text">{ARCH_CMD}</code>
-          <button type="button" class="copy-btn" onclick={() => void copy(ARCH_CMD)} title={i18n.t('common.copy')} aria-label={i18n.t('common.copy')}>
-            {#if copied === ARCH_CMD}<IconCheck class="w-[15px] h-[15px] text-[var(--accent-primary)]" />{:else}<IconCopy class="w-[15px] h-[15px]" />{/if}
-          </button>
-        </div>
-
-        <span class="cmd-label mt-2">Fedora:</span>
-        <div class="cmd-box">
-          <code class="cmd-text">{FEDORA_CMD}</code>
-          <button type="button" class="copy-btn" onclick={() => void copy(FEDORA_CMD)} title={i18n.t('common.copy')} aria-label={i18n.t('common.copy')}>
-            {#if copied === FEDORA_CMD}<IconCheck class="w-[15px] h-[15px] text-[var(--accent-primary)]" />{:else}<IconCopy class="w-[15px] h-[15px]" />{/if}
-          </button>
-        </div>
+        {#each LINUX_COMMANDS as { distro, command } (distro)}
+          <div class="cmd-group">
+            <span class="cmd-label">{distro}</span>
+            <div class="cmd-box">
+              <code class="cmd-text">{command}</code>
+              <button type="button" class="copy-btn" onclick={() => void copy(command)} use:tooltip={i18n.t('common.copy')} aria-label={i18n.t('common.copy')}>
+                {#if copied === command}<IconCheck class="is-done" />{:else}<IconCopy />{/if}
+              </button>
+            </div>
+          </div>
+        {/each}
       </div>
     {/if}
   </div>
@@ -141,27 +132,25 @@
   .codec-modal-body {
     display: flex;
     flex-direction: column;
-    gap: var(--floating-item-gap, 10px);
-    padding: 0;
-    box-sizing: border-box;
+    gap: 16px;
   }
 
-  .codec-intro {
-    font-size: 13px;
-    color: var(--text-secondary);
-    line-height: 1.5;
+  .codec-intro,
+  .tab-note {
     margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-line);
   }
 
   .segmented-wrapper {
     display: flex;
     width: 100%;
-    margin-top: 2px;
   }
 
   .segmented-wrapper :global(.segmented-control-container) {
-    width: 100%;
     display: flex;
+    width: 100%;
   }
 
   .segmented-wrapper :global(.tab-btn) {
@@ -172,75 +161,72 @@
   .tab-content {
     display: flex;
     flex-direction: column;
-    gap: var(--floating-gap, 6px);
-    margin-top: 2px;
+    gap: 16px;
+  }
+
+  .cmd-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
   }
 
   .cmd-label {
-    font-size: 11.5px;
-    font-weight: 600;
     color: var(--text-secondary);
-    margin-top: 2px;
+    font-size: var(--type-title-sm-size);
+    line-height: var(--type-title-sm-line);
+    font-weight: 500;
   }
 
   .cmd-box {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--floating-item-gap, 10px);
-    padding: var(--floating-card-py, 6px) var(--floating-card-px, 10px);
-    background: rgba(0, 0, 0, 0.4);
-    border: var(--floating-border);
-    border-radius: var(--floating-item-radius, 12px);
+    gap: 8px;
+    align-self: stretch;
+    padding: 8px 8px 8px 16px;
+    border-radius: var(--radius-md);
+    background: var(--surface-container-highest);
   }
 
   .cmd-text {
-    font-family: monospace;
-    font-size: 11.5px;
+    flex: 1 1 auto;
+    min-width: 0;
     color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--type-body-sm-size);
+    line-height: var(--type-body-sm-line);
     word-break: break-all;
     user-select: all;
-    line-height: 1.35;
   }
 
   .copy-btn {
     display: grid;
     place-items: center;
-    width: 28px;
-    height: 28px;
+    flex: none;
+    width: 32px;
+    height: 32px;
     padding: 0;
     border: 0;
-    border-radius: var(--radius-sm, 6px);
+    border-radius: var(--radius-full);
     background: transparent;
     color: var(--text-secondary);
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: color var(--duration-fast, 150ms) var(--ease-expo), background var(--duration-fast, 150ms) var(--ease-expo);
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
   }
 
-  .copy-btn:hover {
-    color: var(--text-primary);
-    background: rgba(var(--surface-tint-rgb), 0.08);
+  .copy-btn :global(svg) {
+    width: 18px;
+    height: 18px;
   }
 
-  .store-row {
-    display: flex;
-    margin-top: 4px;
+  .copy-btn :global(.is-done) {
+    color: var(--accent-primary);
   }
 
-  :global(.store-btn) {
-    height: var(--floating-item-height, 36px) !important;
-    padding: 0 var(--floating-item-px, 12px) !important;
-    font-size: var(--floating-item-font-size, 13.5px) !important;
-    border-radius: var(--radius-full, 9999px) !important;
-    gap: var(--floating-item-gap, 10px) !important;
-    background: rgba(var(--surface-tint-rgb), 0.06) !important;
-  }
-
-  .tab-note {
-    font-size: 12px;
-    color: var(--text-secondary);
-    line-height: 1.45;
-    margin: 4px 0 0;
+  @media (hover: hover) {
+    .copy-btn:hover {
+      background: var(--state-layer-hover);
+      color: var(--text-primary);
+    }
   }
 </style>

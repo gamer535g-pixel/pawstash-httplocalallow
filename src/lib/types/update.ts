@@ -10,6 +10,14 @@ export interface UpdateInfo {
   download_url: string | null;
   asset_name: string | null;
   asset_size: number | null;
+  contributors: Contributor[];
+}
+
+export interface Contributor {
+  login: string;
+  avatar_url: string;
+  html_url: string;
+  commits: number;
 }
 
 export interface UpdateProgressPayload {

@@ -150,15 +150,16 @@ impl ProviderRequestQueue {
                         tracing::warn!(
                             provider = %self.provider_id,
                             attempt,
-                            error = %err,
+                            error = %crate::net::error_chain(&err),
                             "Transient network error; retrying after cooldown"
                         );
                         sleep(delay).await;
                         continue;
                     }
                     return Err(format!(
-                        "Provider '{}' request error: {err}",
-                        self.provider_id
+                        "Provider '{}' request error: {}",
+                        self.provider_id,
+                        crate::net::error_chain(&err)
                     ));
                 }
             };

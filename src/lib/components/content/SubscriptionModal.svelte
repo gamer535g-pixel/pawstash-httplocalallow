@@ -8,25 +8,15 @@
   import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Select from '$lib/components/ui/Select.svelte';
-  import Toggle from '$lib/components/ui/Toggle.svelte';
   import SettingItem from '$lib/components/ui/SettingItem.svelte';
   import NumberStepper from '$lib/components/ui/NumberStepper.svelte';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import type { InitialImport, DownloadScope } from '$lib/types/subscription';
 
-  import IconFolder from '~icons/fluent/folder-24-regular';
-  import IconFolderPerson from '~icons/fluent/folder-person-24-regular';
-  import IconDocumentBulletList from '~icons/fluent/document-bullet-list-24-regular';
-  import IconDownload from '~icons/fluent/arrow-download-24-regular';
-  import IconArrowRouting from '~icons/fluent/arrow-routing-24-regular';
-  import IconClock from '~icons/fluent/clock-24-regular';
-  import IconBroom from '~icons/fluent/broom-24-regular';
   import IconDelete from '~icons/fluent/delete-24-regular';
   import IconCheckmark from '~icons/fluent/checkmark-24-regular';
   import IconPersonAdd from '~icons/fluent/person-add-24-regular';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
-  import IconPlay from '~icons/fluent/play-24-regular';
-  import IconPause from '~icons/fluent/pause-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import IconWarning from '~icons/fluent/warning-24-filled';
 
@@ -345,39 +335,25 @@
       </div>
     {/if}
 
-    <div class="settings-list">
+    <div class="settings-list subscription-settings">
       <SettingItem
         title={i18n.t('subscriptions.active')}
         description={i18n.t('subscriptions.active_desc')}
-        icon={enabled ? IconPlay : IconPause}
-        align="right"
-      >
-        <Toggle
-          checked={enabled}
-          ariaLabel={i18n.t('subscriptions.active')}
-          onchange={(v) => (enabled = v)}
-        />
-      </SettingItem>
+        checked={enabled}
+        onCheckedChange={(value) => (enabled = value)}
+      />
 
       <SettingItem
         title={i18n.t('subscriptions.save_to_library')}
         description={i18n.t('subscriptions.save_to_library_desc')}
-        icon={IconFolder}
-        align="right"
-      >
-        <Toggle
-          checked={saveToLibrary}
-          ariaLabel={i18n.t('subscriptions.save_to_library')}
-          onchange={(v) => (saveToLibrary = v)}
-        />
-      </SettingItem>
+        checked={saveToLibrary}
+        onCheckedChange={(value) => (saveToLibrary = value)}
+      />
 
       {#if saveToLibrary}
         <SettingItem
           title={i18n.t('subscriptions.destination')}
           description={i18n.t('subscriptions.destination_desc')}
-          icon={IconFolderPerson}
-          align="right"
         >
           <Select
             options={stashOptions}
@@ -390,8 +366,6 @@
         <SettingItem
           title={i18n.t('subscriptions.initial_import')}
           description={i18n.t('subscriptions.initial_import_desc')}
-          icon={IconDocumentBulletList}
-          align="right"
         >
           <Select
             options={[
@@ -409,22 +383,14 @@
       <SettingItem
         title={i18n.t('subscriptions.auto_download')}
         description={i18n.t('subscriptions.auto_download_desc')}
-        icon={IconDownload}
-        align="right"
-      >
-        <Toggle
-          checked={autoDownload}
-          ariaLabel={i18n.t('subscriptions.auto_download')}
-          onchange={(v) => (autoDownload = v)}
-        />
-      </SettingItem>
+        checked={autoDownload}
+        onCheckedChange={(value) => (autoDownload = value)}
+      />
 
       {#if autoDownload}
         <SettingItem
           title={i18n.t('subscriptions.download_scope')}
           description={i18n.t('subscriptions.download_scope_desc')}
-          icon={IconArrowRouting}
-          align="right"
         >
           <Select
             options={[
@@ -441,8 +407,6 @@
       <SettingItem
         title={i18n.t('subscriptions.interval')}
         description={i18n.t('subscriptions.interval_desc')}
-        icon={IconClock}
-        align="right"
         class="interval-setting-item"
       >
         <div class="interval-control-group flex items-center gap-2">
@@ -468,12 +432,10 @@
     </div>
 
     {#if isEditing && existingSub}
-      <div class="settings-list">
+      <div class="settings-list subscription-settings">
         <SettingItem
           title={i18n.t('subscriptions.clear_posts')}
           description={i18n.t('subscriptions.clear_posts_desc')}
-          icon={IconBroom}
-          align="right"
         >
           <div class="flex items-center gap-3">
             {#if countingPosts}
@@ -601,6 +563,10 @@
 {/if}
 
 <style>
+  .subscription-settings {
+    --settings-tile: var(--surface-container-highest);
+  }
+
   .sub-modal-body {
     min-width: 0;
     width: 100%;
@@ -714,10 +680,6 @@
     --settings-control-max-width: 210px;
   }
 
-  .sub-modal-body :global(.setting-item__header) {
-    flex: 1 0 auto;
-  }
-
   .sub-modal-body :global(.setting-item__title) {
     white-space: nowrap;
   }
@@ -825,10 +787,6 @@
   @media (max-width: 500px) {
     .sub-modal-body :global(.setting-item) {
       --settings-control-max-width: 160px;
-    }
-
-    .sub-modal-body :global(.setting-item__header) {
-      flex: 1 1 auto;
     }
 
     .sub-modal-body :global(.setting-item__title) {

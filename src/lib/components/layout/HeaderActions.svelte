@@ -8,6 +8,7 @@
     searchQuery?: string;
     searchPlaceholder?: string;
     showSearchButton?: boolean;
+    pinOpen?: boolean;
     onsearchtoggle?: (open: boolean) => void;
     children?: Snippet;
     class?: string;
@@ -18,11 +19,31 @@
     searchQuery = $bindable(''),
     searchPlaceholder,
     showSearchButton = true,
+    pinOpen = false,
     onsearchtoggle,
     children,
     class: extraClass = ''
   }: Props = $props();
+
+  const PINNED_MIN_WIDTH = 1100;
+  const isMac = layoutState.isMacOS;
+  let searchBar = $state<ReturnType<typeof SearchBar> | null>(null);
+  let pinned = $derived(pinOpen && !layoutState.isMobile && layoutState.screenWidth >= PINNED_MIN_WIDTH);
+
+  function handleShortcut(event: KeyboardEvent) {
+    if (!showSearchButton || event.key.toLowerCase() !== 'k' || !(isMac ? event.metaKey : event.ctrlKey)) return;
+    event.preventDefault();
+    if (pinned) searchBar?.focusInput();
+    else void searchBar?.openSearch();
+  }
+
+  // Narrowing the window with a query typed must not hide the field that explains the filtered results.
+  $effect(() => {
+    if (!pinned && searchQuery && !searchOpen) searchOpen = true;
+  });
 </script>
+
+<svelte:window onkeydown={handleShortcut} />
 
 <div
   class="header-actions-root {extraClass}"
@@ -31,8 +52,11 @@
 >
   {#if showSearchButton}
     <SearchBar
+      bind:this={searchBar}
+      shortcutHint={layoutState.hasKeyboard ? (isMac ? '⌘K' : 'Ctrl K') : undefined}
       bind:value={searchQuery}
       bind:open={searchOpen}
+      expandable={!pinned}
       placeholder={searchPlaceholder}
       onclose={() => onsearchtoggle?.(false)}
     />

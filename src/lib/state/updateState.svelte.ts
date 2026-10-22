@@ -21,6 +21,7 @@ export class UpdateState {
   installing = $state(false);
 
   private unlistenProgress: UnlistenFn | null = null;
+  private availableToast: string | number | undefined;
 
   async init() {
     if (this.unlistenProgress) return;
@@ -59,16 +60,14 @@ export class UpdateState {
         if (!silent) {
           this.modalOpen = true;
         } else {
-          notify.info(
+          this.availableToast = notify.info(
             i18n.t('update.available_title'),
             i18n.t('update.available_desc', { version: result.latest_version }),
             {
               duration: 30000,
               action: {
                 label: i18n.t('update.view_changelog'),
-                onclick: () => {
-                  this.modalOpen = true;
-                }
+                onclick: () => this.openModal()
               }
             }
           );
@@ -92,6 +91,10 @@ export class UpdateState {
 
   openModal() {
     this.modalOpen = true;
+    if (this.availableToast !== undefined) {
+      notify.dismiss(this.availableToast);
+      this.availableToast = undefined;
+    }
   }
 
   closeModal() {
@@ -129,9 +132,18 @@ export class UpdateState {
       this.installing = true;
     } catch (err: any) {
       const message = typeof err === 'string' ? err : err?.message || String(err);
-      notify.error(i18n.t('update.install_failed'), message);
+      if (message !== 'UPDATE_CANCELLED') notify.error(i18n.t('update.install_failed'), message);
       this.downloading = false;
       this.installing = false;
+    }
+  }
+
+  async cancelDownload() {
+    if (!this.downloading || this.installing) return;
+    try {
+      await invoke('cancel_update_download');
+    } catch (err) {
+      notify.error(i18n.t('update.install_failed'), err);
     }
   }
 }

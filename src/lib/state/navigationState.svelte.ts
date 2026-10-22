@@ -3,7 +3,8 @@ import { logger } from '$lib/utils/logger';
 export type RootRouteName = 'feed' | 'favorites' | 'library' | 'creators' | 'downloads' | 'profile' | 'settings';
 
 export type AppRoute =
-  | { name: RootRouteName }
+  | { name: Exclude<RootRouteName, 'settings'> }
+  | { name: 'settings'; section?: string }
   | { name: 'post'; service: string; creatorId: string; postId: string; initialMedia?: string; openViewer?: boolean }
   | { name: 'creator'; service: string; creatorId: string; initialTag?: string };
 
@@ -42,13 +43,15 @@ function parseRoute(hash: string): AppRoute {
     const initialTag = searchParams.get('tag') || undefined;
     return { name: 'creator', service: parts[1], creatorId: parts[2], initialTag };
   }
+  if (parts[0] === 'settings') {
+    return { name: 'settings', section: parts[1] || undefined };
+  }
   if (
     parts[0] === 'library' ||
     parts[0] === 'favorites' ||
     parts[0] === 'creators' ||
     parts[0] === 'downloads' ||
-    parts[0] === 'profile' ||
-    parts[0] === 'settings'
+    parts[0] === 'profile'
   ) {
     return { name: parts[0] };
   }
@@ -69,6 +72,9 @@ function routeHash(route: AppRoute) {
     const qs = params.toString();
     return `#/creator/${encode(route.service)}/${encode(route.creatorId)}${qs ? `?${qs}` : ''}`;
   }
+  if (route.name === 'settings' && route.section) {
+    return `#/settings/${encode(route.section)}`;
+  }
   return `#/${route.name}`;
 }
 
@@ -81,6 +87,9 @@ export class NavigationState {
   private scrollPositions = new Map<string, number>();
   private viewStates = new Map<string, Record<string, any>>();
   private backHandlers: Array<() => boolean> = [];
+  /** Pops caused by a handler retiring its own history entry; they are bookkeeping, not the user going back. */
+  private silentPops = 0;
+  private settingsReturnIndex: number | null = null;
   private initialized = false;
   private index = 0;
   private maxIndex = 0;
@@ -105,7 +114,13 @@ export class NavigationState {
       );
     }
 
+    this.listenForBackForward();
+
     window.addEventListener('popstate', (event) => {
+      if (this.silentPops > 0) {
+        this.silentPops--;
+        return;
+      }
       if (this.backHandlers.length > 0) {
         const handler = this.backHandlers.pop();
         if (handler && handler()) {
@@ -121,6 +136,52 @@ export class NavigationState {
       this.canGoBack = this.index > 0;
       this.canGoForward = this.index < this.maxIndex;
     });
+  }
+
+  private listenForBackForward() {
+    const isMac = /Macintosh|Mac OS X/i.test(navigator.userAgent);
+    const isEditable = (target: EventTarget | null) =>
+      target instanceof HTMLElement &&
+      (target.isContentEditable || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
+
+    window.addEventListener('keydown', (event) => {
+      if (event.defaultPrevented || event.repeat || isEditable(event.target)) return;
+      const back = isMac ? event.metaKey && event.key === '[' : event.altKey && event.key === 'ArrowLeft';
+      const forward = isMac ? event.metaKey && event.key === ']' : event.altKey && event.key === 'ArrowRight';
+      if (!back && !forward) return;
+      event.preventDefault();
+      if (back) this.back();
+      else this.forward();
+    });
+
+    // Buttons 3 and 4 are the mouse's back and forward; preventDefault keeps the webview from also navigating.
+    window.addEventListener('mousedown', (event) => {
+      if (event.button === 3 || event.button === 4) event.preventDefault();
+    });
+    window.addEventListener('mouseup', (event) => {
+      if (event.button !== 3 && event.button !== 4) return;
+      event.preventDefault();
+      if (event.button === 3) this.back();
+      else this.forward();
+    });
+  }
+
+  // Android Back is routed here, not to the WebView, which skips history entries pushed without a user gesture.
+  handleSystemBack(): boolean {
+    const handler = this.backHandlers.pop();
+    if (handler) {
+      if ((history.state as { modal?: boolean } | null)?.modal) {
+        this.silentPops++;
+        history.back();
+      }
+      handler();
+      return true;
+    }
+    if (this.canGoBack) {
+      history.back();
+      return true;
+    }
+    return false;
   }
 
   registerBackHandler(handler: () => boolean): () => void {
@@ -151,6 +212,7 @@ export class NavigationState {
         this.backHandlers.splice(idx, 1);
         if (pushedModalState && typeof window !== 'undefined' && (history.state as any)?.modal) {
           pushedModalState = false;
+          this.silentPops++;
           history.back();
         }
       }
@@ -164,6 +226,7 @@ export class NavigationState {
     const index = this.index + 1;
     const root = rootForRoute(route);
     const activeRoot = route.name === 'post' || route.name === 'creator' ? this.activeRoot : root;
+    if (route.name === 'settings' && this.route.name !== 'settings') this.settingsReturnIndex = this.index;
     history.pushState({ pawstash: true, key, index, root: activeRoot } satisfies HistoryEntry, '', hash);
     this.entryKey = key;
     this.route = route;
@@ -175,7 +238,24 @@ export class NavigationState {
   }
 
   navigateRoot(name: RootRouteName) {
-    this.navigate({ name });
+    this.navigate({ name } as AppRoute);
+  }
+
+  openSettings(section?: string) {
+    this.navigate({ name: 'settings', section });
+  }
+
+  replaceRoute(route: AppRoute) {
+    const entry: HistoryEntry = { pawstash: true, key: this.entryKey, index: this.index, root: this.activeRoot };
+    history.replaceState(entry, '', routeHash(route));
+    this.route = route;
+  }
+
+  exitSettings() {
+    const returnIndex = this.settingsReturnIndex;
+    this.settingsReturnIndex = null;
+    if (returnIndex !== null && returnIndex < this.index) history.go(returnIndex - this.index);
+    else this.navigateRoot('feed');
   }
 
   openPost(service: string, creatorId: string, postId: string, initialMedia?: string, openViewer?: boolean) {
@@ -191,6 +271,7 @@ export class NavigationState {
       const handler = this.backHandlers.pop();
       if (handler && handler()) {
         if (typeof window !== 'undefined' && (history.state as any)?.modal) {
+          this.silentPops++;
           history.back();
         }
         return;

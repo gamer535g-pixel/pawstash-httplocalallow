@@ -1,5 +1,5 @@
-import type { ThemeTokens, FontSizeScale, RadiusScale, SurfaceStyle, AccentColor, MotionSpeed } from './tokens';
-import { FONT_SCALE_MAP, RADIUS_SCALE_MAP, ACCENT_COLOR_MAP, MOTION_SPEED_MAP } from './tokens';
+import type { ThemeTokens, FontSizeScale, SurfaceStyle, AccentColor } from './tokens';
+import { FONT_SCALE_MAP, FONT_SCALE_FACTOR, RADIUS_SCALE_MAP, MOTION_SPEED_MAP } from './tokens';
 import {
   DEFAULT_COLOR_MODE,
   DEFAULT_CONTRAST_LEVEL,
@@ -25,15 +25,14 @@ export class ThemeState {
     fontScale: 'standard',
     fontFamily: '',
     radiusScale: 'smooth',
-    surfaceStyle: 'glass',
+    surfaceStyle: 'flat',
     accent: '#D69085',
     colorMode: DEFAULT_COLOR_MODE,
     schemeVariant: DEFAULT_SCHEME_VARIANT,
     contrastLevel: DEFAULT_CONTRAST_LEVEL,
     motionSpeed: 'smooth',
     backdropBlurPx: 24,
-    borderWidthPx: 1,
-    titlebarHeightPx: 30
+    borderWidthPx: 1
   });
 
   systemPalette = $state<SystemMonetPalette | null>(null);
@@ -87,15 +86,14 @@ export class ThemeState {
       fontScale: 'standard',
       fontFamily: '',
       radiusScale: 'smooth',
-      surfaceStyle: 'glass',
+      surfaceStyle: 'flat',
       accent: this.systemPalette ? 'system' : '#D69085',
       colorMode: DEFAULT_COLOR_MODE,
       schemeVariant: DEFAULT_SCHEME_VARIANT,
       contrastLevel: DEFAULT_CONTRAST_LEVEL,
       motionSpeed: 'smooth',
       backdropBlurPx: 24,
-      borderWidthPx: 1,
-      titlebarHeightPx: 30
+      borderWidthPx: 1
     } satisfies ThemeTokens);
     this.overrideAccent = null;
     this.applyCssTokens();
@@ -120,7 +118,9 @@ export class ThemeState {
           this.systemPalette = { primary: res, quadrants: pal.quadrants };
         }
       }
-    } catch {}
+    } catch (e) {
+      logger.debug('System accent colour unavailable', e);
+    }
   }
 
   async init() {
@@ -137,6 +137,7 @@ export class ThemeState {
           }
           delete (this.tokens as any).sidebarWidthPx;
           Object.assign(this.tokens, parsed);
+          if (this.tokens.surfaceStyle !== 'oled') this.tokens.surfaceStyle = 'flat';
         } catch (e) {
           logger.warn('[ThemeState] Failed to parse saved theme settings:', e);
         }
@@ -177,11 +178,6 @@ export class ThemeState {
 
   setFontFamily(fontFamily: string) {
     this.tokens.fontFamily = fontFamily;
-    this.applyCssTokens();
-  }
-
-  setRadiusScale(radiusScale: RadiusScale) {
-    this.tokens.radiusScale = radiusScale;
     this.applyCssTokens();
   }
 
@@ -226,31 +222,10 @@ export class ThemeState {
   }
 
   setSurfaceStyle(surfaceStyle: SurfaceStyle) {
+    if (this.tokens.surfaceStyle === surfaceStyle) return;
     this.tokens.surfaceStyle = surfaceStyle;
     this.applyCssTokens();
   }
-
-  setMotionSpeed(motionSpeed: MotionSpeed) {
-    this.tokens.motionSpeed = motionSpeed;
-    this.applyCssTokens();
-  }
-
-  setBackdropBlur(blurPx: number) {
-    this.tokens.backdropBlurPx = blurPx;
-    this.applyCssTokens();
-  }
-
-  setBorderWidth(widthPx: number) {
-    this.tokens.borderWidthPx = widthPx;
-    this.applyCssTokens();
-  }
-
-  setTitlebarHeight(heightPx: number) {
-    this.tokens.titlebarHeightPx = heightPx;
-    this.applyCssTokens();
-  }
-
-  setSidebarWidth(_widthPx: number) {}
 
   applyCssTokens() {
     if (typeof document === 'undefined') return;
@@ -261,14 +236,12 @@ export class ThemeState {
     const radius = RADIUS_SCALE_MAP[this.tokens.radiusScale];
     const motion = MOTION_SPEED_MAP[this.tokens.motionSpeed];
 
-    root.style.setProperty('--titlebar-height', `${this.tokens.titlebarHeightPx}px`);
-    root.style.removeProperty('--sidebar-width-expanded');
-
     root.style.setProperty('--text-xs', font.xs);
     root.style.setProperty('--text-sm', font.sm);
     root.style.setProperty('--text-base', font.base);
     root.style.setProperty('--text-lg', font.lg);
     root.style.setProperty('--text-xl', font.xl);
+    root.style.setProperty('--font-scale', String(FONT_SCALE_FACTOR[this.tokens.fontScale]));
 
     root.style.setProperty('--radius-sm', radius.sm);
     root.style.setProperty('--radius-md', radius.md);
@@ -301,12 +274,19 @@ export class ThemeState {
     root.classList.toggle('light', !this.isDark);
     root.style.setProperty('color-scheme', this.isDark ? 'dark' : 'light');
 
+    const oled = this.tokens.surfaceStyle === 'oled' && this.isDark;
+    const surface = oled ? '#000000' : pal.surface;
+    const [containerLow, container, containerHigh, containerHighest] = oled
+      ? [pal.surfaceContainerLowest, pal.surfaceContainerLow, pal.surfaceContainer, pal.surfaceContainerHigh]
+      : [pal.surfaceContainerLow, pal.surfaceContainer, pal.surfaceContainerHigh, pal.surfaceContainerHighest];
     root.style.setProperty('--surface-tint-rgb', pal.surfaceTintRgb);
-    root.style.setProperty('--surface-container-low', pal.surfaceContainerLow);
-    root.style.setProperty('--surface-container', pal.surfaceContainer);
-    root.style.setProperty('--surface-container-high', pal.surfaceContainerHigh);
-    root.style.setProperty('--surface-container-highest', pal.surfaceContainerHighest);
-    root.style.setProperty('--bg-dropdown', pal.surfaceContainer);
+    root.style.setProperty('--surface', surface);
+    root.style.setProperty('--surface-container-low', containerLow);
+    root.style.setProperty('--surface-container', container);
+    root.style.setProperty('--surface-container-high', containerHigh);
+    root.style.setProperty('--surface-container-highest', containerHighest);
+    root.style.setProperty('--outline-variant', pal.outlineVariant);
+    root.style.setProperty('--bg-dropdown', containerHigh);
 
     const acrylicRgb = computeAcrylicTintRgb(pal.primary, this.isDark);
     root.style.setProperty('--acrylic-tint-rgb', `${acrylicRgb.r}, ${acrylicRgb.g}, ${acrylicRgb.b}`);
@@ -336,17 +316,10 @@ export class ThemeState {
     root.style.setProperty('--border-width', `${this.tokens.borderWidthPx}px`);
     root.style.setProperty('--backdrop-blur', `${this.tokens.backdropBlurPx}px`);
 
-    root.style.setProperty('--bg-surface-hover', pal.surfaceContainerHigh);
-    let baseColor: string;
-    if (this.tokens.surfaceStyle === 'oled' && this.isDark) {
-      baseColor = '#000000';
-      root.style.setProperty('--bg-surface', `rgba(${pal.surfaceLowRgb}, 0.95)`);
-    } else {
-      baseColor = this.isDark ? '#0c0e14' : pal.surface;
-      root.style.setProperty('--bg-surface', `rgba(${pal.surfaceLowRgb}, 0.7)`);
-    }
-    root.style.setProperty('--bg-base', baseColor);
-    this.syncWindowBackground(baseColor);
+    root.style.setProperty('--bg-surface-hover', containerHigh);
+    root.style.setProperty('--bg-surface', containerLow);
+    root.style.setProperty('--bg-base', surface);
+    this.syncWindowBackground(surface);
 
     const userFont = this.tokens.fontFamily?.trim();
     if (userFont) {
@@ -354,11 +327,9 @@ export class ThemeState {
       const fullStack = `${userFont}, ${systemStack}`;
       root.style.setProperty('--font-sans', fullStack);
       root.style.setProperty('--font-display', fullStack);
-      root.style.setProperty('--font-outfit', fullStack);
     } else {
       root.style.removeProperty('--font-sans');
       root.style.removeProperty('--font-display');
-      root.style.removeProperty('--font-outfit');
     }
   }
 
@@ -367,42 +338,6 @@ export class ThemeState {
     this.lastWindowBackground = color;
     void apiSetWindowBackgroundColor(color).catch((error) =>
       logger.warn('Failed to sync window background colour', error)
-    );
-  }
-
-  private async transitionTheme(fn: () => void, event?: MouseEvent) {
-    if (typeof document === 'undefined' || !document.startViewTransition) {
-      fn();
-      return;
-    }
-
-    const x = event?.clientX ?? window.innerWidth / 2;
-    const y = event?.clientY ?? window.innerHeight / 2;
-
-    const maxRadius = Math.hypot(
-      Math.max(x, window.innerWidth - x),
-      Math.max(y, window.innerHeight - y)
-    );
-
-    const transition = document.startViewTransition(() => {
-      fn();
-    });
-
-    await transition.ready;
-
-    document.documentElement.animate(
-      {
-        clipPath: [
-          `circle(0px at ${x}px ${y}px)`,
-          `circle(${maxRadius}px at ${x}px ${y}px)`
-        ]
-      },
-      {
-        duration: 450,
-        easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
-        fill: 'forwards',
-        pseudoElement: '::view-transition-new(root)'
-      }
     );
   }
 
@@ -415,53 +350,3 @@ export class ThemeState {
 
 export const themeState = new ThemeState();
 
-function hexToRgba(hex: string, alpha: number): string {
-  const cleanHex = hex.replace('#', '');
-  const r = parseInt(cleanHex.substring(0, 2), 16);
-  const g = parseInt(cleanHex.substring(2, 4), 16);
-  const b = parseInt(cleanHex.substring(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-function darkenColor(hex: string, percent: number): string {
-  const cleanHex = hex.replace('#', '');
-  let r = parseInt(cleanHex.substring(0, 2), 16);
-  let g = parseInt(cleanHex.substring(2, 4), 16);
-  let b = parseInt(cleanHex.substring(4, 6), 16);
-
-  r = Math.max(0, Math.floor(r * (1 - percent)));
-  g = Math.max(0, Math.floor(g * (1 - percent)));
-  b = Math.max(0, Math.floor(b * (1 - percent)));
-
-  const rHex = r.toString(16).padStart(2, '0');
-  const gHex = g.toString(16).padStart(2, '0');
-  const bHex = b.toString(16).padStart(2, '0');
-  return `#${rHex}${gHex}${bHex}`;
-}
-
-export function getContrastColor(color: string): string {
-  let r = 255, g = 255, b = 255;
-
-  if (color.startsWith('#')) {
-    const cleanHex = color.replace('#', '');
-    if (cleanHex.length === 3) {
-      r = parseInt(cleanHex[0] + cleanHex[0], 16);
-      g = parseInt(cleanHex[1] + cleanHex[1], 16);
-      b = parseInt(cleanHex[2] + cleanHex[2], 16);
-    } else if (cleanHex.length === 6) {
-      r = parseInt(cleanHex.substring(0, 2), 16);
-      g = parseInt(cleanHex.substring(2, 4), 16);
-      b = parseInt(cleanHex.substring(4, 6), 16);
-    }
-  } else if (color.startsWith('rgb')) {
-    const matches = color.match(/\d+/g);
-    if (matches && matches.length >= 3) {
-      r = parseInt(matches[0], 10);
-      g = parseInt(matches[1], 10);
-      b = parseInt(matches[2], 10);
-    }
-  }
-
-  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-  return yiq >= 128 ? '#111111' : '#ffffff';
-}

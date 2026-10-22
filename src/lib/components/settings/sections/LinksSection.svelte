@@ -1,0 +1,58 @@
+<script lang="ts">
+  import { i18n } from '$lib/i18n';
+  import SettingItem from '$lib/components/ui/SettingItem.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
+  import NumberStepper from '$lib/components/ui/NumberStepper.svelte';
+  import SettingsGroup from '../SettingsGroup.svelte';
+  import { settingsController as ctl } from '../settingsController.svelte';
+
+  let settings = $derived(ctl.settings);
+  let defaults = $derived(ctl.networkDefaults);
+  let enabled = $derived(settings.cloud_scraping_enabled ?? true);
+</script>
+
+<SettingsGroup label={i18n.t('settings.group_cloud_links')}>
+  <SettingItem
+    title={i18n.t('settings.cloud_scraping_enabled')}
+    description={i18n.t('settings.cloud_scraping_enabled_desc')}
+    checked={enabled}
+    onCheckedChange={(value) => void ctl.save('cloud_scraping_enabled', value)}
+  />
+
+  {#if enabled}
+    <SettingItem title={i18n.t('settings.cloud_proxy_url')} description={i18n.t('settings.cloud_proxy_url_desc')}>
+      <Input
+        clearable={true}
+        placeholder={i18n.t('settings.inherits_global_proxy')}
+        bind:value={ctl.settings.cloud_proxy_url}
+        onchange={() => void ctl.save('cloud_proxy_url', ctl.settings.cloud_proxy_url)}
+      />
+    </SettingItem>
+    <SettingItem title={i18n.t('settings.cloud_user_agent')} description={i18n.t('settings.cloud_user_agent_desc')}>
+      <Input
+        clearable={true}
+        placeholder={settings.network_browser_user_agent || defaults.browser_user_agent}
+        bind:value={ctl.settings.cloud_user_agent}
+        onchange={() => void ctl.save('cloud_user_agent', ctl.settings.cloud_user_agent)}
+      />
+    </SettingItem>
+    <SettingItem title={i18n.t('settings.cloud_timeout')} description={i18n.t('settings.cloud_timeout_desc')}>
+      <NumberStepper
+        value={settings.cloud_timeout_secs || defaults.cloud_timeout_secs}
+        min={5}
+        max={600}
+        step={5}
+        onchange={(value) => void ctl.save('cloud_timeout_secs', value)}
+      />
+    </SettingItem>
+    <SettingItem title={i18n.t('settings.cloud_max_redirects')} description={i18n.t('settings.cloud_max_redirects_desc')}>
+      <NumberStepper
+        value={settings.cloud_max_redirects || defaults.cloud_max_redirects}
+        min={1}
+        max={30}
+        step={1}
+        onchange={(value) => void ctl.save('cloud_max_redirects', value)}
+      />
+    </SettingItem>
+  {/if}
+</SettingsGroup>

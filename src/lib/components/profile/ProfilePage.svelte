@@ -6,24 +6,30 @@
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Input from '$lib/components/ui/Input.svelte';
+  import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
+  import SettingItem from '$lib/components/ui/SettingItem.svelte';
+  import SettingsGroup from '$lib/components/settings/SettingsGroup.svelte';
+  import { syncStatusText } from '$lib/utils/syncStatus';
   import IconLock from '~icons/fluent/lock-closed-24-regular';
   import IconKey from '~icons/fluent/key-24-regular';
-  import IconPassword from '~icons/fluent/password-24-regular';
   import IconSignOut from '~icons/fluent/sign-out-24-regular';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
-  import IconCheck from '~icons/fluent/checkmark-24-regular';
   import IconCopy from '~icons/fluent/copy-24-regular';
   import IconArrowDownload from '~icons/fluent/arrow-download-24-regular';
   import IconSync from '~icons/fluent/arrow-sync-24-regular';
   import IconDice from '~icons/fluent/cube-24-regular';
-  import IconArrowLeft from '~icons/fluent/arrow-left-24-regular';
   import IconPerson from '~icons/fluent/person-24-regular';
-  import IconPersonAdd from '~icons/fluent/person-add-24-regular';
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconLaptop from '~icons/fluent/laptop-24-regular';
-  import IconOpen from '~icons/fluent/open-24-regular';
+  import IconDevices from '~icons/fluent/phone-laptop-24-regular';
+  import IconShield from '~icons/fluent/shield-lock-24-regular';
+  import IconChevronDown from '~icons/fluent/chevron-down-24-regular';
   import { notify } from '$lib/utils/toast';
-  import { apiTestSyncConnection, apiReadRecentLogs } from '$lib/utils/ipc';
+  import { copyText } from '$lib/utils/clipboard';
+  import { layoutState } from '$lib/state/layoutState.svelte';
+  import { onboardingState } from '$lib/state/onboardingState.svelte';
+  import { apiTestSyncConnection } from '$lib/utils/ipc';
+  import { readRecentLogs } from '$lib/utils/logger';
 
   type SubView =
     | 'menu'
@@ -39,7 +45,8 @@
   let syncServer = $state('https://pawstash.nichind.dev');
   let syncAccount = $state('');
   let syncPassword = $state('');
-  let syncDevice = $state('Pawstash Desktop');
+  let syncDevice = $state(layoutState.isAndroid ? 'Pawstash Android' : layoutState.isMobileDevice ? 'Pawstash Mobile' : 'Pawstash Desktop');
+  let showAdvanced = $state(false);
   let syncRecoveryInput = $state('');
 
   let unlockPassword = $state('');
@@ -49,6 +56,29 @@
 
   let testingConnection = $state(false);
   let copyingLogs = $state(false);
+  let confirmDisconnect = $state(false);
+
+  const VIEW_TITLES: Record<SubView, string> = {
+    menu: 'profile.title',
+    connect: 'sync.connect_account',
+    create: 'sync.create_account',
+    recover: 'sync.recover_account',
+    recovery_kit: 'sync.recovery_kit_title',
+    change_password: 'sync.change_password_title',
+    unlock: 'sync.unlock_title'
+  };
+
+  let viewTitle = $derived(i18n.t(VIEW_TITLES[activeView]));
+
+  let serverHost = $derived.by(() => {
+    const url = syncState.status.server_url;
+    if (!url) return '';
+    try {
+      return new URL(url).host;
+    } catch {
+      return url;
+    }
+  });
 
   function generateRandomId(): string {
     const chars = 'abcdef0123456789';
@@ -61,13 +91,15 @@
 
   onMount(() => {
     syncAccount = generateRandomId();
+    if (onboardingState.takeProfileView() === 'create' && !syncState.status.configured) activeView = 'create';
   });
 
-  async function runSyncAction(work: () => Promise<unknown>, successMessage?: string) {
+  async function runSyncAction(work: () => Promise<unknown>, successMessage?: string): Promise<boolean> {
     try {
       await work();
       if (successMessage) notify.success(successMessage);
       activeView = 'menu';
+      return true;
     } catch (error: any) {
       const errStr = String(error?.message || error);
       if (!syncState.status.configured && activeView === 'create' && errStr.toLowerCase().includes('account already exists')) {
@@ -96,15 +128,10 @@
         });
       } else {
         notify.error(i18n.t('sync.error'), errStr, {
-          action: {
-            label: i18n.t('common.copy'),
-            onclick: () => {
-              void navigator.clipboard?.writeText(errStr);
-              notify.success(i18n.t('common.copied'));
-            }
-          }
+          action: { label: i18n.t('common.copy'), onclick: () => copyText(errStr) }
         });
       }
+      return false;
     } finally {
       syncPassword = '';
     }
@@ -121,19 +148,9 @@
       );
     } catch (e) {
       const err = String((e as any)?.message || e);
-      notify.error(
-        i18n.t('sync.test_connection_failed_title'),
-        err,
-        {
-          action: {
-            label: i18n.t('common.copy'),
-            onclick: () => {
-              void navigator.clipboard?.writeText(err);
-              notify.success(i18n.t('common.copied'));
-            }
-          }
-        }
-      );
+      notify.error(i18n.t('sync.test_connection_failed_title'), err, {
+        action: { label: i18n.t('common.copy'), onclick: () => copyText(err) }
+      });
     } finally {
       testingConnection = false;
     }
@@ -143,7 +160,7 @@
     if (copyingLogs) return;
     copyingLogs = true;
     try {
-      const raw = await apiReadRecentLogs(400);
+      const raw = await readRecentLogs(400);
       if (!raw || !raw.trim()) {
         notify.info(i18n.t('sync.no_logs'));
         return;
@@ -164,9 +181,10 @@
   }
 
   async function handleSyncSubmit() {
+    const account = syncAccount.trim();
+    const server = syncServer.trim();
     if (activeView === 'create' || activeView === 'connect') {
-      const trimmedAccount = syncAccount.trim();
-      if (trimmedAccount.length < 8) {
+      if (account.length < 8) {
         notify.error(
           i18n.t('sync.account_id_too_short_title'),
           i18n.t('sync.account_id_too_short_desc')
@@ -174,7 +192,7 @@
         return;
       }
       const validIdRegex = /^[A-Za-z0-9_-]{8,128}$/;
-      if (!validIdRegex.test(trimmedAccount)) {
+      if (!validIdRegex.test(account)) {
         notify.error(
           i18n.t('sync.account_id_invalid_title'),
           i18n.t('sync.account_id_invalid_desc')
@@ -184,14 +202,12 @@
     }
 
     if (activeView === 'create') {
-      await runSyncAction(async () => {
-        await syncState.create(syncServer, syncAccount, syncPassword, syncDevice);
-        notify.success(i18n.t('sync.configured'));
+      if (await runSyncAction(() => syncState.create(server, account, syncPassword, syncDevice), i18n.t('sync.configured'))) {
         await openRecoveryView();
-      });
+      }
     } else if (activeView === 'connect') {
       await runSyncAction(
-        () => syncState.connect(syncServer, syncAccount, syncPassword, syncDevice),
+        () => syncState.connect(server, account, syncPassword, syncDevice),
         i18n.t('sync.configured')
       );
     } else if (activeView === 'recover') {
@@ -215,18 +231,18 @@
     await runSyncAction(() => syncState.copyRecoveryKit(), i18n.t('sync.recovery_copied'));
   }
 
-  function downloadRecoveryFile(ext: 'json' | 'txt') {
+  function downloadRecoveryFile() {
     if (!recoveryKitText) return;
-    const blob = new Blob([recoveryKitText], { type: ext === 'json' ? 'application/json' : 'text/plain' });
+    const blob = new Blob([recoveryKitText], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `pawstash-recovery-kit-${syncState.status.account_id || 'vault'}.${ext}`;
+    a.download = `pawstash-recovery-kit-${syncState.status.account_id || 'vault'}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    notify.success(i18n.t('sync.recovery_copied'), { glyph: 'copied' });
+    notify.success(i18n.t('sync.recovery_saved'));
   }
 
   async function handleUnlockSubmit() {
@@ -248,15 +264,12 @@
     });
   }
 
-
-
   let parsedRecovery = $derived.by(() => {
     if (!recoveryKitText) return null;
     try {
       const data = JSON.parse(recoveryKitText);
       return {
         accountId: data.account_id || syncState.status.account_id,
-        serverUrl: data.server_url || syncState.status.server_url,
         vaultKey: data.secrets?.vault_key || ''
       };
     } catch {
@@ -265,531 +278,569 @@
   });
 </script>
 
-<PageShell scrollable={true} scrollKey={navigationState.entryKey}>
-  <div class="flex items-center justify-center min-h-[calc(100vh-100px)] w-full p-4 sm:p-6 box-border">
-    <div class="flex flex-col gap-6 w-full max-w-[360px] my-auto">
+{#snippet fieldLabel(text: string)}
+  <span class="profile-label">{text}</span>
+{/snippet}
 
-      {#if activeView === 'menu'}
-        {#if syncState.status.configured}
-          <div class="flex flex-col gap-4">
-            <div class="flex flex-col items-center text-center gap-1.5">
-              <svg viewBox="0 0 602 602" fill="none" class="w-12 h-12 mb-0.5" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                  <linearGradient id="logo-profile-connected" x1="301" y1="0" x2="-2.17166e-05" y2="584.337" gradientUnits="userSpaceOnUse">
-                    <stop stop-color="#FCD8D2"/>
-                    <stop offset="1" stop-color="#FEB8AD"/>
-                  </linearGradient>
-                </defs>
-                <g transform="translate(0, 8.5)">
-                  <path fill="url(#logo-profile-connected)" d="M130.548 56.3212L414.821 178.14L301 226.902L18.361 105.771C24.725 99.2782 32.508 94.0322 41.366 90.6352L130.548 56.3212ZM188.082 34.2192L254.732 8.59119C284.529 -2.86373 317.514 -2.86373 347.311 8.59119L560.677 90.6352C569.492 94.0752 577.275 99.2352 583.639 105.771L469.431 154.705L188.082 34.2192ZM601.742 144.815L322.5 264.484V584.834C330.957 583.401 339.227 581.136 347.311 578.04L560.677 495.953C572.841 491.269 583.301 483.01 590.677 472.264C598.054 461.517 602.002 448.788 602 435.753V150.835C602 148.829 601.9 146.822 601.699 144.815M279.5 584.834V264.484L0.300999 144.815C0.130354 146.818 0.0299598 148.826 0 150.835V435.753C0.00172613 448.793 3.95568 461.526 11.3404 472.273C18.7252 483.02 29.1939 491.276 41.366 495.953L254.689 578.04C262.773 581.136 271.043 583.401 279.5 584.834Z" />
-                </g>
-              </svg>
-              <h2 class="text-xl font-semibold text-ink m-0">
-                {syncState.status.account_id}
-              </h2>
-              <span class="text-xs text-ink/50 font-light">
-                {syncState.status.unlocked
-                  ? i18n.t('sync.revision', { revision: syncState.status.revision, cursor: syncState.status.cursor })
-                  : i18n.t('sync.locked')}
-              </span>
+{#snippet serverField()}
+  <div class="profile-field">
+    <div class="profile-label-row">
+      {@render fieldLabel(i18n.t('sync.server_url'))}
+      <button
+        type="button"
+        class="profile-link"
+        disabled={testingConnection || !syncServer.trim()}
+        onclick={() => void handleTestConnection()}
+      >
+        {#if testingConnection}<IconLoading />{/if}
+        {i18n.t('sync.test_connection')}
+      </button>
+    </div>
+    <Input icon={IconGlobe} clearable={true} bind:value={syncServer} placeholder="https://pawstash.nichind.dev" />
+  </div>
+{/snippet}
 
-              {#if syncState.status.last_error}
-                <div class="flex items-center gap-2 px-3 py-2 mt-1 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-300 text-left w-full">
-                  <span class="truncate flex-1 font-mono text-[11px]">{syncState.status.last_error}</span>
-                  <button
-                    type="button"
-                    class="shrink-0 text-red-300 hover:text-white underline text-[11px] cursor-pointer"
-                    onclick={() => {
-                      notify.error(i18n.t('sync.sync_failed'), syncState.status.last_error, {
-                        action: {
-                          label: i18n.t('common.copy'),
-                          onclick: () => {
-                            void navigator.clipboard?.writeText(syncState.status.last_error || '');
-                            notify.success(i18n.t('common.copied'));
-                          }
-                        }
-                      });
-                    }}
-                  >
-                    {i18n.t('sync.details')}
-                  </button>
-                </div>
-              {/if}
-            </div>
+{#snippet deviceField()}
+  <div class="profile-field">
+    {@render fieldLabel(i18n.t('sync.device_name'))}
+    <Input icon={IconLaptop} clearable={true} bind:value={syncDevice} placeholder="Pawstash Desktop" />
+  </div>
+{/snippet}
 
-            <div class="flex flex-col gap-2.5 pt-1">
-              <Button
-                variant="accent"
-                class="w-full"
-                disabled={syncState.busy || !syncState.status.unlocked}
-                onclick={() => void runSyncAction(() => syncState.sync(), i18n.t('sync.completed'))}
-              >
-                {#if syncState.busy}
-                  <IconLoading class="mr-2" />
-                  {i18n.t('sync.status_syncing')}
-                {:else}
-                  <IconSync class="mr-2" />
-                  {i18n.t('sync.sync_now')}
-                {/if}
-              </Button>
+{#snippet submitButton(label: string, disabled: boolean)}
+  <Button type="submit" variant="accent" class="profile-submit" {disabled}>
+    {#if syncState.busy}<IconLoading class="mr-2" />{/if}
+    {label}
+  </Button>
+{/snippet}
 
-              <div class="flex flex-col gap-2">
-                <div class="grid grid-cols-2 gap-2">
-                  <Button variant="primary" class="w-full !px-2.5" onclick={() => void openRecoveryView()}>
-                    <IconKey class="w-4 h-4 mr-1.5 text-ink/60 shrink-0" />
-                    <span class="truncate">{i18n.t('sync.export_recovery_kit')}</span>
-                  </Button>
-
-                  {#if !syncState.status.unlocked}
-                    <Button variant="primary" class="w-full !px-2.5" onclick={() => (activeView = 'unlock')}>
-                      <IconLock class="w-4 h-4 mr-1.5 text-amber-400 shrink-0" />
-                      <span class="text-amber-300 truncate">{i18n.t('sync.unlock')}</span>
-                    </Button>
-                  {:else}
-                    <Button variant="primary" class="w-full !px-2.5" onclick={() => void runSyncAction(() => syncState.lock())}>
-                      <IconLock class="w-4 h-4 mr-1.5 text-ink/60 shrink-0" />
-                      <span class="truncate">{i18n.t('sync.lock')}</span>
-                    </Button>
-                  {/if}
-                </div>
-
-                <Button variant="primary" class="w-full" onclick={() => (activeView = 'change_password')}>
-                  <IconPassword class="w-4 h-4 mr-2 text-ink/60 shrink-0" />
-                  <span>{i18n.t('sync.change_password')}</span>
-                </Button>
-              </div>
-
-              <Button
-                variant="danger"
-                class="w-full mt-1"
-                disabled={syncState.busy}
-                onclick={() => void runSyncAction(() => syncState.disconnect())}
-              >
-                <IconSignOut class="w-4 h-4 mr-1.5" />
-                <span>{i18n.t('sync.disconnect')}</span>
-              </Button>
-
-              <Button
-                variant="ghost"
-                class="w-full text-xs text-ink/50"
-                disabled={copyingLogs}
-                onclick={() => void handleCopySyncLogs()}
-              >
-                {#if copyingLogs}
-                  <IconLoading class="w-3.5 h-3.5 mr-1.5" />
-                {:else}
-                  <IconCopy class="w-3.5 h-3.5 mr-1.5" />
-                {/if}
-                <span>{i18n.t('sync.copy_logs')}</span>
-              </Button>
-            </div>
+<PageShell
+  title={viewTitle}
+  back={activeView === 'menu' ? undefined : () => (activeView = 'menu')}
+  scrollKey={navigationState.entryKey}
+>
+  <div class="profile-body">
+    {#if activeView === 'menu'}
+      {#if syncState.status.configured}
+        <section class="account-card">
+          <div class="account-text">
+            <h2 class="account-id">{syncState.status.account_id}</h2>
+            <span class="account-status">
+              {syncStatusText()}{#if serverHost}{` · ${serverHost}`}{/if}
+            </span>
           </div>
+          <Button
+            variant="tonal"
+            disabled={syncState.busy || !syncState.status.unlocked}
+            onclick={() => void runSyncAction(() => syncState.sync(), i18n.t('sync.completed'))}
+          >
+            {#if syncState.busy}<IconLoading class="mr-2" />{:else}<IconSync class="mr-2" />{/if}
+            {i18n.t('sync.sync_now')}
+          </Button>
+        </section>
 
-        {:else}
-          <div class="flex flex-col items-center text-center gap-2">
-            <svg viewBox="0 0 602 602" fill="none" class="w-14 h-14 mb-1" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="logo-profile-grad" x1="301" y1="0" x2="-2.17166e-05" y2="584.337" gradientUnits="userSpaceOnUse">
-                  <stop stop-color="#FCD8D2"/>
-                  <stop offset="1" stop-color="#FEB8AD"/>
-                </linearGradient>
-              </defs>
-              <g transform="translate(0, 8.5)">
-                <path fill="url(#logo-profile-grad)" d="M130.548 56.3212L414.821 178.14L301 226.902L18.361 105.771C24.725 99.2782 32.508 94.0322 41.366 90.6352L130.548 56.3212ZM188.082 34.2192L254.732 8.59119C284.529 -2.86373 317.514 -2.86373 347.311 8.59119L560.677 90.6352C569.492 94.0752 577.275 99.2352 583.639 105.771L469.431 154.705L188.082 34.2192ZM601.742 144.815L322.5 264.484V584.834C330.957 583.401 339.227 581.136 347.311 578.04L560.677 495.953C572.841 491.269 583.301 483.01 590.677 472.264C598.054 461.517 602.002 448.788 602 435.753V150.835C602 148.829 601.9 146.822 601.699 144.815M279.5 584.834V264.484L0.300999 144.815C0.130354 146.818 0.0299598 148.826 0 150.835V435.753C0.00172613 448.793 3.95568 461.526 11.3404 472.273C18.7252 483.02 29.1939 491.276 41.366 495.953L254.689 578.04C262.773 581.136 271.043 583.401 279.5 584.834Z" />
-              </g>
-            </svg>
-            <h2 class="text-2xl font-semibold text-ink m-0">
-              Pawstash Cloud
-            </h2>
-            <p class="text-xs text-ink/50 font-light leading-relaxed m-0 px-2">
-              {i18n.t('sync.setup_desc')}
-            </p>
-          </div>
+        {#if syncState.status.last_error}
+          <SettingsGroup>
+            <SettingItem
+              title={i18n.t('sync.sync_failed')}
+              description={syncState.status.last_error}
+              action
+              danger
+              onclick={() => copyText(syncState.status.last_error || '')}
+            />
+          </SettingsGroup>
+        {/if}
 
-          <div class="flex flex-col gap-2.5 w-full pt-1">
+        <SettingsGroup>
+          {#if syncState.status.unlocked}
+            <SettingItem
+              title={i18n.t('sync.lock')}
+              description={i18n.t('sync.lock_desc')}
+              action
+              onclick={() => void runSyncAction(() => syncState.lock())}
+            />
+          {:else}
+            <SettingItem
+              title={i18n.t('sync.unlock')}
+              description={i18n.t('sync.locked')}
+              onclick={() => (activeView = 'unlock')}
+            />
+          {/if}
+          <SettingItem
+            title={i18n.t('sync.export_recovery_kit')}
+            description={i18n.t('sync.recovery_warning')}
+            disabled={!syncState.status.unlocked}
+            onclick={() => void openRecoveryView()}
+          />
+          <SettingItem title={i18n.t('sync.change_password')} onclick={() => (activeView = 'change_password')} />
+        </SettingsGroup>
+
+        <SettingsGroup>
+          <SettingItem
+            title={i18n.t('sync.copy_logs')}
+            action
+            disabled={copyingLogs}
+            onclick={() => void handleCopySyncLogs()}
+          />
+          <SettingItem
+            title={i18n.t('sync.disconnect')}
+            action
+            danger
+            disabled={syncState.busy}
+            onclick={() => (confirmDisconnect = true)}
+          />
+        </SettingsGroup>
+      {:else}
+        <div class="profile-setup">
+          <svg viewBox="0 0 602 602" fill="none" class="setup-mark" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <defs>
+              <linearGradient id="logo-profile-grad" x1="301" y1="0" x2="-2.17166e-05" y2="584.337" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#FCD8D2"/>
+                <stop offset="1" stop-color="#FEB8AD"/>
+              </linearGradient>
+            </defs>
+            <g transform="translate(0, 8.5)">
+              <path fill="url(#logo-profile-grad)" d="M130.548 56.3212L414.821 178.14L301 226.902L18.361 105.771C24.725 99.2782 32.508 94.0322 41.366 90.6352L130.548 56.3212ZM188.082 34.2192L254.732 8.59119C284.529 -2.86373 317.514 -2.86373 347.311 8.59119L560.677 90.6352C569.492 94.0752 577.275 99.2352 583.639 105.771L469.431 154.705L188.082 34.2192ZM601.742 144.815L322.5 264.484V584.834C330.957 583.401 339.227 581.136 347.311 578.04L560.677 495.953C572.841 491.269 583.301 483.01 590.677 472.264C598.054 461.517 602.002 448.788 602 435.753V150.835C602 148.829 601.9 146.822 601.699 144.815M279.5 584.834V264.484L0.300999 144.815C0.130354 146.818 0.0299598 148.826 0 150.835V435.753C0.00172613 448.793 3.95568 461.526 11.3404 472.273C18.7252 483.02 29.1939 491.276 41.366 495.953L254.689 578.04C262.773 581.136 271.043 583.401 279.5 584.834Z" />
+            </g>
+          </svg>
+          <h2 class="setup-title">{i18n.t('sync.title')}</h2>
+          <ul class="setup-benefits">
+            <li><IconDevices /><span>{i18n.t('sync.benefit_devices')}</span></li>
+            <li><IconShield /><span>{i18n.t('sync.benefit_private')}</span></li>
+          </ul>
+          <div class="setup-actions">
             <Button
               variant="accent"
-              class="w-full"
-              onclick={() => (activeView = 'connect')}
-            >
-              <IconPerson class="w-5 h-5 mr-2" />
-              {i18n.t('sync.mode_connect')}
-            </Button>
-
-            <Button
-              variant="primary"
-              class="w-full"
               onclick={() => {
                 syncAccount = generateRandomId();
                 activeView = 'create';
               }}
             >
-              <IconPersonAdd class="w-5 h-5 mr-2" />
               {i18n.t('sync.mode_create')}
             </Button>
-
-            <Button
-              variant="ghost"
-              class="w-full"
-              onclick={() => (activeView = 'recover')}
-            >
-              <IconKey class="w-5 h-5 mr-2 text-ink/50" />
-              <span>{i18n.t('sync.mode_recover')}</span>
+            <Button variant="tonal" onclick={() => (activeView = 'connect')}>
+              {i18n.t('sync.mode_connect')}
             </Button>
-
-            <Button
-              variant="ghost"
-              class="w-full text-xs text-ink/40 mt-1"
-              disabled={copyingLogs}
-              onclick={() => void handleCopySyncLogs()}
-            >
-              {#if copyingLogs}
-                <IconLoading class="w-3.5 h-3.5 mr-1.5" />
-              {:else}
-                <IconCopy class="w-3.5 h-3.5 mr-1.5" />
-              {/if}
-              <span>{i18n.t('sync.copy_logs')}</span>
+            <Button variant="ghost" onclick={() => (activeView = 'recover')}>
+              {i18n.t('sync.mode_recover')}
             </Button>
           </div>
-        {/if}
-
-      {:else if activeView === 'connect'}
-        <div class="flex items-center gap-2 mb-1">
-          <Button variant="ghost" class="!w-[42px] !h-[42px] !p-0" onclick={() => (activeView = 'menu')}>
-            <IconArrowLeft class="w-5 h-5" />
-          </Button>
-          <h2 class="text-lg font-semibold text-ink m-0">
-            {i18n.t('sync.connect_account')}
-          </h2>
         </div>
 
-        <form
-          class="flex flex-col gap-3"
-          onsubmit={(e) => { e.preventDefault(); void handleSyncSubmit(); }}
-        >
-          <div class="flex flex-col gap-1">
-            <div class="flex items-center justify-between">
-              <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.server_url')}</span>
-              <button
-                type="button"
-                class="text-[11px] text-accent hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                disabled={testingConnection || !syncServer.trim()}
-                onclick={() => void handleTestConnection()}
-              >
-                {#if testingConnection}
-                  <IconLoading class="w-3.5 h-3.5" />
-                {/if}
-                {i18n.t('sync.test_connection')}
-              </button>
-            </div>
-            <Input icon={IconGlobe} clearable={true} bind:value={syncServer} placeholder="https://pawstash.nichind.dev" />
-          </div>
+        <SettingsGroup>
+          <SettingItem
+            title={i18n.t('sync.copy_logs')}
+            action
+            disabled={copyingLogs}
+            onclick={() => void handleCopySyncLogs()}
+          />
+        </SettingsGroup>
+      {/if}
 
-          <div class="flex flex-col gap-1">
-            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.account_id')}</span>
+    {:else if activeView === 'connect' || activeView === 'create'}
+      <form class="profile-form" onsubmit={(e) => { e.preventDefault(); void handleSyncSubmit(); }}>
+        {#if activeView === 'connect'}
+          <div class="profile-field">
+            {@render fieldLabel(i18n.t('sync.account_id'))}
             <Input icon={IconPerson} clearable={true} bind:value={syncAccount} placeholder="account-id" />
           </div>
-
-          <div class="flex flex-col gap-1">
-            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.master_password')}</span>
-            <Input
-              icon={IconKey}
-              bind:value={syncPassword}
-              type="password"
-              placeholder="••••••••••••"
-              autocomplete="current-password"
-            />
-          </div>
-
-          <div class="flex flex-col gap-1">
-            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.device_name')}</span>
-            <Input icon={IconLaptop} clearable={true} bind:value={syncDevice} placeholder="Pawstash Desktop" />
-          </div>
-
-          <Button
-            type="submit"
-            variant="accent"
-            class="w-full mt-2"
-            disabled={syncState.busy || !syncAccount.trim() || !syncPassword || syncPassword.length < 12}
-          >
-            {#if syncState.busy}
-              <IconLoading class="w-4 h-4 mr-2" />
-            {/if}
-            {i18n.t('sync.connect_account')}
-          </Button>
-        </form>
-
-      {:else if activeView === 'create'}
-        <div class="flex items-center gap-2 mb-1">
-          <Button variant="ghost" class="!w-[42px] !h-[42px] !p-0" onclick={() => (activeView = 'menu')}>
-            <IconArrowLeft class="w-5 h-5" />
-          </Button>
-          <h2 class="text-lg font-semibold text-ink m-0">
-            {i18n.t('sync.create_account')}
-          </h2>
+        {/if}
+        <div class="profile-field">
+          {@render fieldLabel(i18n.t('sync.master_password'))}
+          <Input
+            icon={IconKey}
+            bind:value={syncPassword}
+            type="password"
+            placeholder="••••••••••••"
+            autocomplete={activeView === 'create' ? 'new-password' : 'current-password'}
+          />
+          {#if activeView === 'create'}
+            <span class="profile-hint">{i18n.t('sync.password_hint_create')}</span>
+          {/if}
         </div>
 
-        <form
-          class="flex flex-col gap-3"
-          onsubmit={(e) => { e.preventDefault(); void handleSyncSubmit(); }}
-        >
-          <div class="flex flex-col gap-1">
-            <div class="flex items-center justify-between">
-              <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.server_url')}</span>
-              <button
-                type="button"
-                class="text-[11px] text-accent hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                disabled={testingConnection || !syncServer.trim()}
-                onclick={() => void handleTestConnection()}
-              >
-                {#if testingConnection}
-                  <IconLoading class="w-3.5 h-3.5" />
-                {/if}
-                {i18n.t('sync.test_connection')}
-              </button>
+        <button type="button" class="profile-advanced" aria-expanded={showAdvanced} onclick={() => (showAdvanced = !showAdvanced)}>
+          {i18n.t('sync.advanced')}
+          <IconChevronDown class={showAdvanced ? 'is-open' : ''} />
+        </button>
+        {#if showAdvanced}
+          {@render serverField()}
+          {#if activeView === 'create'}
+            <div class="profile-field">
+              {@render fieldLabel(i18n.t('sync.account_id'))}
+              <Input
+                icon={IconPerson}
+                clearable={true}
+                bind:value={syncAccount}
+                placeholder="account-id"
+                actionIcon={IconDice}
+                actionTooltip={i18n.t('sync.generate_id')}
+                onAction={() => (syncAccount = generateRandomId())}
+              />
             </div>
-            <Input icon={IconGlobe} clearable={true} bind:value={syncServer} placeholder="https://pawstash.nichind.dev" />
-          </div>
+          {/if}
+          {@render deviceField()}
+        {/if}
 
-          <div class="flex flex-col gap-1">
-            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.account_id')}</span>
-            <Input
-              icon={IconPerson}
-              clearable={true}
-              bind:value={syncAccount}
-              placeholder="account-id"
-              actionIcon={IconDice}
-              actionTooltip={i18n.t('sync.generate_id')}
-              onAction={() => (syncAccount = generateRandomId())}
-            />
-          </div>
+        {@render submitButton(
+          i18n.t(activeView === 'create' ? 'sync.create_account' : 'sync.connect_account'),
+          syncState.busy || !syncAccount.trim() || syncPassword.length < 12
+        )}
+      </form>
 
-          <div class="flex flex-col gap-1">
-            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.master_password')}</span>
-            <Input
-              icon={IconKey}
-              bind:value={syncPassword}
-              type="password"
-              placeholder={i18n.t('sync.password_placeholder')}
-              autocomplete="new-password"
-            />
-          </div>
-
-          <div class="flex flex-col gap-1">
-            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.device_name')}</span>
-            <Input icon={IconLaptop} clearable={true} bind:value={syncDevice} placeholder="Pawstash Desktop" />
-          </div>
-
-          <Button
-            type="submit"
-            variant="accent"
-            class="w-full mt-2"
-            disabled={syncState.busy || !syncAccount.trim() || !syncPassword || syncPassword.length < 12}
-          >
-            {#if syncState.busy}
-              <IconLoading class="w-4 h-4 mr-2" />
-            {/if}
-            {i18n.t('sync.create_account')}
-          </Button>
-        </form>
-
-      {:else if activeView === 'recover'}
-        <div class="flex items-center gap-2 mb-1">
-          <Button variant="ghost" class="!w-[42px] !h-[42px] !p-0" onclick={() => (activeView = 'menu')}>
-            <IconArrowLeft class="w-5 h-5" />
-          </Button>
-          <h2 class="text-lg font-semibold text-ink m-0">
-            {i18n.t('sync.recover_account')}
-          </h2>
+    {:else if activeView === 'recover'}
+      <form class="profile-form" onsubmit={(e) => { e.preventDefault(); void handleSyncSubmit(); }}>
+        <div class="profile-field">
+          {@render fieldLabel(i18n.t('sync.recovery_kit'))}
+          <textarea
+            class="recovery-textarea"
+            bind:value={syncRecoveryInput}
+            placeholder={`{"format":"pawstash-recovery-v1",...}`}
+          ></textarea>
         </div>
-
-        <form
-          class="flex flex-col gap-3"
-          onsubmit={(e) => { e.preventDefault(); void handleSyncSubmit(); }}
-        >
-          <div class="flex flex-col gap-1">
-            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.recovery_kit')}</span>
-            <textarea
-              class="recovery-textarea"
-              bind:value={syncRecoveryInput}
-              placeholder={`{"format":"pawstash-recovery-v1",...}`}
-            ></textarea>
-          </div>
-
-          <div class="flex flex-col gap-1">
-            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.new_password')}</span>
-            <Input
-              icon={IconKey}
-              bind:value={syncPassword}
-              type="password"
-              placeholder={i18n.t('sync.password_placeholder')}
-              autocomplete="new-password"
-            />
-          </div>
-
-          <div class="flex flex-col gap-1">
-            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.device_name')}</span>
-            <Input icon={IconLaptop} clearable={true} bind:value={syncDevice} placeholder="Pawstash Desktop" />
-          </div>
-
-          <Button
-            type="submit"
-            variant="accent"
-            class="w-full mt-2"
-            disabled={syncState.busy || !syncRecoveryInput.trim() || !syncPassword || syncPassword.length < 12}
-          >
-            {#if syncState.busy}
-              <IconLoading class="w-4 h-4 mr-2" />
-            {/if}
-            {i18n.t('sync.recover_account')}
-          </Button>
-        </form>
-
-      {:else if activeView === 'recovery_kit'}
-        <div class="flex items-center gap-2 mb-1">
-          <Button variant="ghost" class="!w-[42px] !h-[42px] !p-0" onclick={() => (activeView = 'menu')}>
-            <IconArrowLeft class="w-5 h-5" />
-          </Button>
-          <h2 class="text-lg font-semibold text-ink m-0">
-            {i18n.t('sync.recovery_kit_title')}
-          </h2>
+        <div class="profile-field">
+          {@render fieldLabel(i18n.t('sync.new_password'))}
+          <Input
+            icon={IconKey}
+            bind:value={syncPassword}
+            type="password"
+            placeholder={i18n.t('sync.password_placeholder')}
+            autocomplete="new-password"
+          />
         </div>
+        {@render deviceField()}
+        {@render submitButton(
+          i18n.t('sync.recover_account'),
+          syncState.busy || !syncRecoveryInput.trim() || syncPassword.length < 12
+        )}
+      </form>
 
-        <div class="flex flex-col gap-3.5">
-          <p class="text-xs text-ink/60 leading-relaxed m-0">
-            {i18n.t('sync.recovery_warning')}
-          </p>
-
-          <div class="flex items-center justify-between p-3.5 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-color)]">
-            <span class="text-xs text-ink/50">{i18n.t('sync.account_id')}</span>
-            <span class="font-mono text-xs font-semibold text-ink tracking-wider">
-              {parsedRecovery?.accountId || syncState.status.account_id}
-            </span>
-          </div>
-
-          <div class="flex flex-col gap-1.5">
-            <span class="text-xs text-ink/60 font-medium">{i18n.t('sync.vault_key')}</span>
-            <div class="font-mono text-[12px] text-ink/90 break-all select-all tracking-wide py-3 px-4 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-color)]">
-              {parsedRecovery?.vaultKey || recoveryKitText}
-            </div>
-          </div>
-
-          <div class="flex flex-col gap-2 pt-1">
-            <Button variant="accent" class="w-full" onclick={copyRecoveryKit}>
-              <IconCopy class="mr-2" />
-              {i18n.t('sync.copy_recovery')}
-            </Button>
-
-            <Button variant="ghost" class="w-full" onclick={() => downloadRecoveryFile('json')}>
+    {:else if activeView === 'recovery_kit'}
+      <div class="profile-form">
+        <p class="profile-note">{i18n.t('sync.recovery_warning')}</p>
+        <div class="profile-field">
+          {@render fieldLabel(i18n.t('sync.account_id'))}
+          <div class="recovery-value">{parsedRecovery?.accountId || syncState.status.account_id}</div>
+        </div>
+        <div class="profile-field">
+          {@render fieldLabel(i18n.t('sync.vault_key'))}
+          <div class="recovery-value is-key">{parsedRecovery?.vaultKey || recoveryKitText}</div>
+        </div>
+        <div class="profile-actions">
+          <Button variant="accent" onclick={copyRecoveryKit}>
+            <IconCopy class="mr-2" />
+            {i18n.t('sync.copy_recovery')}
+          </Button>
+          <!-- Android's WebView has no download handler, so a blob link would do nothing there. -->
+          {#if !layoutState.isMobileDevice}
+            <Button variant="tonal" onclick={downloadRecoveryFile}>
               <IconArrowDownload class="mr-2" />
               {i18n.t('sync.download_json')}
             </Button>
-          </div>
-        </div>
-
-      {:else if activeView === 'change_password'}
-        <div class="flex items-center gap-2 mb-1">
-          <Button variant="ghost" class="!w-[42px] !h-[42px] !p-0" onclick={() => (activeView = 'menu')}>
-            <IconArrowLeft class="w-5 h-5" />
+          {/if}
+          <Button variant="ghost" onclick={() => (activeView = 'menu')}>
+            {i18n.t('sync.recovery_done')}
           </Button>
-          <h2 class="text-lg font-semibold text-ink m-0">
-            {i18n.t('sync.change_password_title')}
-          </h2>
         </div>
+      </div>
 
-        <form onsubmit={(e) => { e.preventDefault(); void handleChangePasswordSubmit(); }} class="flex flex-col gap-3">
-          <div class="flex flex-col gap-1">
-            <span class="text-xs text-ink/70 font-medium">{i18n.t('sync.current_password')}</span>
-            <Input
-              icon={IconKey}
-              type="password"
-              bind:value={currentPassword}
-              placeholder="••••••••••••"
-              autocomplete="current-password"
-            />
-          </div>
-
-          <div class="flex flex-col gap-1">
-            <span class="text-xs text-ink/70 font-medium">{i18n.t('sync.new_password')}</span>
-            <Input
-              icon={IconKey}
-              type="password"
-              bind:value={newPassword}
-              placeholder={i18n.t('sync.password_placeholder')}
-              autocomplete="new-password"
-            />
-          </div>
-
-          <Button
-            variant="accent"
-            type="submit"
-            class="w-full mt-2"
-            disabled={syncState.busy || !currentPassword || newPassword.length < 12}
-          >
-            <IconCheck class="mr-2" />
-            {i18n.t('sync.change_password')}
-          </Button>
-        </form>
-
-      {:else if activeView === 'unlock'}
-        <div class="flex items-center gap-2 mb-1">
-          <Button variant="ghost" class="!w-[42px] !h-[42px] !p-0" onclick={() => (activeView = 'menu')}>
-            <IconArrowLeft class="w-5 h-5" />
-          </Button>
-          <h2 class="text-lg font-semibold text-ink m-0">
-            {i18n.t('sync.unlock_title')}
-          </h2>
+    {:else if activeView === 'change_password'}
+      <form class="profile-form" onsubmit={(e) => { e.preventDefault(); void handleChangePasswordSubmit(); }}>
+        <div class="profile-field">
+          {@render fieldLabel(i18n.t('sync.current_password'))}
+          <Input icon={IconKey} type="password" bind:value={currentPassword} placeholder="••••••••••••" autocomplete="current-password" />
         </div>
-
-        <form onsubmit={(e) => { e.preventDefault(); void handleUnlockSubmit(); }} class="flex flex-col gap-3">
-          <p class="text-xs text-ink/60 leading-relaxed m-0">
-            {i18n.t('sync.master_password_desc')}
-          </p>
-
+        <div class="profile-field">
+          {@render fieldLabel(i18n.t('sync.new_password'))}
           <Input
-            icon={IconLock}
+            icon={IconKey}
             type="password"
-            bind:value={unlockPassword}
-            placeholder={i18n.t('sync.master_password')}
-            autocomplete="current-password"
+            bind:value={newPassword}
+            placeholder={i18n.t('sync.password_placeholder')}
+            autocomplete="new-password"
           />
+        </div>
+        {@render submitButton(i18n.t('sync.change_password'), syncState.busy || !currentPassword || newPassword.length < 12)}
+      </form>
 
-          <Button
-            variant="accent"
-            type="submit"
-            class="w-full mt-2"
-            disabled={syncState.busy || !unlockPassword}
-          >
-            <IconLock class="mr-2" />
-            {i18n.t('sync.unlock')}
-          </Button>
-        </form>
-      {/if}
-
-    </div>
+    {:else if activeView === 'unlock'}
+      <form class="profile-form" onsubmit={(e) => { e.preventDefault(); void handleUnlockSubmit(); }}>
+        <p class="profile-note">{i18n.t('sync.master_password_desc')}</p>
+        <Input
+          icon={IconLock}
+          type="password"
+          bind:value={unlockPassword}
+          placeholder={i18n.t('sync.master_password')}
+          autocomplete="current-password"
+        />
+        {@render submitButton(i18n.t('sync.unlock'), syncState.busy || !unlockPassword)}
+      </form>
+    {/if}
   </div>
 </PageShell>
 
+<ConfirmDialog
+  isOpen={confirmDisconnect}
+  title={i18n.t('sync.disconnect_confirm_title')}
+  description={i18n.t('sync.disconnect_confirm_desc')}
+  confirmLabel={i18n.t('sync.disconnect')}
+  confirmVariant="danger"
+  confirmIcon={IconSignOut}
+  onconfirm={() => {
+    confirmDisconnect = false;
+    void runSyncAction(() => syncState.disconnect(), i18n.t('sync.disconnected'));
+  }}
+  onclose={() => (confirmDisconnect = false)}
+/>
+
 <style>
+  .profile-body {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    width: 100%;
+    max-width: var(--content-max-width);
+    margin-inline: auto;
+    padding-block: 8px 24px;
+  }
+
+  .account-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 20px 16px 20px 20px;
+    border-radius: var(--radius-xl);
+    background: var(--surface-container);
+  }
+
+  .account-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .account-id {
+    margin: 0;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--type-title-md-size);
+    line-height: var(--type-title-md-line);
+    font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+
+  .account-status {
+    color: var(--text-secondary);
+    font-size: var(--type-body-sm-size);
+    line-height: var(--type-body-sm-line);
+    overflow-wrap: anywhere;
+  }
+
+  .account-card :global(.btn) {
+    flex: none;
+  }
+
+  .profile-setup {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 32px 16px 8px;
+    text-align: center;
+  }
+
+  .setup-mark {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 8px;
+  }
+
+  .setup-title {
+    margin: 0;
+    color: var(--text-primary);
+    font-family: var(--font-display);
+    font-size: var(--type-title-lg-size);
+    line-height: var(--type-title-lg-line);
+    font-weight: 400;
+  }
+
+  .setup-benefits {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: min(100%, 360px);
+    margin: 4px 0 0;
+    padding: 0;
+    list-style: none;
+    text-align: start;
+  }
+
+  .setup-benefits li {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    color: var(--text-primary);
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-line);
+  }
+
+  .setup-benefits :global(svg) {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    color: var(--accent-on-surface);
+  }
+
+  .profile-hint {
+    color: var(--text-secondary);
+    font-size: var(--type-body-sm-size);
+    line-height: var(--type-body-sm-line);
+  }
+
+  .profile-advanced {
+    display: inline-flex;
+    align-self: flex-start;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 0;
+    border: 0;
+    background: none;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: var(--type-label-lg-size);
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .profile-advanced :global(svg) {
+    width: 18px;
+    height: 18px;
+    transition: transform var(--duration-fast) var(--ease-standard);
+  }
+
+  .profile-advanced :global(svg.is-open) {
+    transform: rotate(180deg);
+  }
+
+  .profile-note {
+    max-width: 44ch;
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-line);
+  }
+
+  .setup-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    width: min(100%, 320px);
+    margin-top: 16px;
+  }
+
+  .profile-form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 100%;
+    max-width: 440px;
+  }
+
+  .profile-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .profile-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .profile-label {
+    padding-inline: 4px;
+    color: var(--text-secondary);
+    font-size: var(--type-label-lg-size);
+    line-height: var(--type-label-lg-line);
+    font-weight: 500;
+  }
+
+  .profile-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 4px;
+    border: 0;
+    background: transparent;
+    color: var(--accent-primary);
+    font-size: var(--type-label-lg-size);
+    line-height: var(--type-label-lg-line);
+  }
+
+  .profile-link:disabled {
+    opacity: 0.38;
+  }
+
+  @media (hover: hover) {
+    .profile-link:not(:disabled):hover {
+      text-decoration: underline;
+    }
+  }
+
+  .profile-form :global(.profile-submit) {
+    align-self: flex-start;
+    margin-top: 8px;
+  }
+
+  :global([data-layout='mobile']) .profile-form :global(.profile-submit) {
+    align-self: stretch;
+  }
+
+  .profile-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .recovery-value {
+    padding: 12px 16px;
+    border-radius: var(--radius-md);
+    background: var(--surface-container);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--type-body-sm-size);
+    line-height: var(--type-body-sm-line);
+    user-select: all;
+  }
+
+  .recovery-value.is-key {
+    word-break: break-all;
+  }
+
   .recovery-textarea {
     width: 100%;
-    min-height: 100px;
-    padding: 12px 14px;
-    border-radius: var(--radius-lg, 16px);
-    background: var(--bg-card);
-    border: var(--border-width, 1px) solid var(--border-color);
+    min-height: 120px;
+    padding: 12px 16px;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: var(--surface-container-high);
     color: var(--text-primary);
-    font-family: var(--font-mono, monospace);
-    font-size: 12px;
-    line-height: 1.4;
+    font-family: var(--font-mono);
+    font-size: var(--type-body-sm-size);
+    line-height: var(--type-body-sm-line);
     resize: vertical;
     outline: none;
     box-sizing: border-box;
-    transition: border-color var(--duration-fast, 150ms) var(--ease-out, ease-out);
   }
 
-  .recovery-textarea:focus {
-    border-color: var(--border-color-focus);
-    box-shadow: 0 0 0 2px var(--accent-glow);
+  .recovery-textarea:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: -2px;
   }
 </style>

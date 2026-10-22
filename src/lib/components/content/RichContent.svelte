@@ -1,6 +1,7 @@
 <script module lang="ts">
   import type { ResolvedPostLink } from '$lib/types/content';
   import { apiResolveExternalPostLink } from '$lib/utils/ipc';
+  import { videoPoster } from '$lib/utils/media';
 
   const ALLOWED_TAGS = new Set([
     'a', 'b', 'blockquote', 'br', 'code', 'del', 'div', 'em', 'figcaption', 'figure',
@@ -11,30 +12,50 @@
   const DROP_TAGS = new Set(['base', 'button', 'embed', 'form', 'input', 'link', 'math', 'meta', 'object', 'script', 'style', 'svg', 'textarea']);
   const resolutionCache = new Map<string, Promise<ResolvedPostLink | null>>();
 
+  const IFRAME_HOSTS = [
+    'google.com', 'forms.gle', 'strawpoll.com', 'strawpoll.me', 'youtube.com', 'youtube-nocookie.com', 'youtu.be',
+    'vimeo.com', 'soundcloud.com', 'spotify.com', 'bilibili.com', 'nicovideo.jp', 'pixiv.net'
+  ];
+
   export function isSafeIframeSrc(url: string): boolean {
     try {
       const u = new URL(url);
       if (!['http:', 'https:'].includes(u.protocol)) return false;
       const host = u.hostname.toLowerCase();
-      return (
-        host.includes('google.com') ||
-        host.includes('forms.gle') ||
-        host.includes('strawpoll.com') ||
-        host.includes('strawpoll.me') ||
-        host.includes('youtube.com') ||
-        host.includes('youtube-nocookie.com') ||
-        host.includes('youtu.be') ||
-        host.includes('player.vimeo.com') ||
-        host.includes('vimeo.com') ||
-        host.includes('soundcloud.com') ||
-        host.includes('spotify.com') ||
-        host.includes('bilibili.com') ||
-        host.includes('nicovideo.jp') ||
-        host.includes('pixiv.net')
-      );
+      return IFRAME_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
     } catch {
       return false;
     }
+  }
+
+  // Provider embed HTML runs next to the app's IPC, so only the player it carries survives, rebuilt from scratch.
+  export function sanitizeEmbedHtml(html: string): string {
+    if (typeof DOMParser === 'undefined' || !html) return '';
+    const document = new DOMParser().parseFromString(html, 'text/html');
+    const iframeSrc = safeHttpUrl(document.querySelector('iframe')?.getAttribute('src') || '');
+    if (iframeSrc && isSafeIframeSrc(iframeSrc)) {
+      const iframe = document.createElement('iframe');
+      iframe.src = iframeSrc;
+      iframe.loading = 'lazy';
+      iframe.referrerPolicy = 'no-referrer';
+      iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-presentation');
+      iframe.setAttribute('allow', 'autoplay; encrypted-media; fullscreen; picture-in-picture');
+      iframe.setAttribute('allowfullscreen', 'true');
+      return iframe.outerHTML;
+    }
+    const source = document.querySelector('video');
+    const videoSrc = safeHttpUrl(source?.getAttribute('src') || source?.querySelector('source')?.getAttribute('src') || '');
+    if (videoSrc) {
+      const video = document.createElement('video');
+      video.src = videoSrc;
+      video.controls = true;
+      video.preload = 'metadata';
+      video.setAttribute('playsinline', '');
+      const poster = videoPoster();
+      if (poster) video.poster = poster;
+      return video.outerHTML;
+    }
+    return '';
   }
 
   export { isDirectMediaUrl, extractDirectMediaLinks } from '$lib/utils/media';
@@ -167,8 +188,10 @@
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { openExternalUrl } from '$lib/utils/ipc';
   import { isDirectMediaUrl } from '$lib/utils/media';
-  import { notify } from '$lib/utils/toast';
+  import { copyText } from '$lib/utils/clipboard';
   import { ripple } from '$lib/motion';
+  import { computePosition, flip, shift, offset } from '@floating-ui/dom';
+  import { FLOATING_EDGE, FLOATING_OFFSET } from '$lib/utils/floating';
   import IconFolder from '~icons/fluent/folder-open-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
   import IconCopy from '~icons/fluent/copy-24-regular';
@@ -196,6 +219,25 @@
   let generation = 0;
   let safeHtml = $derived(sanitizeRichHtml(html));
   let linkPopover = $state<LinkPopoverState | null>(null);
+  let linkPopoverEl = $state<HTMLDivElement>();
+
+  $effect(() => {
+    const state = linkPopover;
+    const el = linkPopoverEl;
+    if (!state || !el) return;
+    const point = {
+      getBoundingClientRect: () => new DOMRect(state.x, state.y, 0, 0)
+    };
+    void computePosition(point, el, {
+      placement: 'bottom-start',
+      strategy: 'fixed',
+      middleware: [offset(FLOATING_OFFSET), flip({ padding: FLOATING_EDGE }), shift({ padding: FLOATING_EDGE })]
+    }).then(({ x, y }) => {
+      el.style.left = `${x}px`;
+      el.style.top = `${y}px`;
+      el.style.visibility = 'visible';
+    });
+  });
 
   function markResolved(anchor: HTMLAnchorElement, resolved: ResolvedPostLink | null) {
     if (!root?.contains(anchor)) return;
@@ -319,14 +361,16 @@
     onclick={() => (linkPopover = null)}
   >
     <div
-      class="link-popover floating-surface absolute z-50 min-w-[200px] flex flex-col gap-[var(--floating-gap)] text-xs"
-      style="left: {Math.max(12, Math.min(linkPopover.x, (typeof window !== 'undefined' ? window.innerWidth : 800) - 220))}px; top: {Math.max(12, Math.min(linkPopover.y + 10, (typeof window !== 'undefined' ? window.innerHeight : 600) - 150))}px;"
+      bind:this={linkPopoverEl}
+      class="link-popover floating-surface"
+      role="menu"
+      tabindex="-1"
       onclick={(e) => e.stopPropagation()}
     >
       {#if linkPopover.canOpenInApp}
         <button
           type="button"
-          class="floating-item font-medium"
+          class="floating-item"
           use:ripple
           onclick={() => {
             const state = linkPopover!;
@@ -348,8 +392,8 @@
             }
           }}
         >
-          <IconFolder class="w-5 h-5 text-[var(--accent)] flex-shrink-0" />
-          <span class="text-[var(--text-primary)]">
+          <IconFolder />
+          <span class="floating-item-label">
             {linkPopover.resolvedPost?.link_type === 'creator'
               ? i18n.t('post.open_creator_in_app')
               : i18n.t('post.open_in_app')}
@@ -367,8 +411,8 @@
           void openExternalUrl(u);
         }}
       >
-        <IconOpen class="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />
-        <span>{i18n.t('post.open_in_browser')}</span>
+        <IconOpen />
+        <span class="floating-item-label">{i18n.t('post.open_in_browser')}</span>
       </button>
 
       <button
@@ -378,12 +422,11 @@
         onclick={() => {
           const u = linkPopover!.url;
           linkPopover = null;
-          navigator.clipboard.writeText(u);
-          notify.success(i18n.t('post.link_copied'), { glyph: 'copied' });
+          copyText(u, i18n.t('post.link_copied'));
         }}
       >
-        <IconCopy class="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />
-        <span>{i18n.t('post.copy_link')}</span>
+        <IconCopy />
+        <span class="floating-item-label">{i18n.t('post.copy_link')}</span>
       </button>
     </div>
   </div>
@@ -391,6 +434,15 @@
 
 <style>
   .rich-content-root { display: contents; }
+
+  .link-popover {
+    position: fixed;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    min-width: 220px;
+    visibility: hidden;
+  }
 
   .rich-content-root :global(a[href]) {
     --smart-link-color: var(--accent-primary);
@@ -485,11 +537,6 @@
 
   .rich-content-root :global(img:hover) {
     opacity: 0.94;
-  }
-
-  .rich-content-root :global(.iframely-responsive) {
-    position: relative;
-    width: 100%;
   }
 
   @media (prefers-reduced-motion: reduce) {

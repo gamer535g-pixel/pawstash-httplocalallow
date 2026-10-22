@@ -864,7 +864,7 @@ impl AppSettings {
         ) {
             self.toast_position = "auto".to_string();
         }
-        if !matches!(self.card_view_mode.as_str(), "detailed" | "compact") {
+        if !matches!(self.card_view_mode.as_str(), "detailed" | "lite") {
             self.card_view_mode = "detailed".to_string();
         }
         if self.network_timeout_secs != 0 {
@@ -1268,6 +1268,25 @@ mod tests {
         };
         settings.normalize();
         assert_eq!(settings.toast_position, "auto");
+    }
+
+    #[test]
+    fn normalize_keeps_card_view_modes_offered_by_settings() {
+        for offered in ["detailed", "lite"] {
+            let mut settings = AppSettings {
+                card_view_mode: offered.to_string(),
+                ..AppSettings::default()
+            };
+            settings.normalize();
+            assert_eq!(settings.card_view_mode, offered);
+        }
+
+        let mut settings = AppSettings {
+            card_view_mode: "compact".to_string(),
+            ..AppSettings::default()
+        };
+        settings.normalize();
+        assert_eq!(settings.card_view_mode, "detailed");
     }
 
     #[test]

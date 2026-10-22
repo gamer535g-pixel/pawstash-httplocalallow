@@ -252,7 +252,10 @@ pub fn android_package_name() -> String {
         }
     }
     let user_id = android_user_id();
-    if std::path::Path::new(&format!("/data/user/{user_id}/app.pawstash.client.dev/files")).exists()
+    if std::path::Path::new(&format!(
+        "/data/user/{user_id}/app.pawstash.client.dev/files"
+    ))
+    .exists()
         || std::path::Path::new("/data/data/app.pawstash.client.dev/files").exists()
     {
         return "app.pawstash.client.dev".to_string();

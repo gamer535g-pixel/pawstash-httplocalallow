@@ -31,13 +31,13 @@ export interface AccentPalette {
   outline: string;
   outlineVariant: string;
   surfaceTintRgb: string;
-  surfaceLowRgb: string;
   textPrimary: string;
   textSecondary: string;
   textMuted: string;
   surface: string;
   surfaceDim: string;
   surfaceBright: string;
+  surfaceContainerLowest: string;
   surfaceContainerLow: string;
   surfaceContainer: string;
   surfaceContainerHigh: string;
@@ -80,8 +80,6 @@ export const SCHEME_VARIANTS: SchemeVariant[] = [
   'fruit-salad'
 ];
 
-export const CONTRAST_LEVELS: ContrastLevel[] = [-1, 0, 0.5, 1];
-
 export const DEFAULT_SCHEME_VARIANT: SchemeVariant = 'tonal-spot';
 export const DEFAULT_CONTRAST_LEVEL: ContrastLevel = 0;
 
@@ -98,17 +96,10 @@ const SCHEME_CONSTRUCTORS: Record<SchemeVariant, any> = {
 };
 
 const ACHROMATIC_CHROMA = 10;
-const NEUTRAL_CHROMA_TEXT = 2;
-const NEUTRAL_CHROMA_SURFACE = 4;
 
-function neutralize(hex: string, maxChroma: number, tone?: number): string {
-  const hct = Hct.fromInt(argbFromHex(hex));
-  return hexFromArgb(
-    Hct.from(hct.hue, Math.min(hct.chroma, maxChroma), tone ?? hct.tone).toInt()
-  );
+function achromatic(hex: string): string {
+  return hexFromArgb(Hct.from(0, 0, Hct.fromInt(argbFromHex(hex)).tone).toInt());
 }
-
-const ACCENT_SURFACE_DARK: RgbColor = { r: 24, g: 24, b: 27 };
 
 export const PRESET_QUADRANTS: Record<string, [string, string, string, string]> = {
   '#d69085': ['#d69085', '#e8c2bc', '#60413c', '#a16c64'],
@@ -121,7 +112,7 @@ export const PRESET_QUADRANTS: Record<string, [string, string, string, string]> 
   indigo: ['#6366f1', '#a5b4fc', '#3730a3', '#4f46e5']
 };
 
-export const PRESET_PRIMARY_MAP: Record<string, string> = {
+const PRESET_PRIMARY_MAP: Record<string, string> = {
   rose: '#f43f5e',
   violet: '#8b5cf6',
   cyan: '#06b6d4',
@@ -130,7 +121,7 @@ export const PRESET_PRIMARY_MAP: Record<string, string> = {
   indigo: '#6366f1'
 };
 
-export const DEFAULT_ACCENT = '#d69085';
+const DEFAULT_ACCENT = '#d69085';
 
 export const ACCENT_PRESETS: { id: string; hex: string }[] = [
   { id: 'terracotta', hex: DEFAULT_ACCENT },
@@ -181,7 +172,7 @@ export function parseColorToRgb(input: string): RgbColor {
   return { r: 214, g: 144, b: 133 };
 }
 
-export function rgbToHex(r: number, g: number, b: number): string {
+function rgbToHex(r: number, g: number, b: number): string {
   const toHex = (n: number) =>
     Math.min(255, Math.max(0, Math.round(n))).toString(16).padStart(2, '0');
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
@@ -191,7 +182,7 @@ export function getPerceivedLuminance(r: number, g: number, b: number): number {
   return (r * 299 + g * 587 + b * 114) / 1000;
 }
 
-export function getRelativeLuminance(color: RgbColor): number {
+function getRelativeLuminance(color: RgbColor): number {
   const channel = (value: number) => {
     const v = value / 255;
     return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
@@ -206,7 +197,7 @@ export function getContrastInk(background: string): 'light' | 'dark' {
   return againstWhite >= againstBlack ? 'light' : 'dark';
 }
 
-export function mixRgb(color1: RgbColor, color2: RgbColor, weight: number): RgbColor {
+function mixRgb(color1: RgbColor, color2: RgbColor, weight: number): RgbColor {
   const w = Math.min(1, Math.max(0, weight));
   return {
     r: Math.round(color1.r * (1 - w) + color2.r * w),
@@ -237,7 +228,7 @@ function stateLayer(base: string, over: string, opacity: number): string {
   return rgbToHex(mixed.r, mixed.g, mixed.b);
 }
 
-export function sourceHct(input: string): Hct {
+function sourceHct(input: string): Hct {
   const { r, g, b } = parseColorToRgb(input);
   return Hct.fromInt(argbFromRgb(r, g, b));
 }
@@ -246,7 +237,7 @@ export function isAchromatic(input: string): boolean {
   return sourceHct(input).chroma < ACHROMATIC_CHROMA;
 }
 
-export function buildScheme(
+function buildScheme(
   input: string,
   variant: SchemeVariant = DEFAULT_SCHEME_VARIANT,
   contrastLevel: ContrastLevel = DEFAULT_CONTRAST_LEVEL,
@@ -255,7 +246,7 @@ export function buildScheme(
   const hct = sourceHct(input);
   const effective = hct.chroma < ACHROMATIC_CHROMA ? 'monochrome' : variant;
   const Scheme = SCHEME_CONSTRUCTORS[effective] ?? SchemeTonalSpot;
-  return new Scheme(hct, isDark, contrastLevel, '2025', 'phone');
+  return new Scheme(hct, isDark, contrastLevel, '2021', 'phone');
 }
 
 function role(scheme: DynamicScheme, name: string): string {
@@ -264,9 +255,7 @@ function role(scheme: DynamicScheme, name: string): string {
 }
 
 function accentOnSurface(scheme: DynamicScheme, primary: string, isDark: boolean): string {
-  const surface = isDark
-    ? ACCENT_SURFACE_DARK
-    : parseColorToRgb(role(scheme, 'surfaceContainer'));
+  const surface = parseColorToRgb(achromatic(role(scheme, 'surfaceContainerHigh')));
   if (contrastRatio(parseColorToRgb(primary), surface) >= 4.5) return primary;
 
   const tones = isDark ? [60, 65, 70, 75, 80, 85, 90, 95, 100] : [50, 45, 40, 35, 30, 25, 20, 10, 0];
@@ -290,7 +279,8 @@ export function generateAccentPalette(
   const onPrimary = role(scheme, 'onPrimary');
   const secondaryContainer = role(scheme, 'secondaryContainer');
   const onSecondaryContainer = role(scheme, 'onSecondaryContainer');
-  const surfaceContainerLow = role(scheme, 'surfaceContainerLow');
+  const surfaceContainerLow = achromatic(role(scheme, 'surfaceContainerLow'));
+  const onSurface = achromatic(role(scheme, 'onSurface'));
 
   const quadrants: [string, string, string, string] =
     customQuadrants ??
@@ -314,29 +304,20 @@ export function generateAccentPalette(
     quadrants,
     choiceActiveBg: secondaryContainer,
     choiceActiveText: onSecondaryContainer,
-    outline: role(scheme, 'outline'),
-    outlineVariant: role(scheme, 'outlineVariant'),
-    textPrimary: neutralize(role(scheme, 'onSurface'), NEUTRAL_CHROMA_TEXT, isDark ? 96 : 8),
-    textSecondary: neutralize(role(scheme, 'onSurfaceVariant'), NEUTRAL_CHROMA_TEXT),
-    textMuted: neutralize(role(scheme, 'outline'), NEUTRAL_CHROMA_TEXT),
-    surfaceTintRgb: rgbTriple(
-      neutralize(
-        hexFromArgb(scheme.neutralPalette.tone(isDark ? 95 : 10)),
-        NEUTRAL_CHROMA_TEXT,
-        isDark ? 97 : 8
-      )
-    ),
-    surfaceLowRgb: rgbTriple(neutralize(surfaceContainerLow, NEUTRAL_CHROMA_SURFACE)),
-    surface: neutralize(role(scheme, 'surface'), NEUTRAL_CHROMA_SURFACE),
-    surfaceDim: neutralize(role(scheme, 'surfaceDim'), NEUTRAL_CHROMA_SURFACE),
-    surfaceBright: neutralize(role(scheme, 'surfaceBright'), NEUTRAL_CHROMA_SURFACE),
-    surfaceContainerLow: neutralize(surfaceContainerLow, NEUTRAL_CHROMA_SURFACE),
-    surfaceContainer: neutralize(role(scheme, 'surfaceContainer'), NEUTRAL_CHROMA_SURFACE),
-    surfaceContainerHigh: neutralize(role(scheme, 'surfaceContainerHigh'), NEUTRAL_CHROMA_SURFACE),
-    surfaceContainerHighest: neutralize(
-      role(scheme, 'surfaceContainerHighest'),
-      NEUTRAL_CHROMA_SURFACE
-    )
+    outline: achromatic(role(scheme, 'outline')),
+    outlineVariant: achromatic(role(scheme, 'outlineVariant')),
+    textPrimary: onSurface,
+    textSecondary: achromatic(role(scheme, 'onSurfaceVariant')),
+    textMuted: achromatic(role(scheme, 'outline')),
+    surfaceTintRgb: rgbTriple(onSurface),
+    surface: achromatic(role(scheme, 'surface')),
+    surfaceDim: achromatic(role(scheme, 'surfaceDim')),
+    surfaceBright: achromatic(role(scheme, 'surfaceBright')),
+    surfaceContainerLowest: achromatic(role(scheme, 'surfaceContainerLowest')),
+    surfaceContainerLow,
+    surfaceContainer: achromatic(role(scheme, 'surfaceContainer')),
+    surfaceContainerHigh: achromatic(role(scheme, 'surfaceContainerHigh')),
+    surfaceContainerHighest: achromatic(role(scheme, 'surfaceContainerHighest'))
   };
 }
 

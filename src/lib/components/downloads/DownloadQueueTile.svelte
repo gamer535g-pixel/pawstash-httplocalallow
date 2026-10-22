@@ -138,7 +138,7 @@
   .queue-tile {
     --queue-page-control: var(--control-height);
     container-type: size;
-    background: var(--surface-container-low);
+    background: var(--surface-container);
   }
 
   .queue-body {

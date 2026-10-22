@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ripple } from '$lib/motion';
+  import { ripple, tooltip } from '$lib/motion';
   import { i18n } from '$lib/i18n';
   import IconChevronDown from '~icons/fluent/chevron-down-20-regular';
   import IconChevronUp from '~icons/fluent/chevron-up-20-regular';
@@ -15,7 +15,6 @@
     activeTag?: string | null;
     onclick?: (tag: string) => void;
     onclear?: () => void;
-    maxVisible?: number;
     size?: 'sm' | 'md' | 'lg';
     showAll?: boolean;
     allLabel?: string;
@@ -29,7 +28,6 @@
     activeTag = null,
     onclick: handleClick,
     onclear: handleClear,
-    maxVisible = 0,
     size = 'md',
     showAll = false,
     allLabel = undefined,
@@ -66,8 +64,6 @@
     return result;
   });
 
-  let displayTags = $derived(normalizedTags);
-
   let scrollEl = $state<HTMLDivElement | null>(null);
   let hasOverflow = $state(false);
 
@@ -80,9 +76,8 @@
   }
 
   $effect(() => {
-    const _ = displayTags;
-    const _expanded = expanded;
-    if (_expanded) return;
+    void normalizedTags;
+    if (expanded) return;
     const rafId = requestAnimationFrame(checkOverflow);
     return () => cancelAnimationFrame(rafId);
   });
@@ -106,35 +101,30 @@
     return cleanActive === tag.key || cleanActive.replace(/_/g, ' ') === tag.key.replace(/_/g, ' ');
   }
 
-  let needsTwoRows = $derived(!expanded && (displayTags.length > 3 || (showAll && displayTags.length > 2)));
+  let needsTwoRows = $derived(!expanded && (normalizedTags.length > 3 || (showAll && normalizedTags.length > 2)));
+  let firstRowParity = $derived(showAll ? 1 : 0);
 
   let row1Tags = $derived.by<NormalizedTag[]>(() => {
     if (expanded) return [];
-    if (!needsTwoRows) return displayTags;
-    const list: NormalizedTag[] = [];
-    for (let i = 0; i < displayTags.length; i++) {
-      if (showAll) {
-        if (i % 2 === 1) list.push(displayTags[i]);
-      } else {
-        if (i % 2 === 0) list.push(displayTags[i]);
-      }
-    }
-    return list;
+    if (!needsTwoRows) return normalizedTags;
+    return normalizedTags.filter((_, i) => i % 2 === firstRowParity);
   });
 
   let row2Tags = $derived.by<NormalizedTag[]>(() => {
     if (expanded || !needsTwoRows) return [];
-    const list: NormalizedTag[] = [];
-    for (let i = 0; i < displayTags.length; i++) {
-      if (showAll) {
-        if (i % 2 === 0) list.push(displayTags[i]);
-      } else {
-        if (i % 2 === 1) list.push(displayTags[i]);
-      }
-    }
-    return list;
+    return normalizedTags.filter((_, i) => i % 2 !== firstRowParity);
   });
 </script>
+
+{#snippet tagBody(tag: NormalizedTag)}
+  <span class="tag-hash">#</span>
+  <span class="tag-label">
+    <StableWeightLabel text={tag.name} reserveWeight="var(--font-weight-semibold)" />
+  </span>
+  {#if tag.count !== undefined}
+    <span class="tag-count-badge">{tag.count}</span>
+  {/if}
+{/snippet}
 
 {#snippet renderTag(tag: NormalizedTag)}
   {@const isActive = isTagActive(tag)}
@@ -153,23 +143,11 @@
       }}
       title={`#${tag.name}${tag.count !== undefined ? ` (${tag.count})` : ''}`}
     >
-      <span class="tag-hash">#</span>
-      <span class="tag-label">
-        <StableWeightLabel text={tag.name} reserveWeight="var(--font-weight-semibold)" />
-      </span>
-      {#if tag.count !== undefined}
-        <span class="tag-count-badge">{tag.count}</span>
-      {/if}
+      {@render tagBody(tag)}
     </button>
   {:else}
     <span class="tag-chip" class:is-active={isActive}>
-      <span class="tag-hash">#</span>
-      <span class="tag-label">
-        <StableWeightLabel text={tag.name} reserveWeight="var(--font-weight-semibold)" />
-      </span>
-      {#if tag.count !== undefined}
-        <span class="tag-count-badge">{tag.count}</span>
-      {/if}
+      {@render tagBody(tag)}
     </span>
   {/if}
 {/snippet}
@@ -226,12 +204,12 @@
         <div class="tag-fixed-right-action">
           <button
             type="button"
-            class="tag-chip tag-more-btn is-fixed-right"
+            class="tag-chip tag-more-btn"
             onclick={() => expanded = true}
-            title={expandBtnLabel}
+            aria-label={expandBtnLabel}
+            use:tooltip={expandBtnLabel}
             use:ripple
           >
-            <span>{expandBtnLabel}</span>
             <IconChevronDown class="chevron-icon" />
           </button>
         </div>
@@ -248,10 +226,10 @@
           type="button"
           class="tag-chip tag-more-btn"
           onclick={() => expanded = false}
-          title={collapseBtnLabel}
+          aria-label={collapseBtnLabel}
+          use:tooltip={collapseBtnLabel}
           use:ripple
         >
-          <span>{collapseBtnLabel}</span>
           <IconChevronUp class="chevron-icon" />
         </button>
       </div>
@@ -288,97 +266,82 @@
     display: none;
   }
 
+  .tag-bar-shell,
+  .tag-wrap-container {
+    --tag-chip-height: 32px;
+    --tag-chip-px: 12px;
+    --tag-gap: 8px;
+    --tag-font: var(--type-label-lg-size);
+  }
+
+  .size-sm {
+    --tag-chip-height: 28px;
+    --tag-chip-px: 10px;
+    --tag-gap: 6px;
+    --tag-font: var(--type-label-md-size);
+  }
+
+  .size-lg {
+    --tag-chip-height: 36px;
+    --tag-chip-px: 14px;
+  }
+
   .tag-rows-wrapper {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: var(--tag-gap);
     width: max-content;
-    padding: 2px 24px 2px 0;
+    padding-inline-end: 24px;
   }
 
-  .size-sm .tag-rows-wrapper {
-    gap: 5px;
+  .tag-flex-row,
+  .tag-flex-wrap {
+    display: flex;
+    align-items: center;
+    gap: var(--tag-gap);
   }
 
   .tag-flex-row {
-    display: flex;
-    flex-direction: row;
     flex-wrap: nowrap;
-    align-items: center;
-    gap: 6px;
     width: max-content;
   }
 
-  .size-sm .tag-flex-row {
-    gap: 5px;
+  .tag-flex-wrap {
+    flex-wrap: wrap;
+    width: 100%;
   }
 
   .tag-fixed-right-action {
-    flex-shrink: 0;
-    margin-left: 6px;
     display: flex;
-    align-items: center;
-    z-index: 2;
+    flex-shrink: 0;
+    margin-inline-start: var(--tag-gap);
   }
 
   .tag-wrap-container {
     display: block;
     width: 100%;
-    box-sizing: border-box;
-    padding: 2px 0;
-  }
-
-  .tag-flex-wrap {
-    display: flex;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-  }
-
-  .size-sm .tag-flex-wrap {
-    gap: 5px;
   }
 
   .tag-chip {
     display: inline-flex;
     align-items: center;
-    gap: 3px;
-    height: 30px;
-    padding: 0 11px;
-    border-radius: var(--radius-full, 9999px);
-    background: var(--bg-card, rgba(255, 255, 255, 0.05));
-    border: none;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    color: var(--text-secondary);
-    font-size: 13px;
+    flex-shrink: 0;
+    gap: 2px;
+    height: var(--tag-chip-height);
+    padding: 0 var(--tag-chip-px);
+    border: 0;
+    border-radius: var(--radius-full);
+    background: var(--surface-container-high);
+    color: var(--text-primary);
     font-family: var(--font-sans);
+    font-size: var(--tag-font);
     font-weight: 500;
-    line-height: normal;
+    line-height: 1;
     white-space: nowrap;
     user-select: none;
     box-sizing: border-box;
-    flex-shrink: 0;
-    transition: background var(--duration-fast) var(--ease-expo),
-                color var(--duration-fast) var(--ease-expo),
-                box-shadow var(--duration-fast) var(--ease-expo),
-                transform var(--duration-fast) var(--ease-expo);
-  }
-
-  .size-sm .tag-chip {
-    height: 25px;
-    padding: 0 8px;
-    font-size: 12px;
-    gap: 2px;
-  }
-
-  .size-lg .tag-chip {
-    height: 36px;
-    padding: 0 14px;
-    font-size: 14px;
-    gap: 4px;
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
   }
 
   .tag-chip.is-clickable {
@@ -386,118 +349,50 @@
     outline: none;
   }
 
-  .tag-chip.is-clickable:hover {
-    background: var(--bg-card-hover, rgba(255, 255, 255, 0.1));
-    color: var(--text-primary);
-  }
-
-  .tag-chip.is-clickable:hover .tag-hash {
-    opacity: 0.95;
-    color: var(--accent-primary);
+  @media (hover: hover) {
+    .tag-chip.is-clickable:hover {
+      background: var(--surface-container-highest);
+    }
   }
 
   .tag-chip.is-clickable:focus-visible {
     outline: 2px solid var(--accent-primary);
-    outline-offset: 1px;
+    outline-offset: 2px;
   }
 
   .tag-chip.is-active {
-    background: var(--accent-primary) !important;
-    color: var(--accent-on-primary, var(--text-primary)) !important;
-    font-weight: 600;
-  }
-
-  .tag-chip.is-active .tag-hash {
-    color: var(--accent-on-primary, var(--text-primary)) !important;
-    opacity: 1 !important;
-  }
-
-  .tag-chip.is-active .tag-count-badge {
-    background: rgba(0, 0, 0, 0.25) !important;
-    color: var(--accent-on-primary, var(--text-primary)) !important;
-    font-weight: 600;
+    background: var(--accent-container);
+    color: var(--accent-on-container);
   }
 
   .tag-hash {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--accent-primary);
-    opacity: 0.65;
-    margin-right: 1px;
-    transition: opacity var(--duration-fast) var(--ease-expo), color var(--duration-fast) var(--ease-expo);
+    color: var(--text-secondary);
   }
 
-  .size-sm .tag-hash {
-    font-size: 11px;
-  }
-
-  .size-lg .tag-hash {
-    font-size: 13.5px;
+  .tag-chip.is-active .tag-hash {
+    color: inherit;
   }
 
   .tag-count-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 11px;
-    font-weight: 500;
-    line-height: 1;
-    padding: 2px 5px;
-    margin-left: 3px;
-    border-radius: var(--radius-full, 9999px);
-    background: rgba(var(--surface-tint-rgb), 0.07);
-    color: var(--text-muted);
-    min-width: 14px;
-    transition: background var(--duration-fast) var(--ease-expo), color var(--duration-fast) var(--ease-expo);
+    margin-inline-start: 6px;
+    color: var(--text-secondary);
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
   }
 
-  .size-sm .tag-count-badge {
-    font-size: 10px;
-    padding: 1px 4px;
-    margin-left: 2px;
-  }
-
-  .size-lg .tag-count-badge {
-    font-size: 12px;
-    padding: 2px 6px;
-    margin-left: 4px;
-  }
-
-  .chevron-icon {
-    width: 14px;
-    height: 14px;
-  }
-
-  :global(.size-sm .chevron-icon) {
-    width: 12px;
-    height: 12px;
+  .tag-chip.is-active .tag-count-badge {
+    color: inherit;
   }
 
   .tag-more-btn {
-    cursor: pointer;
-    background: var(--bg-card, rgba(255, 255, 255, 0.05));
-    border: none;
+    justify-content: center;
+    width: var(--tag-chip-height);
+    padding: 0;
     color: var(--text-secondary);
-    font-size: 13px;
-    font-weight: 500;
-    gap: 3px;
-    box-shadow: none !important;
   }
 
-  .size-sm .tag-more-btn {
-    font-size: 12px;
-  }
-
-  .size-lg .tag-more-btn {
-    font-size: 14px;
-  }
-
-  .tag-more-btn:hover {
-    background: var(--bg-card-hover, rgba(255, 255, 255, 0.1));
-    color: var(--text-primary);
-  }
-
-  .tag-more-btn.is-fixed-right {
-    box-shadow: none !important;
+  .tag-more-btn :global(.chevron-icon) {
+    width: 18px;
+    height: 18px;
   }
 </style>

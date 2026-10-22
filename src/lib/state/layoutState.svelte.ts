@@ -22,17 +22,10 @@ export class LayoutState {
     return this.screenWidth <= 768;
   });
 
-  showStickyHeaderBg = $derived.by(() => {
-    const mode = configState.settings.layout_mode || 'auto';
-    if (mode === 'mobile') return true;
-    if (mode === 'desktop') return false;
-    return this.isMobileDevice && this.screenWidth <= 768;
-  });
-
   SIDEBAR_STORAGE_KEY = 'pawstash_sidebar_compact';
 
   isSidebarCompact = $state(
-    typeof localStorage !== 'undefined' ? localStorage.getItem('pawstash_sidebar_compact') === 'true' : false
+    typeof localStorage !== 'undefined' ? localStorage.getItem(this.SIDEBAR_STORAGE_KEY) === 'true' : false
   );
 
   toggleSidebar() {
@@ -42,14 +35,12 @@ export class LayoutState {
     }
   }
 
-  setSidebarCompact(compact: boolean) {
-    this.isSidebarCompact = compact;
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(this.SIDEBAR_STORAGE_KEY, String(this.isSidebarCompact));
-    }
-  }
+  /** What the device is, not how wide the window is: a phone in landscape still has no window frame or keyboard. */
+  hasWindowFrame = !this.isMobileDevice;
+  hasKeyboard = !this.isMobileDevice;
 
-  effectiveTitlebarStyle = $derived.by((): 'windows' | 'macos' => {
+  effectiveTitlebarStyle = $derived.by((): 'windows' | 'macos' | 'none' => {
+    if (!this.hasWindowFrame) return 'none';
     const mode = configState.settings.titlebar_style || 'auto';
     if (mode === 'macos') return 'macos';
     if (mode === 'windows') return 'windows';

@@ -138,6 +138,26 @@ export class SelectionState {
     this.selectedItems = newItems;
   }
 
+  toggleMany(scope: SelectionScope, entries: { key: string; item: any }[]) {
+    if (!entries.length) return;
+    if (!this.active || this.scope !== scope) this.enter(scope);
+    const clearing = entries.every(({ key }) => this.selectedKeys.has(key));
+    const keys = new Set(this.selectedKeys);
+    const items = new Map(this.selectedItems);
+    for (const { key, item } of entries) {
+      if (clearing) {
+        keys.delete(key);
+        items.delete(key);
+      } else {
+        keys.add(key);
+        items.set(key, item);
+      }
+    }
+    this.selectedKeys = keys;
+    this.selectedItems = items;
+    this.lastSelectedKey = clearing ? null : entries[entries.length - 1].key;
+  }
+
   selectAll(items: { key: string; item: any }[]) {
     const newKeys = new Set<string>();
     const newItems = new Map<string, any>();
@@ -150,6 +170,33 @@ export class SelectionState {
     if (items.length > 0) {
       this.lastSelectedKey = items[items.length - 1].key;
     }
+  }
+
+  paintRange(
+    base: Set<string>,
+    fromKey: string,
+    toKey: string,
+    mode: 'select' | 'deselect',
+    order: string[],
+    itemsMap: Map<string, any>
+  ) {
+    const from = order.indexOf(fromKey);
+    const to = order.indexOf(toKey);
+    if (from === -1 || to === -1) return;
+    const range = order.slice(Math.min(from, to), Math.max(from, to) + 1);
+    const keys = new Set(base);
+    const items = new Map<string, any>();
+    for (const key of range) {
+      if (mode === 'select') keys.add(key);
+      else keys.delete(key);
+    }
+    for (const key of keys) {
+      const item = this.selectedItems.get(key) ?? itemsMap.get(key);
+      if (item !== undefined) items.set(key, item);
+    }
+    this.selectedKeys = keys;
+    this.selectedItems = items;
+    this.lastSelectedKey = toKey;
   }
 
   getItems<T>(): T[] {

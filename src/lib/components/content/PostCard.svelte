@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { haptic } from '$lib/utils/haptics';
   import { onDestroy } from 'svelte';
   import type { Post } from '$lib/types/content';
   import type { LibraryCollection } from '$lib/types/library';
@@ -9,18 +10,20 @@
   import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import { accountState } from '$lib/state/accountState.svelte';
+  import { favoriteActions } from '$lib/state/favoriteActions.svelte';
+  import { contextMenuState } from '$lib/state/contextMenuState.svelte';
+  import { postMenuItems } from '$lib/utils/contextMenus';
   import { subscriptionState } from '$lib/state/subscriptionState.svelte';
   import { playbackState } from '$lib/state/playbackState.svelte';
   import { i18n } from '$lib/i18n';
   import { tooltip, ripple } from '$lib/motion';
   import { notify } from '$lib/utils/toast';
   import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
-  import { formatDate, cleanPostTitle } from '$lib/utils/formatters';
-  import { isVideoUrl, isAttachmentVideo, postMediaUrl, postThumbnailSrc, postPlaceholderUrl, getPostFileCounts, isPostUnarchived } from '$lib/utils/media';
+  import { formatDate, cleanPostTitle, decodeHtmlEntities } from '$lib/utils/formatters';
+  import { isVideoUrl, isAttachmentVideo, postMediaUrl, postThumbnailSrc, postPlaceholderUrl, getPostFileCounts, isPostUnarchived, videoPoster } from '$lib/utils/media';
   import { getMediaThumbnail, cancelMediaThumbnail } from '$lib/utils/mediaThumbnail';
   import { thumbnailKey } from '$lib/utils/cacheKey';
   import { extraField } from '$lib/utils/fields';
-  import { apiSetPostFavorite } from '$lib/utils/ipc';
   import ServiceIcon from './ServiceIcon.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import IconWarning from '~icons/fluent/warning-24-regular';
@@ -42,7 +45,7 @@
   import IconFolder from '~icons/fluent/folder-24-regular';
   import IconDelete from '~icons/fluent/delete-24-regular';
   import IconFolderDismiss from '~icons/fluent/folder-dismiss-24-regular';
-  import IconCheckmark from '~icons/fluent/checkmark-20-regular';
+  import IconCheckmark from '~icons/fluent/checkmark-20-filled';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
 
   interface Props {
@@ -226,36 +229,12 @@
   let isFavorited = $derived(accountState.isPostFavorite(post.service, post.user, post.id));
   let creatorFavorited = $derived(accountState.isCreatorFavorite(post.service, post.user));
   let creatorSubscribed = $derived(Boolean(subscriptionState.forCreator(post.service, post.user)));
-  let favoritingPending = $state(false);
   let stashMenuOpen = $state(false);
 
-  async function handleToggleFavorite(event: MouseEvent) {
+  function handleToggleFavorite(event: MouseEvent) {
     event.stopPropagation();
     event.preventDefault();
-    if (!post || favoritingPending) return;
-    favoritingPending = true;
-    const target = !isFavorited;
-
-    if (target) {
-      accountState.addPostFavoriteOptimistic(post);
-      notify.success(i18n.t('post.added_to_favorites'), { glyph: 'favorited' });
-    } else {
-      accountState.removePostFavoriteOptimistic(post.service, post.user, post.id);
-      notify.success(i18n.t('post.removed_from_favorites'), { glyph: 'unfavorited' });
-    }
-
-    try {
-      await apiSetPostFavorite(post.service, post.user, post.id, target);
-    } catch (err) {
-      if (target) {
-        accountState.removePostFavoriteOptimistic(post.service, post.user, post.id);
-      } else {
-        accountState.addPostFavoriteOptimistic(post);
-      }
-      notify.error(i18n.t('post.favorite_failed'), err);
-    } finally {
-      favoritingPending = false;
-    }
+    void favoriteActions.togglePost(post);
   }
 
   let lockedCount = $derived(Number(extraField(post, 'locked_attachments_count')) || 0);
@@ -276,15 +255,7 @@
   );
   let textExcerpt = $derived.by(() => {
     if (!textContent) return '';
-    const stripped = textContent
-      .replace(/<[^>]*>/g, ' ')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/\s+/g, ' ')
-      .trim();
+    const stripped = decodeHtmlEntities(textContent.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
     if (stripped.length > 180) {
       return stripped.slice(0, 177) + '...';
     }
@@ -293,7 +264,6 @@
   let ratio = $derived(ratios[configState.settings.grid_aspect_ratio]);
   let saved = $derived(libraryState.isSaved(post));
   let saving = $derived(libraryState.isPending(post));
-  let stashes = $derived(libraryState.allStashes);
   const stashOptions = $derived(libraryState.stashOptions);
   let postStashes = $derived(libraryState.getPostStashes(post));
   let customStashes = $derived(libraryState.getCustomPostStashes(post));
@@ -376,8 +346,10 @@
   function handleContextMenu(event: MouseEvent) {
     event.preventDefault();
     lastContextTime = Date.now();
-    try { navigator.vibrate?.(35); } catch {}
-    selectionState.toggle('posts', postKey, post, orderedKeys, false, itemsMap);
+    haptic();
+    const select = () => selectionState.toggle('posts', postKey, post, orderedKeys, false, itemsMap);
+    if (isSelectionActive) select();
+    else contextMenuState.show(event, post.title || creatorName || post.id, postMenuItems(post, select));
   }
 
   function handleSelectCheckbox(event: MouseEvent) {
@@ -460,17 +432,6 @@
       notify.error(i18n.t('library.save_error'), error);
     }
   }
-
-  function openStashInLibrary(event: MouseEvent, stashId?: string) {
-    event.stopPropagation();
-    event.preventDefault();
-    if (stashId) {
-      void libraryState.selectCollection(stashId);
-    } else {
-      void libraryState.selectCollection(null);
-    }
-    navigationState.navigateRoot('library');
-  }
 </script>
 
 <article
@@ -480,6 +441,7 @@
   style:aspect-ratio={ratio}
   style:--tile-enter-delay={enterDelay !== null ? `${enterDelay}ms` : null}
   data-post-key={postKey}
+  data-select-key={postKey}
   onmouseenter={handleCardMouseEnter}
   onmouseleave={handleCardMouseLeave}
 >
@@ -544,7 +506,7 @@
           type="button"
           class="grid-tile-action grid-tile-action-fav"
           class:favorited={isFavorited}
-          disabled={favoritingPending}
+          disabled={favoriteActions.isPostPending(post)}
           onclick={handleToggleFavorite}
           use:ripple
           use:tooltip={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
@@ -699,6 +661,7 @@
         bind:this={videoEl}
         class="grid-tile-media grid-tile-hover-video"
         src={hoverVideoUrl}
+        poster={videoPoster()}
         muted
         loop
         playsinline
@@ -729,18 +692,18 @@
   <div class="grid-tile-footer">
     <h2 class="grid-tile-title">{cleanPostTitle(effectivePost.title) || i18n.t('feed.untitled')}</h2>
 
-    <div class="grid-tile-author">
-      <button
-        type="button"
-        class="grid-tile-logo inline-logo"
-        onclick={openCreator}
-        use:tooltip={i18n.t('feed.open_creator')}
-        aria-label={`${i18n.t('feed.open_creator')}: ${post.service}`}
-      >
-        <ServiceIcon service={post.service} />
-      </button>
+    {#if showCreator}
+      <div class="grid-tile-author">
+        <button
+          type="button"
+          class="grid-tile-logo inline-logo"
+          onclick={openCreator}
+          use:tooltip={i18n.t('feed.open_creator')}
+          aria-label={`${i18n.t('feed.open_creator')}: ${post.service}`}
+        >
+          <ServiceIcon service={post.service} />
+        </button>
 
-      {#if showCreator}
         <span
           role="link"
           tabindex="0"
@@ -754,25 +717,19 @@
         {#if creatorFavorited || creatorSubscribed}
           <span class="grid-tile-author-marks">
             {#if creatorFavorited}
-              <span
-                class="grid-tile-author-mark is-favorite"
-                use:tooltip={i18n.t('feed.creator_favorited')}
-              >
+              <span class="grid-tile-author-mark is-favorite" use:tooltip={i18n.t('feed.creator_favorited')}>
                 <IconHeart />
               </span>
             {/if}
             {#if creatorSubscribed}
-              <span
-                class="grid-tile-author-mark is-subscribed"
-                use:tooltip={i18n.t('feed.creator_subscribed')}
-              >
+              <span class="grid-tile-author-mark is-subscribed" use:tooltip={i18n.t('feed.creator_subscribed')}>
                 <IconPersonSubscribed />
               </span>
             {/if}
           </span>
         {/if}
-      {/if}
-    </div>
+      </div>
+    {/if}
 
     <div class="grid-tile-meta">
       <span>{formatDate(post.published || post.added)}</span>
@@ -804,13 +761,6 @@
 
   :global(.card-stash-select .select-custom-trigger) {
     min-width: 0;
-  }
-
-  :global(.grid-tile-blur-placeholder) {
-    filter: blur(12px);
-    transform: scale(1.1);
-    opacity: 0.85;
-    transition: opacity 0.3s ease-out;
   }
 
   .grid-tile-placeholder-text {

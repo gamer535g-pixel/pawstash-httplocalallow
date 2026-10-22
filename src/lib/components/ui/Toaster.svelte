@@ -10,7 +10,7 @@
   const position = $derived.by((): Position => {
     const configured = configState.settings.toast_position || 'auto';
     if (configured === 'auto') {
-      return layoutState.isMobile ? 'top-center' : 'bottom-right';
+      return layoutState.isMobile ? 'bottom-center' : 'bottom-right';
     }
     return configured as Position;
   });
@@ -18,4 +18,4 @@
   const theme = $derived(themeState.isDark ? 'dark' : 'light');
 </script>
 
-<SonnerToaster {position} {theme} />
+<SonnerToaster {position} {theme} expand gap={8} />

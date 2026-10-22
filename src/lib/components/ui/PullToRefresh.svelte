@@ -1,9 +1,9 @@
 <script lang="ts">
+  import { haptic } from '$lib/utils/haptics';
   import { onMount } from 'svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { logger } from '$lib/utils/logger';
-  import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
-  import IconLoading from '~icons/svg-spinners/3-dots-fade';
+  import ProgressRing from '$lib/components/ui/ProgressRing.svelte';
 
   interface Props {
     onrefresh?: () => Promise<void> | void;
@@ -90,9 +90,7 @@
 
       if (pullDistance >= THRESHOLD && !thresholdPassed) {
         thresholdPassed = true;
-        if (typeof navigator !== 'undefined' && navigator.vibrate) {
-          try { navigator.vibrate(10); } catch {}
-        }
+        haptic(10);
       } else if (pullDistance < THRESHOLD && thresholdPassed) {
         thresholdPassed = false;
       }
@@ -101,6 +99,16 @@
         e.preventDefault();
       }
     }
+  }
+
+  function settle() {
+    pulling = false;
+    exiting = true;
+    pullDistance = 0;
+    setTimeout(() => {
+      exiting = false;
+      thresholdPassed = false;
+    }, 250);
   }
 
   async function handleTouchEnd() {
@@ -118,23 +126,13 @@
         logger.warn('Pull-to-refresh action failed', err);
       } finally {
         refreshing = false;
-        exiting = true;
-        pullDistance = 0;
-        setTimeout(() => {
-          exiting = false;
-          thresholdPassed = false;
-        }, 250);
+        settle();
       }
     } else {
-      pulling = false;
-      exiting = true;
-      pullDistance = 0;
-      setTimeout(() => {
-        exiting = false;
-        thresholdPassed = false;
-      }, 250);
+      settle();
     }
   }
+
   onMount(() => {
     window.addEventListener('touchstart', handleTouchStart, { passive: true });
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
@@ -161,17 +159,8 @@
     style:--ptr-progress={pullProgress}
     aria-hidden="true"
   >
-    <div class="ptr-badge">
-      {#if refreshing}
-        <IconLoading class="ptr-icon text-ink" />
-      {:else}
-        <span
-          class="ptr-icon-wrap"
-          style:transform={`rotate(${pullProgress * 300}deg) scale(${0.8 + pullProgress * 0.2})`}
-        >
-          <IconArrowClockwise class="ptr-icon text-ink" />
-        </span>
-      {/if}
+    <div class="ptr-disc" style:transform={refreshing ? undefined : `rotate(${pullProgress * 270}deg)`}>
+      <ProgressRing value={refreshing ? null : pullProgress * 0.8} size={24} stroke={2.5} />
     </div>
   </div>
 {/if}
@@ -179,65 +168,56 @@
 <style>
   .ptr-indicator-wrapper {
     position: absolute;
-    top: calc(var(--mobile-status-bar-height, 0px) + 8px);
+    top: calc(var(--page-bar-space, var(--mobile-status-bar-height, 0px)) + 8px);
     left: 50%;
-    transform: translate(-50%, var(--ptr-offset, 0px));
     z-index: 1000;
-    pointer-events: none;
     display: flex;
     align-items: center;
     justify-content: center;
     opacity: var(--ptr-progress, 0);
-    transition: transform 250ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease;
+    transform: translate(-50%, var(--ptr-offset, 0px));
+    pointer-events: none;
+    transition: transform var(--duration-normal) var(--ease-standard),
+                opacity var(--duration-fast) var(--ease-standard);
     will-change: transform, opacity;
   }
 
-  .ptr-indicator-wrapper.pulling,
-  .ptr-indicator-wrapper.pulling .ptr-icon-wrap {
+  .ptr-indicator-wrapper.pulling {
     transition: none;
   }
 
   .ptr-indicator-wrapper.refreshing {
     opacity: 1;
-    transform: translate(-50%, var(--ptr-offset, 58px));
   }
 
   .ptr-indicator-wrapper.exiting {
     opacity: 0;
-    transform: translate(-50%, 0px);
+    transform: translate(-50%, 0) scale(0.6);
   }
 
-  .ptr-badge {
-    width: 52px;
-    height: 52px;
-    border-radius: 50%;
-    background: rgba(16, 18, 24, 0.94);
-    backdrop-filter: blur(28px) saturate(200%);
-    -webkit-backdrop-filter: blur(28px) saturate(200%);
-    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.75);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-primary);
-    transition: box-shadow 180ms ease, transform 180ms ease;
+  .ptr-disc {
+    position: relative;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-full);
+    background: var(--floating-bg);
+    box-shadow: var(--floating-shadow);
+    transition: transform var(--duration-fast) var(--ease-standard);
   }
 
-  .ptr-indicator-wrapper.ready .ptr-badge {
-    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.85), 0 0 24px var(--accent-glow, rgba(168, 85, 247, 0.5));
-    transform: scale(1.08);
+  .ptr-indicator-wrapper.pulling .ptr-disc {
+    transition: none;
   }
 
-  .ptr-icon-wrap {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    will-change: transform;
-    transition: transform 120ms linear;
+  .ptr-disc :global(.ring-track) {
+    stroke: transparent;
   }
 
-  :global(.ptr-icon) {
-    width: 26px !important;
-    height: 26px !important;
-    color: var(--text-primary) !important;
+  .ptr-disc :global(.ring-value) {
+    transition: none;
+  }
+
+  .ptr-indicator-wrapper:not(.ready):not(.refreshing) .ptr-disc :global(.ring-value) {
+    opacity: 0.6;
   }
 </style>

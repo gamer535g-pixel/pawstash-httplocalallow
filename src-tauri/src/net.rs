@@ -217,6 +217,17 @@ pub fn provider_deadline() -> Duration {
     defaults().provider_deadline
 }
 
+/// The error and every cause under it: reqwest's own message is only "error sending request".
+pub fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut details = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        details.push_str(&format!(" -> {cause}"));
+        source = cause.source();
+    }
+    details
+}
+
 pub fn builder() -> reqwest::ClientBuilder {
     let defaults = defaults();
     reqwest::Client::builder()

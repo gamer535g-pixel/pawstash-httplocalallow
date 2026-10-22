@@ -8,7 +8,9 @@ pub fn absolute_local_media_url(url: String, port: u16, token: &str) -> Result<S
         return Err("Local media server is not running yet; cannot fetch proxied media".into());
     }
     let separator = if url.contains('?') { '&' } else { '?' };
-    Ok(format!("http://127.0.0.1:{port}{url}{separator}token={token}"))
+    Ok(format!(
+        "http://127.0.0.1:{port}{url}{separator}token={token}"
+    ))
 }
 
 #[cfg(test)]

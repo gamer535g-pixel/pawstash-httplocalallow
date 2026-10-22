@@ -86,6 +86,14 @@ export class LibraryState {
       : null;
   }
 
+  get savedCount() {
+    return this.savedKeys.size;
+  }
+
+  get stashCount() {
+    return this.collections.filter((collection) => collection.kind === 'stash').length;
+  }
+
   isSaved(post: Pick<Post, 'service' | 'user' | 'id'>) {
     return this.savedKeys.has(libraryPostKey(post));
   }

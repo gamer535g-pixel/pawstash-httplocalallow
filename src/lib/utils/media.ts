@@ -7,10 +7,27 @@ import { apiProbeDownloadSize } from '$lib/utils/ipc';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { serverPortState } from '$lib/state/serverPort.svelte';
 import { configState } from '$lib/state/configState.svelte';
+import { layoutState } from '$lib/state/layoutState.svelte';
+
+// Android WebView 155 pins a request thread forever for each <video> without a poster; ~6 of them stall every request.
+const BLANK_POSTER = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+
+export function videoPoster(poster?: string | null): string | undefined {
+  return poster || (layoutState.isAndroid ? BLANK_POSTER : undefined);
+}
 
 export function formatProviderName(name?: string): string {
   if (!name) return '';
   return name.replace(/\s*\([^)]*\)/g, '').trim();
+}
+
+export function formatServiceName(service: string): string {
+  return service ? service.charAt(0).toUpperCase() + service.slice(1) : '';
+}
+
+export function parentFolder(path: string): string {
+  const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  return slash > 0 ? path.slice(0, slash) : path;
 }
 
 export function cleanMediaPath(rawPath: string): string {

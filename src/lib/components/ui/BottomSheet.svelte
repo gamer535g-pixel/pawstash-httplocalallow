@@ -1,16 +1,16 @@
 <script lang="ts">
-  import { onDestroy, type Snippet } from 'svelte';
+  import { onDestroy, untrack, type Snippet } from 'svelte';
+  import { navigationState } from '$lib/state/navigationState.svelte';
   import { portal } from '$lib/actions/portal';
   import { scrollable } from '$lib/actions/scrollable';
   import { dialogFocus } from '$lib/actions/dialogFocus';
-  import Button from '$lib/components/ui/Button.svelte';
+  import { i18n } from '$lib/i18n';
 
   interface Props {
     isOpen?: boolean;
-    open?: boolean;
     title: string;
+    description?: string;
     closeLabel?: string;
-    actionLabel?: string;
     flush?: boolean;
     scrollable?: boolean;
     tall?: boolean;
@@ -22,10 +22,9 @@
 
   let {
     isOpen = false,
-    open = false,
     title,
-    closeLabel = '',
-    actionLabel = closeLabel,
+    description,
+    closeLabel,
     flush = false,
     scrollable: isScrollable = true,
     tall = false,
@@ -35,7 +34,6 @@
     floating
   }: Props = $props();
 
-  const isVisible = $derived(isOpen || open);
 
   const DISMISS_DISTANCE_RATIO = 0.25;
   const DISMISS_FLICK_DISTANCE_RATIO = 0.12;
@@ -55,6 +53,22 @@
   let isDragging = $state(false);
   let isClosing = $state(false);
   let isScrolled = $state(false);
+  let hasMoreBelow = $state(false);
+  let bodyViewport: HTMLElement | null = null;
+  let contentEl = $state<HTMLElement | null>(null);
+
+  function measureEdges() {
+    if (!bodyViewport) return;
+    isScrolled = bodyViewport.scrollTop > 2;
+    hasMoreBelow = bodyViewport.scrollHeight - bodyViewport.scrollTop - bodyViewport.clientHeight > 2;
+  }
+
+  $effect(() => {
+    if (!contentEl) return;
+    const observer = new ResizeObserver(measureEdges);
+    observer.observe(contentEl);
+    return () => observer.disconnect();
+  });
   let closeTimer: ReturnType<typeof setTimeout> | null = null;
 
   onDestroy(() => {
@@ -68,6 +82,20 @@
     const panelHeight = panel?.clientHeight ?? 1;
     return Math.min(dragOffset / panelHeight, 1);
   });
+
+  $effect(() => {
+    if (!isOpen) return;
+    return untrack(() =>
+      navigationState.registerBackHandler(() => {
+        requestClose();
+        return true;
+      })
+    );
+  });
+
+  export function close() {
+    requestClose();
+  }
 
   function requestClose() {
     if (isClosing) return;
@@ -171,7 +199,7 @@
   }
 
   $effect(() => {
-    if (!isVisible) return;
+    if (!isOpen) return;
 
     isEntering = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     dragOffset = 0;
@@ -180,7 +208,7 @@
   });
 </script>
 
-{#if isVisible}
+{#if isOpen}
   <div
     use:portal={'body'}
     class="bottom-sheet"
@@ -194,7 +222,7 @@
       type="button"
       class="bottom-sheet__backdrop"
       tabindex="-1"
-      aria-label={closeLabel}
+      aria-label={closeLabel ?? i18n.t('common.close')}
       onclick={requestClose}
     ></button>
 
@@ -202,21 +230,6 @@
       class="bottom-sheet__assembly"
       onanimationend={handleAssemblyAnimationEnd}
     >
-      <button
-        bind:this={dragZone}
-        type="button"
-        class="bottom-sheet__drag-zone"
-        tabindex="-1"
-        aria-hidden="true"
-        onpointerdown={handlePointerDown}
-        onpointermove={handlePointerMove}
-        onpointerup={(event) => finishPointer(event)}
-        onpointercancel={(event) => finishPointer(event, true)}
-        onlostpointercapture={handleLostPointerCapture}
-      >
-        <span class="bottom-sheet__handle" aria-hidden="true"></span>
-      </button>
-
       <div
         bind:this={panel}
         class="bottom-sheet__panel"
@@ -226,8 +239,26 @@
         tabindex="-1"
         use:dialogFocus={{ onEscape: requestClose }}
       >
-        <header class="bottom-sheet__header" class:is-scrolled={isScrolled}>
+        <button
+          bind:this={dragZone}
+          type="button"
+          class="bottom-sheet__drag-zone"
+          tabindex="-1"
+          aria-hidden="true"
+          onpointerdown={handlePointerDown}
+          onpointermove={handlePointerMove}
+          onpointerup={(event) => finishPointer(event)}
+          onpointercancel={(event) => finishPointer(event, true)}
+          onlostpointercapture={handleLostPointerCapture}
+        >
+          <span class="bottom-sheet__handle" aria-hidden="true"></span>
+        </button>
+
+        <header class="bottom-sheet__header">
           <h2 class="bottom-sheet__title">{title}</h2>
+          {#if description}
+            <p class="bottom-sheet__description">{description}</p>
+          {/if}
         </header>
 
         {#if children}
@@ -235,14 +266,14 @@
             <div
               class="bottom-sheet__body"
               class:is-scrolled={isScrolled}
+              class:has-more={hasMoreBelow}
               use:scrollable={{
                 overflowX: 'hidden',
-                onScroll: (top) => {
-                  isScrolled = top > 2;
-                }
+                onReady: (viewport) => (bodyViewport = viewport),
+                onScroll: measureEdges
               }}
             >
-              <div class="bottom-sheet__content" class:is-flush={flush}>
+              <div class="bottom-sheet__content" class:is-flush={flush} bind:this={contentEl}>
                 {@render children()}
               </div>
             </div>
@@ -258,12 +289,6 @@
         {#if footer}
           <footer class="bottom-sheet__footer">
             {@render footer()}
-          </footer>
-        {:else if actionLabel || closeLabel}
-          <footer class="bottom-sheet__footer">
-            <Button class="bottom-sheet__close" variant="primary" size="md" onclick={requestClose}>
-              {actionLabel || closeLabel}
-            </Button>
           </footer>
         {/if}
 
@@ -347,12 +372,10 @@
     flex: 0 1 auto;
     flex-direction: column;
     color: var(--text-primary);
+    padding-bottom: max(var(--bottom-sheet-gap), var(--safe-bottom));
     background: var(--bottom-sheet-surface);
     border: 0;
-    border-radius:
-      calc(var(--bottom-sheet-radius) * var(--ui-scale, 1))
-      calc(var(--bottom-sheet-radius) * var(--ui-scale, 1))
-      0 0;
+    border-radius: var(--bottom-sheet-radius) var(--bottom-sheet-radius) 0 0;
     box-shadow: var(--bottom-sheet-shadow);
     box-sizing: border-box;
     overflow: hidden;
@@ -361,7 +384,9 @@
   .bottom-sheet__drag-zone {
     position: relative;
     flex: none;
-    min-height: calc(var(--bottom-sheet-drag-target-height) * var(--ui-scale, 1));
+    display: grid;
+    place-items: center;
+    height: var(--bottom-sheet-handle-zone);
     padding: 0;
     border: 0;
     background: transparent;
@@ -375,14 +400,10 @@
   }
 
   .bottom-sheet__handle {
-    position: absolute;
-    bottom: calc(var(--space-2) * var(--ui-scale, 1));
-    left: 50%;
-    width: calc(var(--bottom-sheet-handle-width) * var(--ui-scale, 1));
-    height: calc(var(--bottom-sheet-handle-height) * var(--ui-scale, 1));
+    width: var(--bottom-sheet-handle-width);
+    height: var(--bottom-sheet-handle-height);
     border-radius: var(--radius-full);
     background: var(--bottom-sheet-handle-color);
-    transform: translateX(-50%);
   }
 
   .bottom-sheet.is-tall .bottom-sheet__assembly {
@@ -399,39 +420,26 @@
     min-height: 0;
     max-width: 100%;
     flex: 1 1 auto;
-    -webkit-mask-image: linear-gradient(
-      to bottom,
-      black 0px,
-      black calc(100% - 24px),
-      transparent 100%
-    );
-    mask-image: linear-gradient(
-      to bottom,
-      black 0px,
-      black calc(100% - 24px),
-      transparent 100%
-    );
+    --fade-top: 0px;
+    --fade-bottom: 0px;
   }
 
   .bottom-sheet__body.is-scrolled {
-    -webkit-mask-image: linear-gradient(
-      to bottom,
-      transparent 0px,
-      black 24px,
-      black calc(100% - 24px),
-      transparent 100%
-    );
-    mask-image: linear-gradient(
-      to bottom,
-      transparent 0px,
-      black 24px,
-      black calc(100% - 24px),
-      transparent 100%
-    );
+    --fade-top: 24px;
   }
 
-  :global(html.webkitgtk) .bottom-sheet__body,
-  :global(html.webkitgtk) .bottom-sheet__body.is-scrolled {
+  .bottom-sheet__body.has-more {
+    --fade-bottom: 24px;
+  }
+
+  .bottom-sheet__body.is-scrolled,
+  .bottom-sheet__body.has-more {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, black var(--fade-top), black calc(100% - var(--fade-bottom)), transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0, black var(--fade-top), black calc(100% - var(--fade-bottom)), transparent 100%);
+  }
+
+  :global(html.webkitgtk) .bottom-sheet__body.is-scrolled,
+  :global(html.webkitgtk) .bottom-sheet__body.has-more {
     -webkit-mask-image: none;
     mask-image: none;
   }
@@ -443,29 +451,32 @@
   }
 
   .bottom-sheet__header {
-    flex: none;
-    padding:
-      calc(var(--bottom-sheet-padding-top) * var(--ui-scale, 1))
-      calc(var(--bottom-sheet-padding-x) * var(--ui-scale, 1))
-      calc(10px * var(--ui-scale, 1));
-    z-index: 2;
     position: relative;
+    z-index: 2;
+    flex: none;
+    padding: 0 var(--bottom-sheet-inset) var(--bottom-sheet-gap);
   }
 
   .bottom-sheet__title {
     margin: 0;
     color: var(--text-primary);
     font-family: var(--font-display);
-    font-size: calc(var(--text-base) * var(--ui-scale, 1));
-    font-weight: var(--font-weight-semibold);
-    line-height: var(--leading-tight);
+    font-size: var(--modal-title-size);
+    line-height: var(--type-title-lg-line);
+    font-weight: 400;
     overflow-wrap: anywhere;
   }
 
+  .bottom-sheet__description {
+    margin: 4px 0 0;
+    color: var(--text-secondary);
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-line);
+  }
+
   .bottom-sheet__content {
-    padding:
-      calc(var(--bottom-sheet-title-content-gap) * var(--ui-scale, 1))
-      calc(var(--bottom-sheet-padding-x) * var(--ui-scale, 1));
+    --menu-inset: 0px;
+    padding: 0 var(--bottom-sheet-inset) 8px;
     box-sizing: border-box;
   }
 
@@ -483,17 +494,7 @@
 
   .bottom-sheet__footer {
     flex: none;
-    padding:
-      calc(var(--bottom-sheet-content-action-gap) * var(--ui-scale, 1))
-      calc(var(--bottom-sheet-padding-x) * var(--ui-scale, 1))
-      max(
-        calc(var(--bottom-sheet-padding-bottom) * var(--ui-scale, 1)),
-        var(--safe-bottom)
-      );
-  }
-
-  .bottom-sheet__footer :global(.bottom-sheet__close) {
-    width: 100%;
+    padding: var(--bottom-sheet-gap) var(--bottom-sheet-inset) 0;
   }
 
   @keyframes bottom-sheet-in {

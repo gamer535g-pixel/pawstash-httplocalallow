@@ -400,15 +400,7 @@ impl NativeDownloader {
             .headers(headers)
             .send()
             .await
-            .map_err(|error| {
-                let mut details = error.to_string();
-                let mut source = std::error::Error::source(&error);
-                while let Some(s) = source {
-                    details.push_str(&format!(" -> {s}"));
-                    source = s.source();
-                }
-                DownloadRunError::Failed(details)
-            })
+            .map_err(|error| DownloadRunError::Failed(crate::net::error_chain(&error)))
     }
 
     fn headers(task: &DownloadTask, range: Option<&str>) -> Result<HeaderMap, DownloadRunError> {

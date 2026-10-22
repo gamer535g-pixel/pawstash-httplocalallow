@@ -1,21 +1,19 @@
 <script lang="ts">
-  import { onMount, getContext, tick } from 'svelte';
+  import { onMount } from 'svelte';
   import { feedState, type FeedMode, type PopularPeriod } from '$lib/state/feedState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
-  import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
   import { i18n } from '$lib/i18n';
   import { accountState } from '$lib/state/accountState.svelte';
   import PageShell from '$lib/components/layout/PageShell.svelte';
-  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import HeaderActions from '$lib/components/layout/HeaderActions.svelte';
-  import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
+  import GettingStartedCard from './GettingStartedCard.svelte';
   import PostGrid from './PostGrid.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import Input from '$lib/components/ui/Input.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
-  import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
+  import type { MenuItem } from '$lib/components/layout/OverflowMenu.svelte';
+  import ChipSelect from '$lib/components/layout/ChipSelect.svelte';
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
   import ServiceIcon from './ServiceIcon.svelte';
   import { ripple } from '$lib/motion';
@@ -23,15 +21,12 @@
   import { libraryState } from '$lib/state/libraryState.svelte';
   import { downloadState } from '$lib/state/downloadState.svelte';
   import { providerState } from '$lib/state/providerState.svelte';
-  import { getPostDownloadTargets, formatProviderName } from '$lib/utils/media';
+  import { formatProviderName } from '$lib/utils/media';
   import { apiSetPostFavorite } from '$lib/utils/ipc';
-  import { layoutState } from '$lib/state/layoutState.svelte';
   import { notify } from '$lib/utils/toast';
   import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
   import type { Post } from '$lib/types/content';
-  import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
-  import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import IconOptions from '~icons/fluent/options-24-regular';
   import IconCalendar from '~icons/fluent/calendar-ltr-24-regular';
   import IconCheckboxChecked from '~icons/fluent/checkbox-checked-24-regular';
@@ -42,7 +37,6 @@
   import IconMusic from '~icons/fluent/music-note-2-24-regular';
   import IconText from '~icons/fluent/document-text-24-regular';
   import IconDocument from '~icons/fluent/document-24-regular';
-  import IconStar from '~icons/fluent/star-24-filled';
   import IconImage from '~icons/fluent/image-24-regular';
   import IconFolder from '~icons/fluent/folder-24-regular';
   import IconArrowDownload from '~icons/fluent/arrow-download-24-regular';
@@ -51,10 +45,25 @@
   import { configState } from '$lib/state/configState.svelte';
   import IconSparkle from '~icons/fluent/sparkle-24-regular';
   import IconHeartFilled from '~icons/fluent/heart-24-filled';
-  import IconMoreVertical from '~icons/fluent/more-vertical-24-regular';
-  import IconChevronDown from '~icons/fluent/chevron-down-20-regular';
 
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'posts');
+
+  let pageMenu = $derived<MenuItem[]>([
+    {
+      group: 'page',
+      label: i18n.t(isSelectionActive ? 'selection.exit' : 'selection.select_mode'),
+      icon: IconCheckboxChecked,
+      active: isSelectionActive,
+      onclick: () => (isSelectionActive ? selectionState.exit() : selectionState.enter('posts'))
+    },
+    {
+      group: 'page',
+      label: i18n.t('common.refresh'),
+      icon: IconArrowClockwise,
+      disabled: feedState.isLoading,
+      onclick: () => void feedState.refresh()
+    }
+  ]);
   let selectedPosts = $derived(isSelectionActive ? selectionState.getItems<Post>() : []);
   const stashOptions = $derived(libraryState.stashOptions);
 
@@ -156,10 +165,6 @@
   import { countActiveFilters, toggleFilterKey } from '$lib/types/filter';
 
   let filtersOpen = $state(false);
-  let stickyFiltersOpen = $state(false);
-  let mobileMoreOpen = $state(false);
-
-
 
   let services = $derived([...new Set(feedState.posts.map((post) => post.service))].sort());
   let activeFilterCount = $derived(
@@ -203,7 +208,6 @@
   }
 
   let searchOpen = $state(savedState?.searchOpen ?? Boolean(feedState.searchQuery));
-  const scrollContext = getContext<ScrollableContext | undefined>(SCROLLABLE_CONTEXT);
 
   $effect(() => {
     navigationState.saveViewState(navigationState.entryKey, {
@@ -319,12 +323,6 @@
     return `custom:${period}`;
   }
 
-  let currentPeriodLabel = $derived.by(() => {
-    const curVal = getSelectedOptionValue();
-    const opt = popularSelectOptions.find((o) => o.value === curVal);
-    return opt?.label ?? i18n.t('feed.today');
-  });
-
   let feedModeOptions = $derived.by<ChoiceOption<FeedMode>[]>(() => {
     const caps = activePopularCaps;
     const options: ChoiceOption<FeedMode>[] = [
@@ -411,28 +409,9 @@
     }
   }
 
-  $effect(() => {
-    if (searchOpen) {
-      const el = document.querySelector('.search-input-wrapper input') as HTMLInputElement | null;
-      if (el) {
-        el.focus();
-      }
-    }
-  });
-
-  function resetFilters() {
-    feedState.serviceFilters = {};
-    feedState.formatFilters = {};
-    feedState.onlyWithAttachments = false;
-    feedState.favoritesOnly = false;
-    feedState.setAiFilter('neutral');
-  }
-
   function toggleFormat(fmtId: string) {
     if (fmtId === 'ai') {
-      const cur = feedState.aiFilter;
-      const next = cur === 'neutral' ? 'include' : cur === 'include' ? 'exclude' : 'neutral';
-      feedState.setAiFilter(next);
+      feedState.setAiFilter(feedState.aiFilter === 'exclude' ? 'neutral' : 'exclude');
       return;
     }
     feedState.formatFilters = toggleFilterKey(feedState.formatFilters, fmtId);
@@ -445,7 +424,7 @@
     { id: 'text', label: () => i18n.t('feed.format_text'), icon: IconText },
     { id: 'archive', label: () => i18n.t('feed.format_archive'), icon: IconDocument },
     { id: 'wip', label: () => i18n.t('feed.format_wip'), icon: IconDraft },
-    ...(!configState.settings.pawchive_hide_ai ? [{ id: 'ai', label: () => i18n.t('feed.format_ai'), icon: IconSparkle, isAi: true }] : [])
+    ...(!configState.settings.pawchive_hide_ai ? [{ id: 'ai', label: () => i18n.t('feed.hide_ai'), icon: IconSparkle }] : [])
   ]);
 
   function toggleProvider(providerId: string) {
@@ -528,13 +507,14 @@
   </div>
   <div class="service-options">
     {#each formatList as fmt}
-      {@const state = (fmt as any).isAi ? feedState.aiFilter : (feedState.formatFilters[fmt.id] ?? 'neutral')}
+      {@const isAi = fmt.id === 'ai'}
+      {@const state = isAi ? (feedState.aiFilter === 'exclude' ? 'on' : 'neutral') : (feedState.formatFilters[fmt.id] ?? 'neutral')}
       {@const IconComponent = fmt.icon}
       <Button
         variant="ghost"
         size="sm"
         onclick={() => toggleFormat(fmt.id)}
-        class="filter-chip {state === 'include' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
+        class="filter-chip {state === 'include' || state === 'on' ? 'state-include' : state === 'exclude' ? 'state-exclude' : ''}"
       >
         <IconComponent class="w-5 h-5" />
         <span>{fmt.label()}</span>
@@ -567,7 +547,6 @@
         }
       }}
     >
-      <IconDocument class="view-option-icon" />
       <span>
         <strong>{i18n.t('feed.with_attachments')}</strong>
         <small>{i18n.t('feed.with_attachments_desc')}</small>
@@ -594,7 +573,6 @@
         }
       }}
     >
-      <IconStar class="view-option-icon text-amber-500" />
       <span>
         <strong>{i18n.t('feed.favorite_creators_only')}</strong>
         <small>{i18n.t('feed.favorite_creators_desc')}</small>
@@ -608,28 +586,16 @@
   </div>
 {/snippet}
 
-{#snippet feedFilter(sticky = false)}
-  {#if sticky}
-    <PopoverMenu
-      bind:open={stickyFiltersOpen}
-      title={i18n.t('feed.filters')}
-      badge={activeFilterCount}
-      active={activeFilterCount > 0}
-      icon={IconOptions}
-    >
-      {@render filterInnerContent()}
-    </PopoverMenu>
-  {:else}
-    <PopoverMenu
-      bind:open={filtersOpen}
-      title={i18n.t('feed.filters')}
-      badge={activeFilterCount}
-      active={activeFilterCount > 0}
-      icon={IconOptions}
-    >
-      {@render filterInnerContent()}
-    </PopoverMenu>
-  {/if}
+{#snippet feedFilter()}
+  <PopoverMenu
+    bind:open={filtersOpen}
+    title={i18n.t('feed.filters')}
+    badge={activeFilterCount}
+    active={activeFilterCount > 0}
+    icon={IconOptions}
+  >
+    {@render filterInnerContent()}
+  </PopoverMenu>
 {/snippet}
 
 {#snippet feedTabs()}
@@ -644,90 +610,36 @@
 
 {#snippet popularFilter()}
   {#if feedState.mode === 'popular' && popularSelectOptions.length > 0}
-    <Select
+    <ChipSelect
       options={popularSelectOptions}
       value={getSelectedOptionValue()}
       onchange={handlePeriodChange}
-      class="popular-period-select"
       icon={IconCalendar}
-      iconOnly={true}
-      ariaLabel={`${i18n.t('feed.popular_period')}: ${currentPeriodLabel}`}
-      align="right"
+      label={i18n.t('feed.popular_period')}
     />
   {/if}
 {/snippet}
 
-{#snippet actionsCluster(sticky = false)}
+{#snippet search()}
   <HeaderActions
+    pinOpen
     bind:searchOpen
     bind:searchQuery={feedState.searchQuery}
     searchPlaceholder={i18n.t('feed.search_placeholder')}
-  >
-    {#if !layoutState.isMobile}
-      <Button
-        variant={isSelectionActive ? 'accent' : 'ghost'}
-        class="btn-icon"
-        onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('posts'))}
-        title={i18n.t('selection.select_mode')}
-        aria-label={i18n.t('selection.select_mode')}
-      >
-        <IconCheckboxChecked class="w-5 h-5" />
-      </Button>
-
-      <Button
-        variant="ghost"
-        class="btn-icon"
-        disabled={feedState.isLoading}
-        aria-label={i18n.t('feed.refresh')}
-        title={i18n.t('feed.refresh')}
-        onclick={() => void feedState.refresh()}
-      >
-        {#if feedState.isLoading}<IconLoading class="w-5 h-5" />{:else}<IconArrowClockwise class="w-5 h-5" />{/if}
-      </Button>
-
-      {@render feedFilter(sticky)}
-    {:else}
-      {@render feedFilter(sticky)}
-
-      <Button
-        variant="ghost"
-        class="btn-icon"
-        onclick={() => (mobileMoreOpen = true)}
-        title={i18n.t('common.more')}
-        aria-label={i18n.t('common.more')}
-      >
-        <IconMoreVertical class="w-5 h-5" />
-      </Button>
-    {/if}
-  </HeaderActions>
+  />
 {/snippet}
 
-<PageShell scrollable={true} scrollKey={navigationState.entryKey} onrefresh={() => feedState.refresh()}>
-  {#snippet overlay()}
-    <StickyHeader threshold={120}>
-      {#snippet center()}
-        <div class="feed-tabs-cluster flex items-center min-w-0" class:popular-active={feedState.mode === 'popular'}>
-          {@render feedTabs()}
-          {@render popularFilter()}
-        </div>
-      {/snippet}
-      {#snippet trailing()}
-        {@render actionsCluster(true)}
-      {/snippet}
-    </StickyHeader>
+<PageShell title={i18n.t('nav.feed')} menu={pageMenu} scrollKey={navigationState.entryKey} onrefresh={() => feedState.refresh()}
+  selectionTotal={feedState.filteredPosts.length}
+  onSelectAll={handleSelectAllPosts}
+  {selectionActions}
+>
+  {#snippet views()}
+    {@render feedTabs()}
+    {@render popularFilter()}
   {/snippet}
-
-  <PageHeader>
-    {#snippet tabs()}
-      <div class="feed-tabs-cluster flex items-center min-w-0" class:popular-active={feedState.mode === 'popular'}>
-        {@render feedTabs()}
-        {@render popularFilter()}
-      </div>
-    {/snippet}
-    {#snippet actions()}
-      {@render actionsCluster(false)}
-    {/snippet}
-  </PageHeader>
+  {#snippet filter()}{@render feedFilter()}{/snippet}
+  {#snippet actions()}{@render search()}{/snippet}
 
   {#if feedState.error && feedState.posts.length === 0}
     <div class="min-h-80 flex flex-col items-center justify-center gap-4 text-center">
@@ -740,6 +652,9 @@
       </Button>
     </div>
   {:else}
+    {#if !feedState.isSearchActive}
+      <GettingStartedCard />
+    {/if}
     <PostGrid
       posts={feedState.filteredPosts}
       loading={feedState.isLoading}
@@ -756,10 +671,7 @@
   {/if}
 </PageShell>
 
-<SelectionActionBar
-  totalCount={feedState.filteredPosts.length}
-  onSelectAll={handleSelectAllPosts}
->
+{#snippet selectionActions()}
   <Select
     options={stashOptions}
     selectedValues={batchSelectedStashes}
@@ -767,47 +679,42 @@
     onchange={handleBatchToggleStash}
     createLabel={i18n.t('library.new_stash')}
     onCreate={handleBatchCreateAndAddToStash}
-    variant={batchSelectedStashes.length > 0 ? 'accent' : 'ghost'}
+    variant="ghost"
     multi={true}
     closeOnChange={false}
     icon={IconFolder}
-    class="selection-stash-select"
+    iconOnly={true}
+    ariaLabel={i18n.t('library.add_to_stash')}
     align="right"
   />
 
   <Button
     variant="ghost"
-    size="sm"
-    class="selection-btn"
+    class="btn-icon"
     onclick={batchSaveToLibrary}
     title={i18n.t('selection.save_to_library')}
   >
-    <IconBookmarkAdd class="w-[16px] h-[16px]" />
-    <span>{i18n.t('selection.save_to_library')}</span>
+    <IconBookmarkAdd />
   </Button>
 
   <Button
     variant="ghost"
-    size="sm"
-    class="selection-btn"
+    class="btn-icon"
     onclick={batchDownloadPosts}
     title={i18n.t('selection.download_all')}
   >
-    <IconArrowDownload class="w-[16px] h-[16px]" />
-    <span>{i18n.t('selection.download_all')}</span>
+    <IconArrowDownload />
   </Button>
 
   <Button
     variant="ghost"
-    size="sm"
-    class="selection-btn"
+    class="btn-icon"
     onclick={() => void batchFavoritePosts(true)}
     title={i18n.t('selection.favorite')}
   >
-    <IconHeartFilled class="w-[16px] h-[16px] text-accent" />
-    <span>{i18n.t('selection.favorite')}</span>
+    <IconHeartFilled class="text-accent" />
   </Button>
-</SelectionActionBar>
+{/snippet}
 
 <input
   bind:this={customDateInput}
@@ -822,124 +729,9 @@
   onchange={handleCustomMonthChange}
 />
 
-{#if layoutState.isMobile}
-  <BottomSheet
-    open={mobileMoreOpen}
-    title={i18n.t('common.more')}
-    onclose={() => (mobileMoreOpen = false)}
-  >
-    <div class="flex flex-col gap-1 py-1">
-      <button
-        type="button"
-        class="sheet-action-item"
-        use:ripple
-        onclick={() => {
-          mobileMoreOpen = false;
-          if (isSelectionActive) {
-            selectionState.exit();
-          } else {
-            selectionState.enter('posts');
-          }
-        }}
-      >
-        <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
-        <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{isSelectionActive ? i18n.t('selection.exit') : i18n.t('selection.select_mode')}</span>
-        </div>
-      </button>
-
-      <button
-        type="button"
-        class="sheet-action-item"
-        disabled={feedState.isLoading}
-        use:ripple
-        onclick={() => {
-          mobileMoreOpen = false;
-          void feedState.refresh();
-        }}
-      >
-        {#if feedState.isLoading}
-          <IconLoading class="text-accent" />
-        {:else}
-          <IconArrowClockwise class="text-secondary" />
-        {/if}
-        <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh')}</span>
-        </div>
-      </button>
-    </div>
-  </BottomSheet>
-{/if}
-
 <style>
-
-  .feed-tabs-cluster {
-    display: inline-flex;
-    align-items: center;
-    gap: calc(2px * var(--ui-scale, 1));
-    flex-shrink: 0;
-  }
-
-  .feed-tabs-cluster.popular-active :global(.feed-mode-choice .choice-group__option.is-active) {
-    border-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--choice-option-height, 46px) / 2))
-                   calc(var(--radius-sm, 6px) * var(--ui-scale, 1))
-                   calc(var(--radius-sm, 6px) * var(--ui-scale, 1))
-                   min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--choice-option-height, 46px) / 2)) !important;
-    border-top-right-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
-    border-bottom-right-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
-  }
-
   :global(.feed-mode-choice) {
     flex-shrink: 0 !important;
-  }
-
-  :global(.popular-period-select) {
-    width: auto !important;
-    max-width: none !important;
-    flex-shrink: 0 !important;
-  }
-
-  :global(.popular-period-select .select-trigger),
-  :global(.popular-period-select .select-trigger.icon-only) {
-    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    padding: 0 calc(3px * var(--ui-scale, 1)) 0 0 !important;
-    background: var(--accent-container) !important;
-    color: var(--accent-on-container) !important;
-    border-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1))
-                   min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
-                   min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
-                   calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
-    border-top-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
-    border-bottom-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
-    border-top-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
-    border-bottom-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
-    border: none !important;
-    box-shadow: none !important;
-    transition:
-      background var(--duration-fast) var(--ease-expo),
-      color var(--duration-fast) var(--ease-expo),
-      opacity var(--duration-fast) var(--ease-expo) !important;
-  }
-
-  :global(.popular-period-select .select-trigger:hover),
-  :global(.popular-period-select .select-trigger.icon-only:hover) {
-    background: color-mix(in srgb, var(--accent-container) 70%, var(--accent-primary)) !important;
-    color: var(--accent-on-container) !important;
-  }
-
-  :global(.popular-period-select .select-trigger:active),
-  :global(.popular-period-select .select-trigger.icon-only:active) {
-    opacity: 0.85 !important;
-  }
-
-  :global(.popular-period-select .select-trigger svg),
-  :global(.popular-period-select .select-trigger.icon-only svg) {
-    width: 20px !important;
-    height: 20px !important;
-    color: var(--accent-on-container) !important;
-    opacity: 1 !important;
   }
 
   .hidden-picker {

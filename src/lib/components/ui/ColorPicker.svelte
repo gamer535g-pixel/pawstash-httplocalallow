@@ -1,13 +1,12 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  import { ripple } from '$lib/motion';
+  import { ripple, tooltip } from '$lib/motion';
   import { parseColorToRgb, ACCENT_PRESETS, getContrastInk } from '$lib/theme/palette';
   import { themeState } from '$lib/theme/themeState.svelte';
-  import { i18n } from '$lib/i18n/i18nState.svelte';
+  import { i18n } from '$lib/i18n';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
-  import Button from '$lib/components/ui/Button.svelte';
-  import { notify } from '$lib/utils/toast';
-  import IconPalette from '~icons/fluent/color-20-regular';
+  import { copyText } from '$lib/utils/clipboard';
+  import IconChevronDown from '~icons/fluent/chevron-down-20-regular';
   import IconCheck from '~icons/fluent/checkmark-24-regular';
   import IconCopy from '~icons/fluent/copy-24-regular';
   import IconEyedropper from '~icons/fluent/eyedropper-24-regular';
@@ -163,16 +162,10 @@
   }
 
   async function copyHex() {
-    try {
-      await navigator.clipboard.writeText(hexDisplay);
-      isCopied = true;
-      clearTimeout(copyTimeout);
-      copyTimeout = setTimeout(() => {
-        isCopied = false;
-      }, 1600);
-      notify.success(i18n.t('color_picker.copied_hex', { hex: hexDisplay }));
-    } catch {
-    }
+    if (!(await copyText(hexDisplay, i18n.t('color_picker.copied_hex', { hex: hexDisplay })))) return;
+    isCopied = true;
+    clearTimeout(copyTimeout);
+    copyTimeout = setTimeout(() => (isCopied = false), 1600);
   }
 
   function handleHexBlur() {
@@ -186,8 +179,8 @@
 
 <PopoverMenu
   {align}
-  width="calc(310px * var(--ui-scale, 1))"
-  menuClass="color-picker-popover-portal"
+  width="calc(320px * var(--ui-scale, 1))"
+  menuClass="color-picker-popover"
   class="color-picker-root {customTrigger ? 'has-custom-trigger' : ''} {extraClass}"
 >
   {#snippet trigger({ toggle, open })}
@@ -201,28 +194,25 @@
         {disabled}
         class="color-picker-trigger {size ? `size-${size}` : ''}"
         class:is-open={open}
-        class:is-disabled={disabled}
-        aria-label={resolvedLabel}
+        aria-label={`${resolvedLabel}: ${currentHex}`}
         aria-haspopup="dialog"
         aria-expanded={open}
       >
-        <span class="trigger-color-circle" style="background-color: {currentHex};"></span>
+        <span class="trigger-swatch" style:background-color={currentHex}></span>
         <span class="trigger-label">{currentHex}</span>
-        <span class="trigger-icon" class:is-open={open}>
-          <IconPalette />
-        </span>
+        <IconChevronDown class="trigger-chevron" />
       </button>
     {/if}
   {/snippet}
 
-  {#snippet children({ close })}
-    <div class="color-picker-dialog">
-      <div class="preview-card">
-        <div class="preview-glow" style="background-color: {currentHex};"></div>
-        <div class="preview-content">
+  {#snippet children()}
+    <div class="cp" role="group" aria-label={resolvedLabel}>
+      <div class="cp-head">
+        <span class="cp-swatch" style:background-color={currentHex} aria-hidden="true"></span>
+        <div class="cp-hex-field">
           <input
             type="text"
-            class="preview-hex-input"
+            class="cp-hex-input"
             value={hexDisplay}
             oninput={handleHexInput}
             onblur={handleHexBlur}
@@ -234,170 +224,93 @@
             autocomplete="off"
             aria-label={i18n.t('color_picker.hex_code')}
           />
-
-          <div class="preview-actions">
-            <Button
-              variant="ghost"
-              size="sm"
-              class="action-icon-btn"
-              onclick={copyHex}
-              aria-label={i18n.t('color_picker.copy_hex')}
-            >
-              {#if isCopied}
-                <span class="text-emerald-400">
-                  <IconCheck />
-                </span>
-              {:else}
-                <IconCopy />
-              {/if}
-            </Button>
-
-            <div class="action-picker-wrapper">
-              <Button
-                variant="ghost"
-                size="sm"
-                class="action-icon-btn"
-                aria-hidden="true"
-                tabindex={-1}
-              >
-                <IconEyedropper />
-              </Button>
-              <input
-                type="color"
-                value={currentHex}
-                oninput={(e) => applyColor(e.currentTarget.value)}
-                onchange={(e) => applyColor(e.currentTarget.value)}
-                class="action-picker-native-input"
-                aria-label={i18n.t('color_picker.system_picker')}
-              />
-            </div>
-          </div>
+          <button
+            type="button"
+            class="field-action"
+            class:is-active={isCopied}
+            use:ripple
+            use:tooltip={i18n.t('color_picker.copy_hex')}
+            aria-label={i18n.t('color_picker.copy_hex')}
+            onclick={copyHex}
+          >
+            {#if isCopied}<IconCheck />{:else}<IconCopy />{/if}
+          </button>
+          <label class="field-action cp-native" use:tooltip={i18n.t('color_picker.system_picker')}>
+            <IconEyedropper />
+            <input
+              type="color"
+              value={currentHex}
+              oninput={(e) => applyColor(e.currentTarget.value)}
+              onchange={(e) => applyColor(e.currentTarget.value)}
+              aria-label={i18n.t('color_picker.system_picker')}
+            />
+          </label>
         </div>
       </div>
 
-      <div class="color-picker-body">
-        <div class="dialog-section">
-          <span class="section-title">{i18n.t('color_picker.tonal')}</span>
-          <div class="tonal-strip">
-            {#each M3_TONES as tone}
-              {@const toneHex = hslToHex(hsl.h, hsl.s, tone)}
-              {@const active = Math.abs(hsl.l - tone) <= 4}
+      <section class="cp-section">
+        <span class="cp-label">{i18n.t('color_picker.tonal')}</span>
+        <div class="cp-tones" role="radiogroup" aria-label={i18n.t('color_picker.tonal')}>
+          {#each M3_TONES as tone (tone)}
+            {@const toneHex = hslToHex(hsl.h, hsl.s, tone)}
+            {@const active = Math.abs(hsl.l - tone) <= 4}
+            <button
+              type="button"
+              class="cp-tone ink-{getContrastInk(toneHex)}"
+              role="radio"
+              aria-checked={active}
+              style:background-color={toneHex}
+              onclick={() => setTone(tone)}
+              aria-label={i18n.t('color_picker.tone_value', { tone })}
+            >
+              {#if active}<IconCheck />{/if}
+            </button>
+          {/each}
+        </div>
+      </section>
+
+      <section class="cp-section cp-sliders">
+        {#each [
+          { key: 'hue', label: i18n.t('color_picker.hue'), min: 0, max: 360, value: hsl.h, unit: '°', track: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)', set: (v: number) => updateHsl(v, hsl.s, hsl.l) },
+          { key: 'tone', label: i18n.t('color_picker.tone'), min: 0, max: 100, value: hsl.l, unit: '%', track: `linear-gradient(to right, #000, ${hslToHex(hsl.h, hsl.s, 50)}, #fff)`, set: (v: number) => updateHsl(hsl.h, hsl.s, v) },
+          { key: 'chroma', label: i18n.t('color_picker.chroma'), min: 0, max: 100, value: hsl.s, unit: '%', track: `linear-gradient(to right, ${hslToHex(hsl.h, 0, hsl.l)}, ${hslToHex(hsl.h, 100, hsl.l)})`, set: (v: number) => updateHsl(hsl.h, v, hsl.l) }
+        ] as slider (slider.key)}
+          <label class="cp-slider">
+            <span class="cp-slider-label">{slider.label}</span>
+            <input
+              type="range"
+              min={slider.min}
+              max={slider.max}
+              step="1"
+              value={slider.value}
+              oninput={(e) => slider.set(Number(e.currentTarget.value))}
+              style:--cp-track={slider.track}
+              style:--cp-thumb={currentHex}
+            />
+            <span class="cp-slider-value">{slider.value}{slider.unit}</span>
+          </label>
+        {/each}
+      </section>
+
+      {#if showPalette}
+        <section class="cp-section">
+          <span class="cp-label">{i18n.t('color_picker.palette')}</span>
+          <div class="cp-swatches" role="radiogroup" aria-label={i18n.t('color_picker.palette')}>
+            {#each [...activeMaterialRoles, ...accentPresets] as swatch (swatch.name)}
               <button
                 type="button"
-                use:ripple
-                class="tone-cell"
-                class:is-active={active}
-                style="background-color: {toneHex};"
-                onclick={() => setTone(tone)}
-                aria-label={i18n.t('color_picker.tone_value', { tone })}
-              >
-                {#if active}
-                  <span class="swatch-check ink-{getContrastInk(toneHex)}">
-                    <IconCheck />
-                  </span>
-                {/if}
-              </button>
+                class="color-swatch"
+                role="radio"
+                aria-checked={currentHex.toUpperCase() === swatch.hex.toUpperCase()}
+                style:background-color={swatch.hex}
+                onclick={() => applyColor(swatch.hex)}
+                use:tooltip={swatch.name}
+                aria-label={swatch.name}
+              ></button>
             {/each}
           </div>
-        </div>
-
-        {#if showPalette}
-          <div class="dialog-section">
-            <span class="section-title">{i18n.t('color_picker.palette')}</span>
-
-            <div class="material-roles-grid">
-              {#each activeMaterialRoles as role}
-                {@const active = currentHex.toUpperCase() === role.hex.toUpperCase()}
-                <button
-                  type="button"
-                  use:ripple
-                  class="role-pill"
-                  class:is-active={active}
-                  style="background-color: {role.hex};"
-                  onclick={() => applyColor(role.hex)}
-                  aria-label={role.name}
-                >
-                  {#if active}
-                    <span class="swatch-check ink-{getContrastInk(role.hex)}">
-                      <IconCheck />
-                    </span>
-                  {/if}
-                </button>
-              {/each}
-            </div>
-
-            <div class="presets-grid">
-              {#each accentPresets as preset}
-                {@const active = currentHex.toUpperCase() === preset.hex.toUpperCase()}
-                <button
-                  type="button"
-                  use:ripple
-                  class="key-chip"
-                  class:is-active={active}
-                  style="background-color: {preset.hex};"
-                  onclick={() => applyColor(preset.hex)}
-                  aria-label={preset.name}
-                >
-                  {#if active}
-                    <span class="swatch-check ink-{getContrastInk(preset.hex)}">
-                      <IconCheck />
-                    </span>
-                  {/if}
-                </button>
-              {/each}
-            </div>
-          </div>
-        {/if}
-
-        <div class="sliders-section">
-          <div class="slider-row">
-            <span class="slider-label">{i18n.t('color_picker.hue')}</span>
-            <input
-              type="range"
-              min="0"
-              max="360"
-              step="1"
-              value={hsl.h}
-              oninput={(e) => updateHsl(Number(e.currentTarget.value), hsl.s, hsl.l)}
-              class="m3-slider-input hue-gradient-track"
-              aria-label={i18n.t('color_picker.hue')}
-            />
-            <span class="slider-value">{hsl.h}°</span>
-          </div>
-
-          <div class="slider-row">
-            <span class="slider-label">{i18n.t('color_picker.tone')}</span>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="1"
-              value={hsl.l}
-              oninput={(e) => updateHsl(hsl.h, hsl.s, Number(e.currentTarget.value))}
-              class="m3-slider-input"
-              style="background: linear-gradient(to right, #000000 0%, {hslToHex(hsl.h, hsl.s, 50)} 50%, #ffffff 100%);"
-              aria-label={i18n.t('color_picker.tone')}
-            />
-            <span class="slider-value">{hsl.l}%</span>
-          </div>
-
-          <div class="slider-row">
-            <span class="slider-label">{i18n.t('color_picker.chroma')}</span>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="1"
-              value={hsl.s}
-              oninput={(e) => updateHsl(hsl.h, Number(e.currentTarget.value), hsl.l)}
-              class="m3-slider-input"
-              style="background: linear-gradient(to right, {hslToHex(hsl.h, 0, hsl.l)} 0%, {hslToHex(hsl.h, 100, hsl.l)} 100%);"
-              aria-label={i18n.t('color_picker.chroma')}
-            />
-            <span class="slider-value">{hsl.s}%</span>
-          </div>
-        </div>
-      </div>
+        </section>
+      {/if}
     </div>
   {/snippet}
 </PopoverMenu>
@@ -406,548 +319,252 @@
   :global(.color-picker-root) {
     position: relative;
     display: inline-flex;
-    width: auto;
-    max-width: fit-content;
     flex-shrink: 0;
+    max-width: fit-content;
   }
 
   :global(.color-picker-root:not(.has-custom-trigger)) {
-    margin-left: auto;
-  }
-
-  :global(.color-picker-root.has-custom-trigger) {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    margin-left: 0;
+    margin-inline-start: auto;
   }
 
   .color-picker-trigger {
     display: inline-flex;
     align-items: center;
-    justify-content: flex-start;
-    gap: calc(8px * var(--ui-scale, 1));
-    width: auto;
-    min-width: calc(108px * var(--ui-scale, 1));
-    height: calc(var(--control-height, 36px) * var(--ui-scale, 1));
-    padding: 0 calc(12px * var(--ui-scale, 1)) 0 calc(10px * var(--ui-scale, 1));
-    background: var(--select-bg);
-    border: none;
-    border-radius: var(--radius-full);
+    gap: 8px;
+    min-width: calc(128px * var(--ui-scale, 1));
+    height: calc(var(--control-height, 40px) * var(--ui-scale, 1));
+    padding: 0 10px 0 8px;
+    border: 0;
+    border-radius: calc(var(--radius-md) * var(--ui-scale, 1));
+    background: var(--input-bg);
     color: var(--text-primary);
-    font-size: calc(var(--control-font-size, 13px) * var(--ui-scale, 1));
-    font-family: var(--font-sans);
-    line-height: normal;
-    cursor: pointer;
-    text-align: left;
+    font-family: var(--font-mono);
+    font-size: var(--type-body-md-size);
     outline: none;
-    box-sizing: border-box;
-    user-select: none;
-    transition:
-      background var(--duration-fast) var(--ease-expo),
-      color var(--duration-fast) var(--ease-expo);
+    transition: background-color var(--duration-fast) var(--ease-standard);
   }
 
-  .color-picker-trigger.size-sm {
-    --control-height: var(--control-height-sm, 32px);
-    --control-font-size: var(--control-font-sm, 12px);
-    --control-icon-size: var(--control-icon-sm, 14px);
-    --control-padding-x: var(--control-padding-sm, 10px);
-  }
+  .color-picker-trigger.size-sm { --control-height: var(--control-height-sm); }
+  .color-picker-trigger.size-base { --control-height: var(--control-height-base); }
+  .color-picker-trigger.size-md { --control-height: var(--control-height-md); }
+  .color-picker-trigger.size-lg { --control-height: var(--control-height-lg); }
 
-  .color-picker-trigger.size-base {
-    --control-height: var(--control-height-base, 36px);
-    --control-font-size: var(--control-font-base, 13px);
-    --control-icon-size: var(--control-icon-base, 16px);
-    --control-padding-x: var(--control-padding-base, 12px);
-  }
-
-  .color-picker-trigger.size-md {
-    --control-height: var(--control-height-md, 40px);
-    --control-font-size: var(--control-font-md, 13.5px);
-    --control-icon-size: var(--control-icon-md, 18px);
-    --control-padding-x: var(--control-padding-md, 14px);
-  }
-
-  .color-picker-trigger.size-lg {
-    --control-height: var(--control-height-lg, 46px);
-    --control-font-size: var(--control-font-lg, 14px);
-    --control-icon-size: var(--control-icon-lg, 20px);
-    --control-padding-x: var(--control-padding-lg, 16px);
-  }
-
-  .color-picker-trigger:hover {
-    background: var(--select-bg-hover);
+  @media (hover: hover) {
+    .color-picker-trigger:hover {
+      background: var(--input-bg-hover);
+    }
   }
 
   .color-picker-trigger.is-open {
-    background: var(--select-bg-hover);
+    background: var(--input-bg-hover);
   }
 
   .color-picker-trigger:focus-visible {
-    outline: calc(1.5px * var(--ui-scale, 1)) solid var(--accent-primary);
-    outline-offset: calc(-1.5px * var(--ui-scale, 1));
+    outline: 2px solid var(--accent-primary);
+    outline-offset: -2px;
   }
 
-  .color-picker-trigger.is-disabled,
   .color-picker-trigger:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+    opacity: var(--opacity-disabled);
     pointer-events: none;
   }
 
-  .trigger-color-circle {
-    width: calc(var(--control-icon-size, 16px) * var(--ui-scale, 1));
-    height: calc(var(--control-icon-size, 16px) * var(--ui-scale, 1));
+  .trigger-swatch {
+    flex: none;
+    width: 24px;
+    height: 24px;
     border-radius: var(--radius-full);
-    flex-shrink: 0;
-    border: none !important;
-    box-shadow: none !important;
-    outline: none !important;
   }
 
   .trigger-label {
     flex: 1 1 auto;
     min-width: 0;
-    white-space: nowrap;
-    font-family: var(--font-mono);
-    font-size: calc(var(--control-font-size, 13px) * var(--ui-scale, 1));
-    font-weight: 500;
-    letter-spacing: 0.02em;
-    line-height: normal;
-    color: var(--text-primary);
+    text-align: start;
   }
 
-  .trigger-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    opacity: 0.5;
+  .color-picker-trigger :global(.trigger-chevron) {
+    flex: none;
+    width: 18px;
+    height: 18px;
     color: var(--text-secondary);
-    transition:
-      opacity var(--duration-fast) var(--ease-expo),
-      color var(--duration-fast) var(--ease-expo);
-    flex-shrink: 0;
-    margin-left: auto;
+    transition: transform var(--duration-fast) var(--ease-standard);
   }
 
-  .color-picker-trigger:hover .trigger-icon,
-  .color-picker-trigger.is-open .trigger-icon {
-    opacity: 0.85;
-    color: var(--text-primary);
+  .color-picker-trigger.is-open :global(.trigger-chevron) {
+    transform: rotate(180deg);
   }
 
-  .trigger-icon :global(svg) {
-    width: calc(var(--control-icon-size, 16px) * var(--ui-scale, 1)) !important;
-    height: calc(var(--control-icon-size, 16px) * var(--ui-scale, 1)) !important;
-  }
-
-  :global(.popover-menu-dropdown.color-picker-popover-portal) {
-    padding: 0 !important;
-    border: none !important;
-    overflow: hidden !important;
-  }
-
-  .color-picker-dialog {
+  .cp {
     display: flex;
     flex-direction: column;
-    padding: 0;
-    box-sizing: border-box;
-    width: 100%;
-    --swatch-ink-light: rgb(var(--surface-tint-rgb));
-    --swatch-ink-dark: #000000;
+    gap: 16px;
+    padding: 8px;
   }
 
-  .preview-card {
-    position: relative;
-    width: 100%;
-    height: calc(58px * var(--ui-scale, 1));
-    border: none;
-    box-sizing: border-box;
-    flex-shrink: 0;
+  .cp-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
   }
 
-  .preview-glow {
-    position: absolute;
-    top: 50%;
-    right: calc(-70px * var(--ui-scale, 1));
-    width: calc(320px * var(--ui-scale, 1));
-    height: calc(320px * var(--ui-scale, 1));
+  .cp-swatch {
+    flex: none;
+    width: 40px;
+    height: 40px;
     border-radius: var(--radius-full);
-    pointer-events: none;
-    filter: blur(calc(56px * var(--ui-scale, 1)));
-    opacity: 0.28;
-    transform: translateY(-50%);
   }
 
-  .preview-content {
-    position: absolute;
-    inset: 0;
+  .cp-hex-field {
+    --control-icon-size: 20px;
     display: flex;
+    flex: 1 1 auto;
     align-items: center;
-    justify-content: space-between;
-    padding: 0 calc(var(--space-3) * var(--ui-scale, 1));
-    z-index: 1;
+    gap: 4px;
+    min-width: 0;
+    height: 40px;
+    padding: 0 8px 0 12px;
+    border-radius: var(--radius-md);
+    background: var(--input-bg);
   }
 
-  .color-picker-body {
-    display: flex;
-    flex-direction: column;
-    gap: calc(10px * var(--ui-scale, 1));
-    padding: calc(8px * var(--ui-scale, 1)) calc(var(--space-3) * var(--ui-scale, 1)) calc(var(--space-3) * var(--ui-scale, 1));
-    box-sizing: border-box;
+  .cp-hex-field:has(.cp-hex-input:focus-visible) {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: -2px;
   }
 
-  .preview-hex-input {
-    font-family: var(--font-mono);
-    font-size: calc(23px * var(--ui-scale, 1));
-    font-weight: 900;
-    letter-spacing: -0.01em;
-    line-height: 1.1;
-    color: var(--text-primary);
-    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
-    background: transparent;
-    border: none;
-    outline: none !important;
-    box-shadow: none !important;
+  .cp-hex-input {
+    flex: 1 1 auto;
+    min-width: 0;
     padding: 0;
-    margin: 0;
-    width: calc(130px * var(--ui-scale, 1));
-    cursor: text;
-    -webkit-tap-highlight-color: transparent;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--type-body-lg-size);
+    text-transform: uppercase;
   }
 
-  .preview-hex-input:hover,
-  .preview-hex-input:focus,
-  .preview-hex-input:focus-visible,
-  .preview-hex-input:active {
+  /* The field draws the focus ring; the global input ring would draw a second one inside it. */
+  .cp-hex-input:focus-visible {
     outline: none !important;
-    box-shadow: none !important;
-    border: none !important;
-    background: transparent !important;
   }
 
-  .preview-actions {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space-1) * var(--ui-scale, 1));
-  }
-
-  .action-picker-wrapper {
+  .cp-native {
     position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    cursor: default;
   }
 
-  .action-picker-native-input {
+  .cp-native input {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
     opacity: 0;
-    cursor: pointer;
-    border: none;
-    padding: 0;
-    margin: 0;
-    z-index: 5;
+    cursor: default;
   }
 
-  :global(.action-icon-btn) {
-    width: calc(30px * var(--ui-scale, 1)) !important;
-    height: calc(30px * var(--ui-scale, 1)) !important;
-    padding: 0 !important;
-    background: rgba(0, 0, 0, 0.28) !important;
-    border: none !important;
-    backdrop-filter: blur(12px) !important;
-    color: var(--text-primary) !important;
-    border-radius: calc(var(--radius-sm) * var(--ui-scale, 1)) !important;
-  }
-
-  :global(.action-icon-btn:hover) {
-    background: rgba(0, 0, 0, 0.44) !important;
-  }
-
-  .dialog-section {
+  .cp-section {
     display: flex;
     flex-direction: column;
-    gap: calc(5px * var(--ui-scale, 1));
+    gap: 8px;
   }
 
-  .section-title {
-    font-family: var(--font-sans);
-    font-size: calc(var(--text-xs) * var(--ui-scale, 1));
-    font-weight: var(--font-weight-medium);
-    letter-spacing: normal;
-    text-transform: none;
+  .cp-label {
     color: var(--text-secondary);
-    line-height: var(--leading-tight, 1.25);
+    font-size: var(--type-title-sm-size);
+    line-height: var(--type-title-sm-line);
+    font-weight: 500;
   }
 
-  .tonal-strip {
-    display: grid;
-    grid-template-columns: repeat(11, 1fr);
-    height: calc(24px * var(--ui-scale, 1));
-    border-radius: calc(var(--radius-sm) * var(--ui-scale, 1));
+  .cp-tones {
+    display: flex;
+    height: 32px;
     overflow: hidden;
-    border: none;
-  }
-
-  .tone-cell {
-    position: relative;
-    width: 100%;
-    height: 100%;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    outline: none;
-    transition: transform var(--duration-fast) var(--ease-expo);
-  }
-
-  .tone-cell:hover {
-    transform: scaleY(1.18);
-    z-index: 2;
-  }
-
-  .tone-cell.is-active {
-    box-shadow: inset 0 0 0 calc(2px * var(--ui-scale, 1)) var(--accent-primary);
-  }
-
-  .tone-cell:focus-visible {
-    outline: calc(2px * var(--ui-scale, 1)) solid var(--accent-primary);
-    outline-offset: calc(-2px * var(--ui-scale, 1));
-    z-index: 3;
-  }
-
-  .swatch-check {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .swatch-check.ink-light {
-    color: var(--swatch-ink-light);
-  }
-
-  .swatch-check.ink-dark {
-    color: var(--swatch-ink-dark);
-  }
-
-  .tonal-strip .swatch-check :global(svg) {
-    width: calc(11px * var(--ui-scale, 1));
-    height: calc(11px * var(--ui-scale, 1));
-  }
-
-  .material-roles-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: calc(6px * var(--ui-scale, 1));
-  }
-
-  .role-pill {
-    position: relative;
-    width: 100%;
-    height: calc(22px * var(--ui-scale, 1));
     border-radius: var(--radius-full);
-    border: none;
-    cursor: pointer;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    outline: none;
-    transition:
-      transform var(--duration-fast) var(--ease-expo),
-      box-shadow var(--duration-fast) var(--ease-expo);
   }
 
-  .role-pill:hover {
-    transform: scale(1.05);
-  }
-
-  .role-pill.is-active {
-    box-shadow:
-      0 0 0 calc(2px * var(--ui-scale, 1)) var(--bg-dropdown),
-      0 0 0 calc(3.5px * var(--ui-scale, 1)) var(--accent-primary);
-  }
-
-  .role-pill:focus-visible {
-    outline: calc(2px * var(--ui-scale, 1)) solid var(--accent-primary);
-    outline-offset: calc(2px * var(--ui-scale, 1));
-  }
-
-  .presets-grid {
+  .cp-tone {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    gap: calc(6px * var(--ui-scale, 1));
-  }
-
-  .key-chip {
-    position: relative;
-    width: calc(24px * var(--ui-scale, 1));
-    height: calc(24px * var(--ui-scale, 1));
-    border-radius: var(--radius-full);
-    border: none;
-    cursor: pointer;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    outline: none;
-    transition:
-      transform var(--duration-fast) var(--ease-expo),
-      box-shadow var(--duration-fast) var(--ease-expo);
-  }
-
-  .key-chip:hover {
-    transform: scale(1.18);
-  }
-
-  .key-chip.is-active {
-    box-shadow:
-      0 0 0 calc(2px * var(--ui-scale, 1)) var(--bg-dropdown),
-      0 0 0 calc(3.5px * var(--ui-scale, 1)) var(--accent-primary);
-    transform: scale(1.1);
-  }
-
-  .key-chip:focus-visible {
-    outline: calc(2px * var(--ui-scale, 1)) solid var(--accent-primary);
-    outline-offset: calc(2px * var(--ui-scale, 1));
-  }
-
-  .material-roles-grid .swatch-check :global(svg),
-  .presets-grid .swatch-check :global(svg) {
-    width: calc(12px * var(--ui-scale, 1));
-    height: calc(12px * var(--ui-scale, 1));
-  }
-
-  .sliders-section {
-    display: flex;
-    flex-direction: column;
-    gap: calc(7px * var(--ui-scale, 1));
-    padding-top: calc(4px * var(--ui-scale, 1));
-    border: none;
-  }
-
-  .slider-row {
-    display: flex;
-    align-items: center;
-    gap: calc(8px * var(--ui-scale, 1));
-  }
-
-  .slider-label {
-    width: calc(44px * var(--ui-scale, 1));
-    font-family: var(--font-sans);
-    font-size: calc(var(--text-xs) * var(--ui-scale, 1));
-    font-weight: var(--font-weight-medium);
-    letter-spacing: normal;
-    text-transform: none;
-    color: var(--text-secondary);
-    line-height: var(--leading-tight, 1.25);
-    flex-shrink: 0;
-  }
-
-  .slider-value {
-    width: calc(34px * var(--ui-scale, 1));
-    text-align: right;
-    font-family: var(--font-mono);
-    font-size: calc(var(--text-xs) * var(--ui-scale, 1));
-    color: var(--text-muted);
-    flex-shrink: 0;
-  }
-
-  .m3-slider-input {
-    flex: 1;
+    flex: 1 1 0;
+    place-items: center;
     min-width: 0;
-    height: calc(6px * var(--ui-scale, 1));
-    border-radius: var(--radius-full);
-    -webkit-appearance: none;
-    appearance: none;
-    outline: none !important;
-    cursor: pointer;
-    border: none;
-    box-shadow: none !important;
+    padding: 0;
+    border: 0;
   }
 
-  .m3-slider-input:focus {
+  .cp-tone :global(svg) {
+    width: 16px;
+    height: 16px;
+  }
+
+  .cp-tone.ink-light {
+    color: #fff;
+  }
+
+  .cp-tone.ink-dark {
+    color: #000;
+  }
+
+  .cp-tone:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: -2px;
+  }
+
+  .cp-sliders {
+    gap: 4px;
+  }
+
+  .cp-slider {
+    display: grid;
+    grid-template-columns: 56px minmax(0, 1fr) 40px;
+    align-items: center;
+    gap: 12px;
+    min-height: 32px;
+  }
+
+  .cp-slider-label {
+    color: var(--text-secondary);
+    font-size: var(--type-body-sm-size);
+  }
+
+  .cp-slider-value {
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: var(--type-body-sm-size);
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+  }
+
+  .cp-slider input {
+    width: 100%;
+    height: 12px;
+    margin: 0;
+    border-radius: var(--radius-full);
+    background: var(--cp-track);
     outline: none;
-  }
-
-  .m3-slider-input:focus-visible::-webkit-slider-thumb {
-    box-shadow:
-      0 1px 4px rgba(0, 0, 0, 0.4),
-      0 0 0 calc(3px * var(--ui-scale, 1)) var(--accent-primary);
-  }
-
-  .m3-slider-input::-webkit-slider-thumb {
-    -webkit-appearance: none;
     appearance: none;
-    width: calc(15px * var(--ui-scale, 1));
-    height: calc(15px * var(--ui-scale, 1));
+    -webkit-appearance: none;
+  }
+
+  .cp-slider input::-webkit-slider-thumb {
+    width: 20px;
+    height: 20px;
     border-radius: var(--radius-full);
-    background: rgb(var(--surface-tint-rgb));
-    border: none;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-    cursor: pointer;
-    transition: transform var(--duration-fast) var(--ease-expo);
+    background: var(--cp-thumb);
+    box-shadow: 0 0 0 3px #fff, 0 1px 4px 3px rgba(0, 0, 0, 0.35);
+    appearance: none;
+    -webkit-appearance: none;
   }
 
-  .m3-slider-input::-webkit-slider-thumb:hover {
-    transform: scale(1.15);
+  .cp-slider input:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--accent-primary);
   }
 
-  .hue-gradient-track {
-    background: linear-gradient(
-      to right,
-      #ff0000 0%,
-      #ffff00 17%,
-      #00ff00 33%,
-      #00ffff 50%,
-      #0000ff 67%,
-      #ff00ff 83%,
-      #ff0000 100%
-    );
-  }
-
-  @media (max-width: 640px) {
-    .tonal-strip {
-      grid-template-columns: repeat(auto-fit, minmax(calc(44px * var(--ui-scale, 1)), 1fr));
-      height: auto;
-      gap: calc(2px * var(--ui-scale, 1));
-    }
-
-    .tone-cell {
-      height: calc(44px * var(--ui-scale, 1));
-    }
-
-    .tone-cell:hover {
-      transform: none;
-    }
-
-    .role-pill {
-      height: calc(44px * var(--ui-scale, 1));
-    }
-
-    .presets-grid {
-      grid-template-columns: repeat(auto-fit, minmax(calc(44px * var(--ui-scale, 1)), 1fr));
-    }
-
-    .key-chip {
-      width: 100%;
-      height: calc(44px * var(--ui-scale, 1));
-      border-radius: calc(var(--radius-md) * var(--ui-scale, 1));
-    }
-
-    .m3-slider-input {
-      height: calc(12px * var(--ui-scale, 1));
-    }
-
-    .m3-slider-input::-webkit-slider-thumb {
-      width: calc(24px * var(--ui-scale, 1));
-      height: calc(24px * var(--ui-scale, 1));
-    }
+  .cp-swatches {
+    --swatch-size: 28px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 </style>

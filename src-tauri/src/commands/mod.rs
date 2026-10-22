@@ -1,3 +1,4 @@
+pub mod announcements;
 pub mod updater;
 pub mod window_effects;
 
@@ -312,7 +313,11 @@ pub async fn save_settings(
     if settings.session_cookie.is_empty() {
         settings.session_cookie = previous.session_cookie.clone();
     }
-    if settings.proxy_password.is_empty() {
+    // The frontend never receives the stored password, so blank means "unchanged" while the username is the same.
+    if settings.proxy_password.is_empty()
+        && !settings.proxy_username.is_empty()
+        && settings.proxy_username == previous.proxy_username
+    {
         settings.proxy_password = previous.proxy_password.clone();
     }
     // Owned by `save_providers` and login; the frontend's copy may predate the last edit.
@@ -4255,4 +4260,19 @@ pub async fn resolve_deep_link(
 ) -> Result<crate::smart_links::DeepLinkTarget, String> {
     let configs = state.provider_manager.get_provider_configs().await;
     crate::smart_links::parse_deep_link(&url, &configs)
+}
+
+/// Back at the root backgrounds the task instead of finishing the activity, as Android 12+ launchers do.
+#[tauri::command]
+pub fn android_minimize() -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        with_android_context(|env, activity| {
+            env.call_method(activity, "moveTaskToBack", "(Z)Z", &[true.into()])
+                .map(|_| ())
+                .map_err(|e| format!("moveTaskToBack failed: {e}"))
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    Ok(())
 }

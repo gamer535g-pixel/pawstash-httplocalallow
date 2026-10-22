@@ -2,15 +2,15 @@
   import { onMount, onDestroy, tick, type Snippet } from 'svelte';
   import { OverlayScrollbars } from 'overlayscrollbars';
   import { computePosition, autoUpdate, flip, shift, offset, size as floatingSize } from '@floating-ui/dom';
+  import { FLOATING_EDGE, FLOATING_OFFSET } from '$lib/utils/floating';
   import { portal } from '$lib/actions/portal';
   import { ripple } from '$lib/motion';
   import { i18n } from '$lib/i18n';
-  import { logger } from '$lib/utils/logger';
+  import { notify } from '$lib/utils/toast';
   import IconChevronDown from '~icons/fluent/chevron-down-24-regular';
   import IconAdd from '~icons/fluent/add-24-regular';
   import IconCheckmark from '~icons/fluent/checkmark-20-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
-  import StableWeightLabel from './StableWeightLabel.svelte';
   import CountBadge from './CountBadge.svelte';
 
   export interface Option {
@@ -88,6 +88,7 @@
 
   let effectiveVariant = $derived.by(() => {
     if (variant === 'accent') return 'accent';
+    if (variant === 'ghost' && iconOnly) return 'ghost';
     if (selectedValues && selectedValues.length > 0) return 'accent';
     return variant;
   });
@@ -135,16 +136,16 @@
       placement: align === 'right' ? 'bottom-end' : 'bottom-start',
       strategy: 'fixed',
       middleware: [
-        offset(6),
+        offset(FLOATING_OFFSET),
         flip({
           fallbackPlacements: ['top-start', 'bottom-end', 'top-end', 'bottom', 'top'],
-          padding: 12
+          padding: FLOATING_EDGE
         }),
         shift({
-          padding: 12
+          padding: FLOATING_EDGE
         }),
         floatingSize({
-          padding: 12,
+          padding: FLOATING_EDGE,
           apply({ availableHeight, elements }) {
             Object.assign(elements.floating.style, {
               maxHeight: `${Math.min(availableHeight, 360)}px`
@@ -218,7 +219,7 @@
       isCreating = false;
       isOpen = false;
     } catch (e) {
-      logger.error('Failed to create item in Select', e);
+      notify.error(i18n.t('library.save_error'), e);
     } finally {
       creatingPending = false;
     }
@@ -276,6 +277,7 @@
   class:is-open={isOpen}
   class:is-active={selectedValues ? selectedValues.length > 0 : Boolean(value)}
   class:is-disabled={disabled}
+  class:is-compact={iconOnly || Boolean(trigger)}
 >
   {#if trigger}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -332,7 +334,7 @@
     <div
       bind:this={dropdownEl}
       use:portal
-      class="select-dropdown-portal"
+      class="select-dropdown-portal floating-surface"
     >
       <div
         class="select-dropdown-viewport"
@@ -350,22 +352,19 @@
               type="button"
               role="option"
               aria-selected={active}
-              class="select-option"
-              class:is-selected={active}
+              class="floating-item select-option"
               onclick={() => selectOption(opt.value)}
               use:ripple
             >
               {#if opt.color}
                 <span class="option-color-dot" style:background={opt.color}></span>
               {/if}
-              <span class="option-label">
-                <StableWeightLabel text={opt.label} reserveWeight="var(--font-weight-semibold)" />
-              </span>
-              {#if opt.count !== undefined && opt.count !== null}
-                <CountBadge count={opt.count} showZero={opt.showZero ?? true} variant="tab" class="option-count" />
+              <span class="floating-item-label">{opt.label}</span>
+              {#if opt.count !== undefined && opt.count !== null && (opt.count !== 0 || (opt.showZero ?? true))}
+                <span class="floating-item-detail">{typeof opt.count === 'number' ? i18n.number(opt.count) : opt.count}</span>
               {/if}
               {#if active}
-                <IconCheckmark class="w-[15px] h-[15px] option-check" />
+                <IconCheckmark />
               {/if}
             </button>
           {/each}
@@ -374,9 +373,9 @@
 
       {#if onCreate}
         <div class="select-footer">
+          <div class="floating-divider" role="separator"></div>
           {#if isCreating}
-            <form class="select-create-inline" onsubmit={submitCreate}>
-              <IconAdd class="w-[16px] h-[16px] create-inline-icon" />
+            <form class="floating-item select-create-inline" onsubmit={submitCreate}>
               <input
                 bind:this={createInputEl}
                 bind:value={newOptionName}
@@ -400,7 +399,7 @@
                   title={i18n.t('common.confirm')}
                   aria-label={createLabel || i18n.t('common.confirm')}
                 >
-                  <IconCheckmark class="w-[15px] h-[15px]" />
+                  <IconCheckmark />
                 </button>
                 <button
                   type="button"
@@ -411,19 +410,19 @@
                   title={i18n.t('common.cancel')}
                   aria-label={i18n.t('common.cancel')}
                 >
-                  <IconDismiss class="w-[15px] h-[15px]" />
+                  <IconDismiss />
                 </button>
               </div>
             </form>
           {:else}
             <button
               type="button"
-              class="select-create-trigger"
+              class="floating-item"
               onclick={startCreating}
               use:ripple
             >
-              <IconAdd class="w-[16px] h-[16px] create-inline-icon" />
-              <span class="create-trigger-text">{createLabel || i18n.t('library.new_stash')}</span>
+              <IconAdd />
+              <span class="floating-item-label">{createLabel || i18n.t('library.new_stash')}</span>
             </button>
           {/if}
         </div>
@@ -441,6 +440,10 @@
     min-width: 0;
     box-sizing: border-box;
     flex-shrink: 0;
+  }
+
+  .select-root.is-compact {
+    width: auto;
   }
 
   .select-custom-trigger {
@@ -532,8 +535,13 @@
   }
 
   .select-trigger.variant-ghost:hover {
-    background: var(--bg-card-hover);
+    background: var(--state-layer-hover);
     color: var(--text-primary);
+  }
+
+  .select-trigger.variant-ghost.icon-only.has-selected,
+  .select-trigger.variant-ghost.icon-only.has-selected:hover {
+    color: var(--accent-primary);
   }
 
   .select-trigger.variant-accent {
@@ -578,15 +586,6 @@
     flex-shrink: 0;
   }
 
-  :global(.select-option .option-count) {
-    flex-shrink: 0;
-  }
-
-  .select-option.is-selected :global(.option-count) {
-    background: color-mix(in srgb, currentColor 22%, transparent);
-    color: inherit;
-  }
-
   .select-trigger:hover .trigger-chevron {
     opacity: 0.8;
   }
@@ -602,17 +601,11 @@
     left: 0;
     z-index: 99999;
     visibility: hidden;
-    background: var(--floating-bg);
-    border: var(--floating-border);
-    border-radius: var(--floating-radius, 18px);
-    box-shadow: var(--floating-shadow);
-    backdrop-filter: var(--floating-backdrop);
-    -webkit-backdrop-filter: var(--floating-backdrop);
-    overflow: hidden;
     display: flex;
     flex-direction: column;
-    box-sizing: border-box;
-    animation: selectDropdownIn 0.16s var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1));
+    overflow: hidden;
+    padding: 0 !important;
+    animation: selectDropdownIn var(--duration-fast) var(--ease-standard);
   }
 
   @keyframes selectDropdownIn {
@@ -634,197 +627,99 @@
   .select-options-list {
     display: flex;
     flex-direction: column;
-    padding: var(--floating-padding, 6px);
     width: 100%;
+    padding: var(--floating-padding);
     box-sizing: border-box;
-    gap: var(--floating-gap, 2px);
   }
 
   .select-empty-msg {
-    padding: 12px 14px;
-    font-size: 13px;
-    color: var(--text-muted);
+    padding: 12px var(--floating-item-px);
+    color: var(--text-secondary);
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-line);
     text-align: center;
   }
 
-  .select-option {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--floating-item-gap, 10px);
-    width: 100%;
-    height: var(--floating-item-height, 36px);
-    padding: 0 var(--floating-item-px, 12px);
-    background: transparent;
-    border: none;
-    border-radius: var(--floating-item-radius, 12px);
-    color: var(--text-secondary);
-    font-size: var(--floating-item-font-size, 13.5px);
-    font-family: var(--font-sans);
-    line-height: normal;
-    cursor: pointer;
-    text-align: left;
-    outline: none;
-    box-sizing: border-box;
-    white-space: nowrap;
-    transition: background var(--duration-fast) var(--ease-expo),
-                color var(--duration-fast) var(--ease-expo);
-  }
-
-  .select-option:hover {
-    background: rgba(var(--surface-tint-rgb), 0.06);
-    color: var(--text-primary);
-  }
-
-  .select-option.is-selected {
-    background: var(--accent-container);
-    color: var(--accent-on-container);
-    font-weight: 550;
-  }
-
-  .select-option.is-selected:hover {
-    background: color-mix(in srgb, var(--accent-container) 80%, var(--accent-primary));
-  }
-
   .option-color-dot {
+    flex: none;
     width: 8px;
     height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    margin-right: 6px;
-    box-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
+    border-radius: var(--radius-full);
   }
 
-  .option-label {
-    flex: 1;
-    min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    line-height: normal;
-  }
-
-  :global(.option-check) {
-    color: var(--accent-primary);
-    flex-shrink: 0;
+  .select-option[aria-selected='true'] .floating-item-detail {
+    color: inherit;
   }
 
   .select-footer {
-    border-top: 1px solid var(--floating-divider-color, rgba(255, 255, 255, 0.035));
-    padding: var(--floating-padding, 6px);
-    box-sizing: border-box;
-    width: 100%;
     flex-shrink: 0;
-  }
-
-  .select-create-trigger,
-  .select-create-inline {
-    display: flex;
-    align-items: center;
-    gap: var(--floating-item-gap, 10px);
     width: 100%;
-    height: var(--floating-item-height, 36px);
-    padding: 0 var(--floating-item-px, 12px);
-    border-radius: var(--floating-item-radius, 12px);
-    background: transparent;
-    border: none;
+    padding: 0 var(--floating-padding) var(--floating-padding);
     box-sizing: border-box;
-    transition: background var(--duration-fast) var(--ease-expo),
-                color var(--duration-fast) var(--ease-expo);
-  }
-
-  .select-create-trigger {
-    color: var(--text-secondary);
-    font-size: var(--floating-item-font-size, 13.5px);
-    font-family: var(--font-sans);
-    cursor: pointer;
-    text-align: left;
-    outline: none;
-  }
-
-  .select-create-trigger:hover {
-    background: rgba(var(--surface-tint-rgb), 0.06);
-    color: var(--text-primary);
   }
 
   .select-create-inline {
-    background: rgba(var(--surface-tint-rgb), 0.06);
-    color: var(--text-primary);
-  }
-
-  .create-inline-icon {
-    opacity: 0.6;
-    flex-shrink: 0;
-  }
-
-  .create-trigger-text {
-    flex: 1;
-    min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    background: var(--state-layer-hover);
   }
 
   .create-inline-input {
     flex: 1;
     min-width: 0;
     height: 100%;
-    background: transparent !important;
-    border: none !important;
+    padding: 0;
+    border: 0 !important;
     outline: none !important;
     box-shadow: none !important;
-    padding: 0;
+    background: transparent !important;
     color: var(--text-primary);
-    font-size: 13.5px;
-    font-family: var(--font-sans);
-    box-sizing: border-box;
+    font: inherit;
   }
 
   .create-inline-input::placeholder {
     color: var(--text-secondary);
-    opacity: 0.85;
   }
 
   .create-inline-actions {
     display: flex;
     align-items: center;
     gap: 2px;
-    margin-left: auto;
+    margin-inline-start: auto;
+    margin-inline-end: -8px;
     flex-shrink: 0;
   }
 
   .create-action-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border: none;
-    outline: none;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-full);
     background: transparent;
     color: var(--text-secondary);
-    opacity: 0.6;
-    border-radius: var(--radius-sm, 6px);
-    cursor: pointer;
-    padding: 0;
-    transition: opacity var(--duration-fast) var(--ease-expo),
-                color var(--duration-fast) var(--ease-expo),
-                background var(--duration-fast) var(--ease-expo);
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
   }
 
-  .create-action-btn:hover {
-    opacity: 1;
-    color: var(--text-primary);
-    background: rgba(var(--surface-tint-rgb), 0.08);
+  .create-action-btn :global(svg) {
+    width: var(--floating-item-icon-size);
+    height: var(--floating-item-icon-size);
   }
 
-  .create-action-btn.confirm:hover {
-    color: var(--accent-primary);
+  @media (hover: hover) {
+    .create-action-btn:hover {
+      background: var(--state-layer-hover);
+      color: var(--text-primary);
+    }
+
+    .create-action-btn.confirm:hover {
+      color: var(--accent-primary);
+    }
   }
 
   .create-action-btn:disabled {
-    opacity: 0.25;
-    cursor: not-allowed;
+    opacity: var(--opacity-disabled);
     background: transparent;
   }
 </style>

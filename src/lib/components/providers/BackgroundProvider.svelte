@@ -6,10 +6,15 @@
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { logger } from '$lib/utils/logger';
   import { convertFileSrc } from '@tauri-apps/api/core';
-  import { resolveLocalMediaUrl } from '$lib/utils/media';
+  import { resolveLocalMediaUrl, videoPoster } from '$lib/utils/media';
 
   onMount(() => {
     backgroundState.init();
+  });
+
+  $effect(() => {
+    const style = backgroundState.settings.type === 'oled' ? 'oled' : 'flat';
+    untrack(() => themeState.setSurfaceStyle(style));
   });
 
   let settings = $derived(backgroundState.settings);
@@ -88,7 +93,7 @@
 
 <div class="fixed inset-0 z-[-2] overflow-hidden pointer-events-none select-none">
   {#if settings.type === 'palette'}
-    <div class="absolute inset-0" style="background: {themeState.palette.surface};"></div>
+    <div class="absolute inset-0" style="background: var(--surface);"></div>
 
   {:else if settings.type === 'oled' || (!isNativeEffect && settings.type !== 'custom')}
     <div class="absolute inset-0" style="background: var(--bg-base);"></div>
@@ -99,6 +104,7 @@
       {#key `${videoSrc}:${backgroundState.version}`}
         <video
           src={videoSrc}
+          poster={videoPoster()}
           autoplay
           loop
           muted

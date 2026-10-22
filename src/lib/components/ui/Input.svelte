@@ -122,20 +122,20 @@
     {#if clearable && value && !disabled && !readonly}
       <button
         type="button"
-        class="icon-btn"
+        class="field-action"
         use:ripple
         use:tooltip={i18n.t('common.clear_input')}
         onclick={handleClear}
         aria-label={i18n.t('common.clear_input')}
       >
-        <IconDismiss style="width: 18px; height: 18px;" />
+        <IconDismiss />
       </button>
     {/if}
 
     {#if type === 'password' && !disabled}
       <button
         type="button"
-        class="icon-btn"
+        class="field-action"
         use:ripple
         use:tooltip={i18n.t(isPasswordVisible ? 'common.hide_password' : 'common.show_password')}
         onclick={(e) => {
@@ -145,9 +145,9 @@
         aria-label={i18n.t(isPasswordVisible ? 'common.hide_password' : 'common.show_password')}
       >
         {#if isPasswordVisible}
-          <IconEyeOff style="width: 18px; height: 18px;" />
+          <IconEyeOff />
         {:else}
-          <IconEye style="width: 18px; height: 18px;" />
+          <IconEye />
         {/if}
       </button>
     {/if}
@@ -155,7 +155,7 @@
     {#if onBrowse && !disabled}
       <button
         type="button"
-        class="icon-btn"
+        class="field-action"
         use:ripple
         use:tooltip={i18n.t('common.browse')}
         onclick={(e) => {
@@ -164,14 +164,14 @@
         }}
         aria-label={i18n.t('common.browse')}
       >
-        <IconFolder style="width: 18px; height: 18px;" />
+        <IconFolder />
       </button>
     {/if}
 
     {#if ActionIconComponent && onAction && !disabled}
       <button
         type="button"
-        class="icon-btn"
+        class="field-action"
         use:ripple
         use:tooltip={actionTooltip || ''}
         onclick={(e) => {
@@ -180,7 +180,7 @@
         }}
         aria-label={actionTooltip}
       >
-        <ActionIconComponent style="width: 18px; height: 18px;" />
+        <ActionIconComponent />
       </button>
     {/if}
 
@@ -242,11 +242,6 @@
   .input-box :global(.left-icon svg) {
     width: calc(var(--control-icon-size, 19px) * var(--ui-scale, 1)) !important;
     height: calc(var(--control-icon-size, 19px) * var(--ui-scale, 1)) !important;
-  }
-
-  .input-box :global(.icon-btn svg) {
-    width: calc(var(--control-icon-size, 18px) * var(--ui-scale, 1)) !important;
-    height: calc(var(--control-icon-size, 18px) * var(--ui-scale, 1)) !important;
   }
 
   .input-box:hover,
@@ -316,28 +311,5 @@
     gap: 4px;
     flex-shrink: 0;
     margin-left: auto;
-  }
-
-  .icon-btn {
-    width: 24px;
-    height: 24px;
-    border: none;
-    outline: none;
-    background: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-primary);
-    opacity: 0.45;
-    cursor: pointer;
-    padding: 0;
-    border-radius: var(--radius-sm, 6px);
-    transition: opacity 160ms ease, color 160ms ease;
-  }
-
-  .icon-btn:hover,
-  .icon-btn:focus-visible {
-    opacity: 0.95;
-    color: var(--accent);
   }
 </style>

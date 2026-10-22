@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { type as osType, version as osVersion } from '@tauri-apps/plugin-os';
-import { parseColorToRgb, mixRgb, computeAcrylicTintRgb } from './palette';
+import { computeAcrylicTintRgb } from './palette';
 import { logger } from '$lib/utils/logger';
 
 export type BackgroundType =
@@ -28,6 +28,8 @@ export interface BackgroundSettings {
   acrylicTint: boolean;
   acrylicOpacity: number;
 }
+
+const FLAT_DEFAULT_KEY = 'pawstash_bg_flat_default';
 
 export class BackgroundState {
   version = $state(0);
@@ -62,17 +64,13 @@ export class BackgroundState {
       acrylicOpacity: defaultAcrylicOpacity()
     } satisfies BackgroundSettings);
     this.version++;
-    void this.applyWindowEffect(this.settings.type);
+    void this.applyWindowEffect(nativeEffect(this.settings.type));
     this.save();
   }
 
   setType(type: BackgroundType) {
     this.settings.type = type;
-    if (type === 'custom' || type === 'oled' || type === 'palette') {
-      this.applyWindowEffect('none');
-    } else {
-      this.applyWindowEffect(type);
-    }
+    void this.applyWindowEffect(nativeEffect(type));
     this.save();
   }
 
@@ -81,7 +79,7 @@ export class BackgroundState {
     this.settings.customKind = 'image';
     this.settings.type = 'custom';
     this.version++;
-    this.applyWindowEffect('none');
+    void this.applyWindowEffect('none');
     this.save();
   }
 
@@ -90,7 +88,7 @@ export class BackgroundState {
     this.settings.customKind = 'video';
     this.settings.type = 'custom';
     this.version++;
-    this.applyWindowEffect('none');
+    void this.applyWindowEffect('none');
     this.save();
   }
 
@@ -170,9 +168,8 @@ export class BackgroundState {
   }
 
   refreshWindowEffect() {
-    const { type } = this.settings;
-    if (type === 'custom' || type === 'oled' || type === 'palette') return;
-    void this.applyWindowEffect(type);
+    const effect = nativeEffect(this.settings.type);
+    if (effect !== 'none') void this.applyWindowEffect(effect);
   }
 
   private save() {
@@ -198,12 +195,21 @@ export class BackgroundState {
     if (typeof this.settings.acrylicOpacity !== 'number') {
       this.settings.acrylicOpacity = defaultAcrylicOpacity();
     }
+    if (typeof localStorage !== 'undefined' && localStorage.getItem(FLAT_DEFAULT_KEY) !== '1') {
+      if (this.settings.type === (isWindowsPlatform() ? 'acrylic' : 'oled')) this.settings.type = 'palette';
+      localStorage.setItem(FLAT_DEFAULT_KEY, '1');
+      this.save();
+    }
     if (!supportedBackgroundTypes().includes(this.settings.type)) {
       this.settings.type = defaultBackgroundType();
       this.save();
     }
-    this.applyWindowEffect(this.settings.type);
+    void this.applyWindowEffect(nativeEffect(this.settings.type));
   }
+}
+
+function nativeEffect(type: BackgroundType): string {
+  return type === 'custom' || type === 'oled' || type === 'palette' ? 'none' : type;
 }
 
 export const backgroundState = new BackgroundState();
@@ -271,7 +277,7 @@ export function supportedBackgroundTypes(): BackgroundType[] {
 }
 
 export function defaultBackgroundType(): BackgroundType {
-  return isWindowsPlatform() ? 'acrylic' : 'oled';
+  return 'palette';
 }
 
 export function defaultAcrylicOpacity(isDark?: boolean): number {

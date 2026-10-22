@@ -4,6 +4,7 @@ import { serverPortState } from '$lib/state/serverPort.svelte';
 import { logger } from '$lib/utils/logger';
 
 import { thumbnailKey } from '$lib/utils/cacheKey';
+import { videoPoster } from '$lib/utils/media';
 
 const thumbnailMemoryCache = new Map<string, string>();
 const pendingRequests = new Map<string, Promise<string | undefined>>();
@@ -217,6 +218,8 @@ function extractVideoThumbnail(videoUrl: string, key?: string, maxWidth = 360): 
     video.playsInline = true;
     video.preload = 'metadata';
     video.crossOrigin = 'anonymous';
+    const poster = videoPoster();
+    if (poster) video.poster = poster;
 
     const offscreen = document.createElement('div');
     offscreen.style.cssText =

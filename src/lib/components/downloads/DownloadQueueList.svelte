@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { paintSelect } from '$lib/actions/paintSelect';
   import { onMount, onDestroy } from 'svelte';
   import { countDownloadPosts, downloadPostKey, downloadState, type DownloadFilter } from '$lib/state/downloadState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
@@ -12,17 +13,13 @@
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import type { DownloadItem } from '$lib/types/download';
   import PageShell from '$lib/components/layout/PageShell.svelte';
-  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import HeaderActions from '$lib/components/layout/HeaderActions.svelte';
-  import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
-  import Input from '$lib/components/ui/Input.svelte';
-  import Select from '$lib/components/ui/Select.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
-  import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
-  import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
+  import SortSection from '$lib/components/layout/SortSection.svelte';
+  import type { MenuItem } from '$lib/components/ui/MenuList.svelte';
   import { ripple } from '$lib/motion';
   import DownloadItemCard from './DownloadItemCard.svelte';
   import DownloadGroupCard from './DownloadGroupCard.svelte';
@@ -31,13 +28,10 @@
   import { GridHandoff } from '$lib/motion/gridHandoff.svelte';
   import MediaViewer, { type MediaViewerItem, type MediaViewerKind } from '$lib/components/content/MediaViewer.svelte';
   import { selectionState } from '$lib/state/selectionState.svelte';
-  import SelectionActionBar from '$lib/components/ui/SelectionActionBar.svelte';
   import type { FilterMap } from '$lib/types/filter';
   import { countActiveFilters, matchesTriStateFilter, toggleFilterKey } from '$lib/types/filter';
   import IconDownload from '~icons/fluent/arrow-download-24-regular';
   import IconOptions from '~icons/fluent/options-24-regular';
-  import IconGrid from '~icons/fluent/grid-24-regular';
-  import IconStack from '~icons/fluent/stack-24-regular';
   import IconImage from '~icons/fluent/image-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
   import IconMusic from '~icons/fluent/music-note-2-24-regular';
@@ -48,9 +42,7 @@
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconFolderOpen from '~icons/fluent/folder-open-24-regular';
   import IconCheckboxChecked from '~icons/fluent/checkbox-checked-24-regular';
-  import IconArrowSort from '~icons/fluent/arrow-sort-24-regular';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
-  import IconMoreVertical from '~icons/fluent/more-vertical-24-regular';
   import IconPause from '~icons/fluent/pause-20-regular';
   import IconPlay from '~icons/fluent/play-20-regular';
   import IconRetry from '~icons/fluent/arrow-counterclockwise-20-regular';
@@ -72,7 +64,6 @@
   }
 
   type DownloadSort = 'newest' | 'oldest' | 'name_asc' | 'name_desc' | 'size_desc' | 'size_asc';
-  const filters: DownloadFilter[] = ['all', 'active', 'completed'];
   const sortOptions: DownloadSort[] = ['newest', 'oldest', 'name_asc', 'name_desc', 'size_desc', 'size_asc'];
 
   const savedState = navigationState.getViewState<{
@@ -91,8 +82,6 @@
   let searchQuery = $state(savedState?.searchQuery ?? '');
   let searchOpen = $state(savedState?.searchOpen ?? Boolean(savedState?.searchQuery));
   let filterOpen = $state(false);
-  let stickyFilterOpen = $state(false);
-  let mobileMoreOpen = $state(false);
   let scaleVisible = $state(false);
   let scaleTimer: ReturnType<typeof setTimeout> | undefined;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -106,7 +95,6 @@
   let completedPostsCount = $derived(countDownloadPosts(downloadState.downloads, isCompleted));
   let totalCount = $derived(downloadState.downloads.length);
   let totalPostsCount = $derived(countDownloadPosts(downloadState.downloads));
-  let currentSortLabel = $derived(i18n.t(`downloads.sort_${sortBy}`));
 
   function tabOption(value: DownloadFilter, label: string, posts: number, files: number): ChoiceOption<DownloadFilter> {
     return { value, label, count: posts, title: i18n.t('downloads.tab_count_title', { posts, files }) };
@@ -231,7 +219,6 @@
   $effect(() => handoff.sync(sortedDownloads.length > 0, downloadState.loading));
   onDestroy(() => handoff.destroy());
 
-
   let groupedDownloads = $derived.by(() => {
     const groups = new Map<string, DownloadGroup>();
     for (const item of sortedDownloads) {
@@ -311,8 +298,6 @@
     return items.find((item) => /\.(avif|bmp|gif|jpe?g|png|webp|m4v|mkv|mov|mp4|webm)(?:\?.*)?$/i.test(item.filename)) || items[0];
   }
 
-
-
   function previewUrl(item?: DownloadItem) {
     if (!item) return undefined;
     const port = serverPortState.port || 0;
@@ -326,21 +311,17 @@
     return item.url;
   }
 
-  function localPathUrl(path?: string) {
-    return resolveLocalMediaUrl(path);
-  }
-
   function itemThumbnailUrl(item: DownloadItem): string | undefined {
-    return localPathUrl(item.file_preview_path) || item.file_preview_url || undefined;
+    return resolveLocalMediaUrl(item.file_preview_path) || item.file_preview_url || undefined;
   }
 
   function groupThumbnailUrl(items: DownloadItem[]): string | undefined {
     const withPostThumb = items.find((i) => i.post_preview_path);
-    if (withPostThumb?.post_preview_path) return localPathUrl(withPostThumb.post_preview_path);
+    if (withPostThumb?.post_preview_path) return resolveLocalMediaUrl(withPostThumb.post_preview_path);
     const withPostUrl = items.find((i) => i.post_preview_url);
     if (withPostUrl?.post_preview_url) return withPostUrl.post_preview_url;
     const withFileThumb = items.find((i) => i.file_preview_path);
-    if (withFileThumb?.file_preview_path) return localPathUrl(withFileThumb.file_preview_path);
+    if (withFileThumb?.file_preview_path) return resolveLocalMediaUrl(withFileThumb.file_preview_path);
     const withFileUrl = items.find((i) => i.file_preview_url);
     if (withFileUrl?.file_preview_url) return withFileUrl.file_preview_url;
     return undefined;
@@ -350,12 +331,6 @@
     if (downloadState.filter === 'active' && downloadState.downloads.length > 0 && downloadState.activeDownloadsCount === 0) {
       downloadState.filter = 'all';
     }
-  });
-
-  $effect(() => {
-    if (!searchOpen) return;
-    const input = document.querySelector('.downloads-search-input') as HTMLInputElement | null;
-    input?.focus();
   });
 
   onMount(() => {
@@ -368,13 +343,6 @@
       if (saveTimer) clearTimeout(saveTimer);
     };
   });
-
-
-
-  function closeSearch() {
-    searchQuery = '';
-    searchOpen = false;
-  }
 
   async function openDownloadsFolder() {
     try {
@@ -394,38 +362,53 @@
   }
 
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'downloads');
+
+  let pageMenu = $derived<MenuItem[]>([
+    ...(anyRunning || anyPaused
+      ? [
+          {
+            group: 'queue',
+            label: i18n.t(anyRunning ? 'downloads.pause_all' : 'downloads.resume_all'),
+            icon: anyRunning ? IconPause : IconPlay,
+            disabled: bulkBusy,
+            onclick: () => void toggleAllDownloads()
+          }
+        ]
+      : []),
+    ...(downloadState.failedDownloadsCount > 0
+      ? [{ group: 'queue', label: i18n.t('downloads.retry_failed'), icon: IconRetry, disabled: bulkBusy, onclick: () => void retryAllFailed() }]
+      : []),
+    {
+      group: 'page',
+      label: i18n.t(isSelectionActive ? 'selection.exit' : 'selection.select_mode'),
+      icon: IconCheckboxChecked,
+      active: isSelectionActive,
+      onclick: () => (isSelectionActive ? selectionState.exit() : selectionState.enter('downloads'))
+    },
+    { group: 'page', label: i18n.t('downloads.open_folder'), icon: IconFolderOpen, onclick: () => void openDownloadsFolder() },
+    {
+      group: 'page',
+      label: i18n.t('common.refresh'),
+      icon: IconArrowClockwise,
+      disabled: downloadState.loading,
+      onclick: () => void downloadState.refresh()
+    }
+  ]);
   let downloadKeys = $derived(sortedDownloads.map((d) => d.id));
   let downloadsMap = $derived(new Map(sortedDownloads.map((d) => [d.id, d])));
   let selectedDownloads = $derived(isSelectionActive ? selectionState.getItems<DownloadItem>() : []);
+  let batchTargets = $derived(selectedDownloads.length > 0 ? selectedDownloads : sortedDownloads);
 
-  let hasPausable = $derived(
-    selectedDownloads.length > 0
-      ? selectedDownloads.some((d) => ['queued', 'resolving', 'downloading', 'verifying'].includes(d.status))
-      : sortedDownloads.some((d) => ['queued', 'resolving', 'downloading', 'verifying'].includes(d.status))
-  );
+  const isRunning = (item: DownloadItem) => ['queued', 'resolving', 'downloading', 'verifying'].includes(item.status);
+  const isPaused = (item: DownloadItem) => item.status === 'paused';
+  const isRetryable = (item: DownloadItem) => ['failed', 'cancelled', 'missing'].includes(item.status);
+  const isOnDisk = (item: DownloadItem) => isCompleted(item) && Boolean(item.final_path);
 
-  let hasResumable = $derived(
-    selectedDownloads.length > 0
-      ? selectedDownloads.some((d) => d.status === 'paused')
-      : sortedDownloads.some((d) => d.status === 'paused')
-  );
-
-  let hasRetryable = $derived(
-    selectedDownloads.length > 0
-      ? selectedDownloads.some((d) => ['failed', 'cancelled', 'missing'].includes(d.status))
-      : sortedDownloads.some((d) => ['failed', 'cancelled', 'missing'].includes(d.status))
-  );
-
-  let hasCompleted = $derived(
-    selectedDownloads.length > 0
-      ? selectedDownloads.some((d) => d.status === 'completed' && Boolean(d.final_path))
-      : sortedDownloads.some((d) => d.status === 'completed' && Boolean(d.final_path))
-  );
-
-  let allActiveSelected = $derived(
-    selectedDownloads.length > 0 &&
-      selectedDownloads.every((d) => ['queued', 'resolving', 'downloading', 'verifying'].includes(d.status))
-  );
+  let hasPausable = $derived(batchTargets.some(isRunning));
+  let hasResumable = $derived(batchTargets.some(isPaused));
+  let hasRetryable = $derived(batchTargets.some(isRetryable));
+  let hasCompleted = $derived(batchTargets.some(isOnDisk));
+  let allActiveSelected = $derived(selectedDownloads.length > 0 && selectedDownloads.every(isRunning));
 
   $effect(() => {
     selectionState.setContext('downloads', downloadKeys, downloadsMap);
@@ -435,63 +418,28 @@
     selectionState.selectAll(sortedDownloads.map((d) => ({ key: d.id, item: d })));
   }
 
-  async function batchPause() {
-    const items = selectedDownloads.length > 0 ? selectedDownloads : sortedDownloads;
-    const pausable = items.filter((item) => ['queued', 'resolving', 'downloading', 'verifying'].includes(item.status));
-    if (pausable.length === 0) return;
+  async function runBatch(match: (item: DownloadItem) => boolean, operation: (id: string) => Promise<void>, title: string) {
+    const targets = batchTargets.filter(match);
+    if (targets.length === 0) return;
     try {
-      for (const item of pausable) {
-        await downloadState.pause(item.id);
+      for (const item of targets) {
+        await operation(item.id);
       }
-      notify.success(
-        i18n.t('downloads.pause'),
-        i18n.t('counts.downloads', { count: pausable.length })
-      );
+      notify.success(title, i18n.t('counts.downloads', { count: targets.length }));
       selectionState.exit();
     } catch (err) {
       notify.error(i18n.t('downloads.action_error'), err);
     }
   }
 
-  async function batchResume() {
-    const items = selectedDownloads.length > 0 ? selectedDownloads : sortedDownloads;
-    const resumable = items.filter((item) => item.status === 'paused');
-    if (resumable.length === 0) return;
-    try {
-      for (const item of resumable) {
-        await downloadState.resume(item.id);
-      }
-      notify.success(
-        i18n.t('downloads.resume'),
-        i18n.t('counts.downloads', { count: resumable.length })
-      );
-      selectionState.exit();
-    } catch (err) {
-      notify.error(i18n.t('downloads.action_error'), err);
-    }
-  }
-
-  async function batchRetry() {
-    const items = selectedDownloads.length > 0 ? selectedDownloads : sortedDownloads;
-    const retryable = items.filter((item) => ['failed', 'cancelled', 'missing'].includes(item.status));
-    if (retryable.length === 0) return;
-    try {
-      for (const item of retryable) {
-        await downloadState.retry(item.id);
-      }
-      notify.success(
-        i18n.t('downloads.retry'),
-        i18n.t('counts.downloads', { count: retryable.length })
-      );
-      selectionState.exit();
-    } catch (err) {
-      notify.error(i18n.t('downloads.action_error'), err);
-    }
-  }
+  const batchPause = () => runBatch(isRunning, (id) => downloadState.pause(id), i18n.t('downloads.pause'));
+  const batchResume = () => runBatch(isPaused, (id) => downloadState.resume(id), i18n.t('downloads.resume'));
+  const batchRetry = () => runBatch(isRetryable, (id) => downloadState.retry(id), i18n.t('downloads.retry'));
+  const batchRemove = () =>
+    runBatch(() => true, (id) => downloadState.remove(id), i18n.t(allActiveSelected ? 'downloads.cancel' : 'downloads.remove'));
 
   async function batchShowInFolder() {
-    const items = selectedDownloads.length > 0 ? selectedDownloads : sortedDownloads;
-    const completed = items.filter((d) => d.status === 'completed' && Boolean(d.final_path));
+    const completed = batchTargets.filter(isOnDisk);
     if (completed.length === 0) return;
     try {
       const paths = Array.from(new Set(completed.map((d) => d.final_path)));
@@ -501,23 +449,6 @@
       selectionState.exit();
     } catch (err) {
       notify.error(i18n.t('downloads.show_in_folder_failed'), err);
-    }
-  }
-
-  async function batchRemove() {
-    const items = selectedDownloads.length > 0 ? selectedDownloads : sortedDownloads;
-    if (items.length === 0) return;
-    try {
-      for (const item of items) {
-        await downloadState.remove(item.id);
-      }
-      notify.success(
-        allActiveSelected ? i18n.t('downloads.cancel') : i18n.t('downloads.remove'),
-        i18n.t('counts.downloads', { count: items.length })
-      );
-      selectionState.exit();
-    } catch (err) {
-      notify.error(i18n.t('downloads.action_error'), err);
     }
   }
 
@@ -546,20 +477,7 @@
     }}
     align="left"
     class="downloads-mode-choice"
-  >
-    {#snippet activeAddon()}
-      <Select
-        options={sortOptions.map((option) => ({ value: option, label: i18n.t(`downloads.sort_${option}`) }))}
-        value={sortBy}
-        onchange={(value) => sortBy = value as DownloadSort}
-        class="downloads-sort-select"
-        icon={IconArrowSort}
-        iconOnly={true}
-        ariaLabel={`${i18n.t('favorites.sort_by')}: ${currentSortLabel}`}
-        align="right"
-      />
-    {/snippet}
-  </ChoiceGroup>
+  />
 {/snippet}
 
 {#snippet downloadFilterInnerContent()}
@@ -583,7 +501,6 @@
         }
       }}
     >
-      <IconStack class="view-option-icon" />
       <span>
         <strong>{i18n.t('downloads.group_by_posts')}</strong>
         <small>{i18n.t('downloads.group_by_posts_desc')}</small>
@@ -622,105 +539,41 @@
   </div>
 {/snippet}
 
-{#snippet filterControl(source: 'main' | 'sticky')}
-  {#if source === 'sticky'}
-    <PopoverMenu
-      bind:open={stickyFilterOpen}
-      title={i18n.t('downloads.filters')}
-      badge={activeFilterCount}
-      active={activeFilterCount > 0}
-      icon={IconOptions}
-    >
-      {@render downloadFilterInnerContent()}
-    </PopoverMenu>
-  {:else}
-    <PopoverMenu
-      bind:open={filterOpen}
-      title={i18n.t('downloads.filters')}
-      badge={activeFilterCount}
-      active={activeFilterCount > 0}
-      icon={IconOptions}
-    >
-      {@render downloadFilterInnerContent()}
-    </PopoverMenu>
-  {/if}
-{/snippet}
-
-{#snippet actionsCluster(source: 'main' | 'sticky')}
-  <HeaderActions
-    bind:searchOpen
-    bind:searchQuery
-    searchPlaceholder={i18n.t('downloads.search_placeholder')}
+{#snippet filterControl()}
+  <PopoverMenu
+    bind:open={filterOpen}
+    title={i18n.t('downloads.filters')}
+    badge={activeFilterCount}
+    active={activeFilterCount > 0}
+    icon={IconOptions}
   >
-    {#if !layoutState.isMobile}
-      <Button
-        variant={isSelectionActive ? 'accent' : 'ghost'}
-        class="btn-icon"
-        onclick={() => (isSelectionActive ? selectionState.exit() : selectionState.enter('downloads'))}
-        title={i18n.t('selection.select_mode')}
-        aria-label={i18n.t('selection.select_mode')}
-      >
-        <IconCheckboxChecked class="w-5 h-5" />
-      </Button>
-      {#if source === 'sticky' && downloadState.filter === 'failed'}
-        <Button variant="ghost" class="btn-icon" disabled={bulkBusy} onclick={retryAllFailed} title={i18n.t('downloads.retry_failed')} aria-label={i18n.t('downloads.retry_failed')}>
-          <IconRetry class="w-5 h-5" />
-        </Button>
-      {:else if source === 'sticky' && (anyRunning || anyPaused)}
-        {@const label = anyRunning ? i18n.t('downloads.pause_all') : i18n.t('downloads.resume_all')}
-        <Button variant="ghost" class="btn-icon" disabled={bulkBusy} onclick={toggleAllDownloads} title={label} aria-label={label}>
-          {#if anyRunning}
-            <IconPause class="w-5 h-5" />
-          {:else}
-            <IconPlay class="w-5 h-5" />
-          {/if}
-        </Button>
-      {/if}
-      <Button variant="ghost" class="btn-icon" onclick={openDownloadsFolder} title={i18n.t('downloads.open_folder')} aria-label={i18n.t('downloads.open_folder')}>
-        <IconFolderOpen class="w-5 h-5" />
-      </Button>
-      {@render filterControl(source)}
-    {:else}
-      {@render filterControl(source)}
-
-      <Button
-        variant="ghost"
-        class="btn-icon"
-        onclick={() => (mobileMoreOpen = true)}
-        title={i18n.t('common.more')}
-        aria-label={i18n.t('common.more')}
-      >
-        <IconMoreVertical class="w-5 h-5" />
-      </Button>
-    {/if}
-  </HeaderActions>
+    <SortSection
+      options={sortOptions.map((option) => ({ value: option, label: i18n.t(`downloads.sort_${option}`) }))}
+      value={sortBy}
+      onchange={(value) => (sortBy = value)}
+    />
+    {@render downloadFilterInnerContent()}
+  </PopoverMenu>
 {/snippet}
 
-<PageShell scrollable={true} scrollKey={navigationState.entryKey} onrefresh={() => downloadState.refresh()}>
-  {#snippet overlay()}
-    <StickyHeader threshold={120}>
-      {#snippet center()}
-        {@render downloadTabs()}
-      {/snippet}
-      {#snippet trailing()}
-        {@render actionsCluster('sticky')}
-      {/snippet}
-    </StickyHeader>
-  {/snippet}
+{#snippet search()}
+  <HeaderActions
+    pinOpen bind:searchOpen bind:searchQuery searchPlaceholder={i18n.t('downloads.search_placeholder')} />
+{/snippet}
 
-  <PageHeader>
-    {#snippet tabs()}
-      {@render downloadTabs()}
-    {/snippet}
-    {#snippet actions()}
-      {@render actionsCluster('main')}
-    {/snippet}
-  </PageHeader>
+<PageShell title={i18n.t('nav.downloads')} menu={pageMenu} scrollKey={navigationState.entryKey} onrefresh={() => downloadState.refresh()}
+  selectionTotal={sortedDownloads.length}
+  onSelectAll={handleSelectAll}
+  {selectionActions}
+  views={downloadTabOptions.length > 1 ? downloadTabs : undefined}
+>
+  {#snippet filter()}{@render filterControl()}{/snippet}
+  {#snippet actions()}{@render search()}{/snippet}
 
   {#if sortedDownloads.length > 0 || handoff.skeletonMounted}
     {#if scaleVisible}<div class="scale-indicator">{configState.settings.grid_scale}%</div>{/if}
     <div class="grid-stack">
-      <div class="downloads-grid" {@attach ctrlWheel(handleGridWheel)} style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
+      <div class="downloads-grid" use:paintSelect={{ scope: 'downloads', keys: downloadKeys, items: downloadsMap }} {@attach ctrlWheel(handleGridWheel)} style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
         {#if showQueueTile}
           <DownloadQueueTile onshowfailed={() => (downloadState.filter = 'failed')} />
         {/if}
@@ -731,7 +584,7 @@
               items={group.items}
               previewUrl={previewUrl(media)}
               thumbnailUrl={groupThumbnailUrl(group.items)}
-              avatarUrl={localPathUrl(media.creator_avatar_path)}
+              avatarUrl={resolveLocalMediaUrl(media.creator_avatar_path)}
               title={media.post_title || i18n.t('downloads.unknown_post')}
               creatorName={media.creator_name}
               onopen={group.identity ? () => openPost(group.identity) : undefined}
@@ -773,78 +626,64 @@
   {#if downloadState.error}<p class="page-error">{downloadState.error}</p>{/if}
 </PageShell>
 
-<SelectionActionBar
-  totalCount={sortedDownloads.length}
-  onSelectAll={handleSelectAll}
->
+{#snippet selectionActions()}
   {#if hasPausable}
     <Button
       variant="ghost"
-      size="sm"
-      class="selection-btn"
+      class="btn-icon"
       onclick={batchPause}
       title={i18n.t('downloads.pause')}
     >
-      <IconPause class="w-[16px] h-[16px]" />
-      <span>{i18n.t('downloads.pause')}</span>
+      <IconPause />
     </Button>
   {/if}
 
   {#if hasResumable}
     <Button
       variant="ghost"
-      size="sm"
-      class="selection-btn"
+      class="btn-icon"
       onclick={batchResume}
       title={i18n.t('downloads.resume')}
     >
-      <IconPlay class="w-[16px] h-[16px]" />
-      <span>{i18n.t('downloads.resume')}</span>
+      <IconPlay />
     </Button>
   {/if}
 
   {#if hasRetryable}
     <Button
       variant="ghost"
-      size="sm"
-      class="selection-btn"
+      class="btn-icon"
       onclick={batchRetry}
       title={i18n.t('downloads.retry')}
     >
-      <IconRetry class="w-[16px] h-[16px]" />
-      <span>{i18n.t('downloads.retry')}</span>
+      <IconRetry />
     </Button>
   {/if}
 
   {#if hasCompleted}
     <Button
       variant="ghost"
-      size="sm"
-      class="selection-btn"
+      class="btn-icon"
       onclick={batchShowInFolder}
       title={i18n.t('downloads.show_in_folder')}
     >
-      <IconFolderOpen class="w-[16px] h-[16px]" />
-      <span>{i18n.t('downloads.show_in_folder')}</span>
+      <IconFolderOpen />
     </Button>
   {/if}
 
   <Button
-    variant="danger"
-    size="sm"
-    class="selection-btn"
+    variant="ghost"
+    class="btn-icon"
     onclick={batchRemove}
     title={allActiveSelected ? i18n.t('downloads.cancel') : i18n.t('downloads.remove')}
   >
     {#if allActiveSelected}
-      <IconDismiss class="w-[16px] h-[16px]" />
-      <span>{i18n.t('downloads.cancel')}</span>
+      <IconDismiss />
     {:else}
-      <IconDelete class="w-[16px] h-[16px]" />
-      <span>{i18n.t('downloads.remove')}</span>
+      <IconDelete />
     {/if}
   </Button>
-</SelectionActionBar>
+{/snippet}
 
 {#if viewerIndex !== null && viewerItems.length > 0}
   <MediaViewer
@@ -860,115 +699,19 @@
     }}
     ondelete={async (_, idx) => {
       const d = viewerDownloads[idx];
-      if (d) {
+      if (!d) return;
+      try {
         await downloadState.remove(d.id);
-        notify.success(i18n.t('downloads.remove'), { description: d.filename, glyph: 'removed' });
-        if (viewerDownloads.length <= 1) {
-          viewerIndex = null;
-        }
+      } catch (error) {
+        notify.error(i18n.t('downloads.action_error'), error);
+        return;
+      }
+      notify.success(i18n.t('downloads.remove'), { description: d.filename, glyph: 'removed' });
+      if (viewerDownloads.length <= 1) {
+        viewerIndex = null;
       }
     }}
   />
-{/if}
-
-{#if layoutState.isMobile}
-  <BottomSheet
-    open={mobileMoreOpen}
-    title={i18n.t('common.more')}
-    onclose={() => (mobileMoreOpen = false)}
-  >
-    <div class="flex flex-col gap-1 py-1">
-      <button
-        type="button"
-        class="sheet-action-item"
-        use:ripple
-        onclick={() => {
-          mobileMoreOpen = false;
-          if (isSelectionActive) {
-            selectionState.exit();
-          } else {
-            selectionState.enter('downloads');
-          }
-        }}
-      >
-        <IconCheckboxChecked class={isSelectionActive ? 'text-accent' : 'text-secondary'} />
-        <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{isSelectionActive ? i18n.t('selection.exit') : i18n.t('selection.select_mode')}</span>
-        </div>
-      </button>
-
-      {#if anyRunning || anyPaused}
-        <button
-          type="button"
-          class="sheet-action-item"
-          disabled={bulkBusy}
-          use:ripple
-          onclick={() => {
-            mobileMoreOpen = false;
-            void toggleAllDownloads();
-          }}
-        >
-          {#if anyRunning}
-            <IconPause class="text-secondary" />
-          {:else}
-            <IconPlay class="text-secondary" />
-          {/if}
-          <div class="flex flex-col min-w-0">
-            <span class="text-sm font-semibold text-primary">{anyRunning ? i18n.t('downloads.pause_all') : i18n.t('downloads.resume_all')}</span>
-          </div>
-        </button>
-      {/if}
-
-      {#if downloadState.failedDownloadsCount > 0}
-        <button
-          type="button"
-          class="sheet-action-item"
-          disabled={bulkBusy}
-          use:ripple
-          onclick={() => {
-            mobileMoreOpen = false;
-            void retryAllFailed();
-          }}
-        >
-          <IconRetry class="text-secondary" />
-          <div class="flex flex-col min-w-0">
-            <span class="text-sm font-semibold text-primary">{i18n.t('downloads.retry_failed')}</span>
-          </div>
-        </button>
-      {/if}
-
-      <button
-        type="button"
-        class="sheet-action-item"
-        use:ripple
-        onclick={() => {
-          mobileMoreOpen = false;
-          void openDownloadsFolder();
-        }}
-      >
-        <IconFolderOpen class="text-secondary" />
-        <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('downloads.open_folder')}</span>
-        </div>
-      </button>
-
-      <button
-        type="button"
-        class="sheet-action-item"
-        disabled={downloadState.loading}
-        use:ripple
-        onclick={() => {
-          mobileMoreOpen = false;
-          void downloadState.refresh();
-        }}
-      >
-        <IconArrowClockwise class="text-secondary" />
-        <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('feed.refresh')}</span>
-        </div>
-      </button>
-    </div>
-  </BottomSheet>
 {/if}
 
 <style>
@@ -976,55 +719,6 @@
     flex-shrink: 0 !important;
   }
 
-  :global(.downloads-sort-select) {
-    width: auto !important;
-    max-width: none !important;
-    flex-shrink: 0 !important;
-  }
-
-  :global(.downloads-sort-select .select-trigger),
-  :global(.downloads-sort-select .select-trigger.icon-only) {
-    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    padding: 0 calc(3px * var(--ui-scale, 1)) 0 0 !important;
-    background: var(--accent-container) !important;
-    color: var(--accent-on-container) !important;
-    border-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1))
-                   min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
-                   min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2))
-                   calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
-    border-top-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
-    border-bottom-left-radius: calc(var(--radius-sm, 6px) * var(--ui-scale, 1)) !important;
-    border-top-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
-    border-bottom-right-radius: min(calc(var(--radius-full) * var(--ui-scale, 1)), calc(var(--control-height, 46px) / 2)) !important;
-    border: none !important;
-    box-shadow: none !important;
-    transition:
-      background var(--duration-fast) var(--ease-expo),
-      color var(--duration-fast) var(--ease-expo),
-      opacity var(--duration-fast) var(--ease-expo) !important;
-  }
-
-  :global(.downloads-sort-select .select-trigger:hover),
-  :global(.downloads-sort-select .select-trigger.icon-only:hover) {
-    background: color-mix(in srgb, var(--accent-container) 70%, var(--accent-primary)) !important;
-    color: var(--accent-on-container) !important;
-  }
-
-  :global(.downloads-sort-select .select-trigger:active),
-  :global(.downloads-sort-select .select-trigger.icon-only:active) {
-    opacity: 0.85 !important;
-  }
-
-  :global(.downloads-sort-select .select-trigger svg),
-  :global(.downloads-sort-select .select-trigger.icon-only svg) {
-    width: 20px !important;
-    height: 20px !important;
-    color: var(--accent-on-container) !important;
-    opacity: 1 !important;
-  }
   .downloads-grid { position: relative; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--grid-card-width)), 1fr)); align-items: start; gap: var(--grid-gap); width: 100%; }
-  .scale-indicator { position: fixed; z-index: 80; left: 50%; bottom: 34px; transform: translateX(-50%); padding: 7px 12px; border: 1px solid rgba(var(--surface-tint-rgb), .14); border-radius: 999px; background: rgba(10,10,14,.82); color: var(--text-primary); font-size: 12px; font-weight: 650; backdrop-filter: blur(14px); pointer-events: none; }
   .page-error { margin-top: 16px; color: rgba(255,130,130,.8); font-size: 12px; text-align: center; }
 </style>

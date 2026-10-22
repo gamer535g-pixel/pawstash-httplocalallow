@@ -1,6 +1,7 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import type { Component, Snippet } from 'svelte';
   import { computePosition, autoUpdate, flip, shift, offset, size } from '@floating-ui/dom';
+  import { FLOATING_EDGE, FLOATING_OFFSET } from '$lib/utils/floating';
   import { portal } from '$lib/actions/portal';
   import { scrollable } from '$lib/actions/scrollable';
   import Button from '$lib/components/ui/Button.svelte';
@@ -11,7 +12,7 @@
     active?: boolean;
     badge?: number | string;
     title?: string;
-    icon?: any;
+    icon?: Component;
     triggerVariant?: 'ghost' | 'accent' | 'primary';
     align?: 'right' | 'left';
     width?: string;
@@ -61,16 +62,16 @@
       placement,
       strategy: 'fixed',
       middleware: [
-        offset(8),
+        offset(FLOATING_OFFSET),
         flip({
           fallbackPlacements: ['top-end', 'top-start', 'bottom', 'top'],
-          padding: 12
+          padding: FLOATING_EDGE
         }),
         shift({
-          padding: 12
+          padding: FLOATING_EDGE
         }),
         size({
-          padding: 12,
+          padding: FLOATING_EDGE,
           apply({ availableHeight, elements }) {
             Object.assign(elements.floating.style, {
               maxHeight: `${Math.min(availableHeight, 600)}px`
@@ -133,21 +134,16 @@
   {:else if !anchorEl}
     <div class="popover-trigger-wrapper">
       <Button
-        variant={triggerVariant ?? (open || active ? 'accent' : 'ghost')}
-        class="btn-icon popover-trigger-btn"
+        variant={triggerVariant ?? 'ghost'}
+        class="btn-icon popover-trigger-btn {active ? 'is-on' : ''}"
         onclick={toggle}
         {title}
-        aria-label={title || 'Menu'}
         aria-expanded={open}
         aria-haspopup="menu"
       >
         {#if icon}
-          {#if typeof icon === 'function'}
-            {@const IconComp = icon}
-            <IconComp />
-          {:else}
-            {@render icon()}
-          {/if}
+          {@const IconComp = icon}
+          <IconComp />
         {:else}
           <IconFilter />
         {/if}
@@ -191,22 +187,23 @@
 
   .popover-badge {
     position: absolute;
-    top: -3px;
-    right: -3px;
+    top: 4px;
+    right: 4px;
     display: flex;
     align-items: center;
     justify-content: center;
-    min-width: 17px;
-    height: 17px;
+    min-width: 16px;
+    height: 16px;
     padding: 0 4px;
     border-radius: var(--radius-full);
     background: var(--accent-primary);
-    color: var(--text-on-accent, var(--text-primary));
-    font-size: 10.5px;
-    font-weight: 700;
+    color: var(--accent-on-primary);
+    font-size: var(--type-label-sm-size);
+    font-weight: 600;
     line-height: 1;
+    font-variant-numeric: tabular-nums;
     pointer-events: none;
-    box-shadow: 0 0 0 2px var(--bg-surface);
+    box-shadow: 0 0 0 2px var(--surface);
   }
 
   :global(.popover-menu-dropdown.popover-portal) {
@@ -215,22 +212,14 @@
     min-width: min(220px, calc(100vw - 32px));
     max-width: min(420px, calc(100vw - 32px));
     max-height: min(600px, calc(100vh - 100px));
-    padding: var(--floating-padding);
-    border: var(--floating-border);
-    border-radius: var(--floating-radius);
-    background: var(--floating-bg);
-    box-shadow: var(--floating-shadow);
-    backdrop-filter: var(--floating-backdrop);
-    -webkit-backdrop-filter: var(--floating-backdrop);
     overflow-x: hidden !important;
-    box-sizing: border-box;
-    animation: popoverMenuIn 0.18s var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1));
+    animation: popoverMenuIn var(--duration-fast) var(--ease-standard);
   }
 
   @keyframes popoverMenuIn {
     from {
       opacity: 0;
-      transform: translateY(-6px) scale(0.98);
+      transform: translateY(-4px) scale(0.98);
     }
     to {
       opacity: 1;

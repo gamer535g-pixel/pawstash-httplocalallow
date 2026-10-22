@@ -5,26 +5,27 @@
 </script>
 
 <script lang="ts">
-  import { onMount, onDestroy, untrack, getContext, tick } from 'svelte';
+  import { onMount, untrack, getContext, tick } from 'svelte';
   import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
   import { contentState, postCacheKey, creatorCacheKey, normalizePostId, type CachedPost } from '$lib/state/contentState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { configState } from '$lib/state/configState.svelte';
   import { libraryState } from '$lib/state/libraryState.svelte';
   import { downloadState } from '$lib/state/downloadState.svelte';
+  import { favoriteActions } from '$lib/state/favoriteActions.svelte';
   import { accountState } from '$lib/state/accountState.svelte';
-  import { themeState, getContrastColor } from '$lib/theme/themeState.svelte';
+  import { themeState } from '$lib/theme/themeState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
-  import { apiFetchAccountFavorites, apiSetPostFavorite, apiFetchCreatorProfile, apiGetCreatorArtworkPath, openExternalUrl, apiFetchPostComments, apiProbeDownloadSize, apiProbeDownloadSizes, apiShowInFolder, apiStartDownload, openDownloadedFile, apiResolvePostUrl } from '$lib/utils/ipc';
+  import { apiFetchCreatorProfile, apiGetCreatorArtworkPath, openExternalUrl, apiFetchPostComments, apiProbeDownloadSizes, apiShowInFolder, apiStartDownload, openDownloadedFile, apiResolvePostUrl } from '$lib/utils/ipc';
   import type { Attachment, Comment, Post } from '$lib/types/content';
   import type { DownloadItem } from '$lib/types/download';
   import type { LibraryCollection } from '$lib/types/library';
   import { i18n } from '$lib/i18n';
-  import { formatDate, formatBytes, parseTags, getPostTags, cleanPostTitle, parseDateTimestamp } from '$lib/utils/formatters';
-  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isSameAttachment, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, getUnsupportedContainerFormat, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, isPostUnarchived, getAttachmentDeclaredSize, isOpenableArchive, type MediaFailureState } from '$lib/utils/media';
+  import { formatDate, formatBytes, getPostTags, cleanPostTitle } from '$lib/utils/formatters';
+  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isSameAttachment, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, getAttachmentDeclaredSize, isOpenableArchive, type MediaFailureState, formatServiceName, videoPoster } from '$lib/utils/media';
   import { seedFromImageUrl, seedFromThumbHash } from '$lib/theme/seedColor';
   import { serverPortState } from '$lib/state/serverPort.svelte';
-  import { extractDirectMediaLinks } from './RichContent.svelte';
+  import { extractDirectMediaLinks, sanitizeEmbedHtml } from './RichContent.svelte';
   import { apiOpenArchive, apiResolveCloudLink } from '$lib/utils/ipc';
   import { cloudLinkContext, cloudLockKind, postSecretText } from '$lib/utils/cloudLink';
   import { logger, logMediaError } from '$lib/utils/logger';
@@ -34,7 +35,6 @@
   import { extraField } from '$lib/utils/fields';
   import { handleGlobalPanicKey, panicCapture } from '$lib/utils/panic';
   import PageShell from '$lib/components/layout/PageShell.svelte';
-  import StickyHeader from '$lib/components/layout/StickyHeader.svelte';
   import HeroBackdrop from '$lib/components/ui/HeroBackdrop.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { tooltip, ripple } from '$lib/motion';
@@ -53,7 +53,6 @@
   import IconFullscreen from '~icons/fluent/full-screen-maximize-24-regular';
   import IconCloud from '~icons/fluent/cloud-24-regular';
   import IconSearch from '~icons/fluent/search-24-regular';
-  import IconArrowLeft from '~icons/fluent/arrow-left-24-regular';
   import IconDownload from '~icons/fluent/arrow-download-24-regular';
   import IconArrowDownload from '~icons/fluent/arrow-download-24-regular';
   import IconCheck from '~icons/fluent/checkmark-20-regular';
@@ -72,8 +71,17 @@
   import IconHeart from '~icons/fluent/heart-24-regular';
   import IconHeartFilled from '~icons/fluent/heart-24-filled';
   import IconDocument from '~icons/fluent/document-24-regular';
-  import IconMusic from '~icons/fluent/music-note-2-24-regular';
   import IconEye from '~icons/fluent/eye-24-regular';
+  import IconSource from '~icons/fluent/database-24-regular';
+  import IconLink from '~icons/fluent/link-24-regular';
+  import IconLinkSquare from '~icons/fluent/link-square-24-regular';
+  import IconTextCopy from '~icons/fluent/document-copy-24-regular';
+  import IconPersonOpen from '~icons/fluent/person-arrow-right-24-regular';
+  import IconHistory from '~icons/fluent/history-24-regular';
+  import IconFolderOpen from '~icons/fluent/folder-open-24-regular';
+  import IconNumberSymbol from '~icons/fluent/number-symbol-24-regular';
+  import ChipSelect from '$lib/components/layout/ChipSelect.svelte';
+  import type { MenuItem } from '$lib/components/layout/OverflowMenu.svelte';
   import IconChevronDown from '~icons/fluent/chevron-down-24-regular';
   import IconChevronUp from '~icons/fluent/chevron-up-24-regular';
   import IconVideoOff from '~icons/fluent/video-off-24-regular';
@@ -83,15 +91,10 @@
   import IconImage from '~icons/fluent/image-24-regular';
   import IconComment from '~icons/fluent/comment-24-regular';
   import IconFolder from '~icons/fluent/folder-24-regular';
-  import IconFolderAdd from '~icons/fluent/folder-add-24-regular';
   import IconFolderZip from '~icons/fluent/folder-zip-24-regular';
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
   import IconSparkle from '~icons/fluent/sparkle-24-regular';
-  import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
-  import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
-  import IconMoreVertical from '~icons/fluent/more-vertical-24-regular';
-  import IconCopy from '~icons/fluent/copy-24-regular';
   import IconArrowSort from '~icons/fluent/arrow-sort-24-regular';
   import CloudFolderModal from '$lib/components/content/CloudFolderModal.svelte';
   import CloudLinkCard from '$lib/components/content/CloudLinkCard.svelte';
@@ -99,6 +102,7 @@
   import type { ArchiveAttachment, ArchiveOpenResult, CloudFolderResult, CloudLockKind, CloudNode } from '$lib/types/cloud';
   import { providerState } from '$lib/state/providerState.svelte';
   import { notify } from '$lib/utils/toast';
+  import { copyText } from '$lib/utils/clipboard';
   import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
 
   interface PostEmbed {
@@ -198,6 +202,7 @@
       ? (post.embed as PostEmbed)
       : null
   );
+  let embedHtml = $derived(postEmbed?.html ? sanitizeEmbedHtml(postEmbed.html) : '');
   let creatorPosts = $derived.by(() => {
     const key = creatorCacheKey(service, creatorId);
     return contentState.creators[key]?.posts || [];
@@ -318,7 +323,7 @@
 
   let revisionSelectOptions = $derived.by(() => {
     return [
-      { value: 'latest', label: `${i18n.t('post.revision_current')} [current]` },
+      { value: 'latest', label: i18n.t('post.revision_current') },
       ...filteredRevisions.map((rev, idx) => {
         const revPost = (rev as any).post || rev;
         const revDate = revPost.edited || revPost.added || revPost.published;
@@ -377,7 +382,62 @@
     }
   });
 
-  let mobileMoreOpen = $state(false);
+  let postTitleEl = $state<HTMLElement | null>(null);
+
+  let postMenu = $derived.by<MenuItem[]>(() => {
+    if (!post) return [];
+    const openTargets =
+      activeProviderId === 'auto' && providersWithPost.length > 1
+        ? providersWithPost.map((p) => ({ id: p.id as string | undefined, name: formatProviderName(p.name || p.id) }))
+        : [{ id: activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined, name: currentProviderName }];
+    return [
+      ...(media.length > 0
+        ? [
+            allMediaDownloaded
+              ? { group: 'get', label: i18n.t('downloads.open_post_folder'), icon: IconFolderOpen, onclick: () => void openPostFolder() }
+              : {
+                  group: 'get',
+                  label: i18n.t(downloadingAll ? 'post.downloading_all' : 'post.download_all'),
+                  detail: totalMediaBytes > 0 ? formatBytes(totalMediaBytes) : undefined,
+                  icon: IconDownload,
+                  disabled: downloadingAll || allMediaQueued,
+                  onclick: () => void downloadAllMedia()
+                }
+          ]
+        : []),
+      ...(post.file || media.length > 0
+        ? [{ group: 'get', label: i18n.t('post.view_preview'), icon: IconEye, onclick: openPreviewViewer }]
+        : []),
+      {
+        group: 'open',
+        label: i18n.t('feed.open_creator'),
+        detail: creatorName || undefined,
+        icon: IconPersonOpen,
+        onclick: () => navigationState.openCreator(service, creatorId)
+      },
+      { group: 'open', label: i18n.t('post.open_original_post'), detail: formatServiceName(service), icon: IconOpen, onclick: openOriginalPost },
+      ...openTargets.map((target) => ({
+        group: 'open',
+        label: i18n.t('post.open_in_provider'),
+        detail: target.name,
+        icon: IconGlobe,
+        onclick: () => openInProvider(target.id)
+      })),
+      {
+        group: 'copy',
+        label: i18n.t('post.copy_link'),
+        detail: currentProviderName,
+        icon: IconLink,
+        onclick: copyPostLink
+      },
+      ...(getPlatformPostUrl(service, creatorId, postId, creatorProfile?.public_id)
+        ? [{ group: 'copy', label: i18n.t('post.copy_link'), detail: formatServiceName(service), icon: IconLinkSquare, onclick: copyOriginalLink }]
+        : []),
+      ...(postPlainText ? [{ group: 'copy', label: i18n.t('post.copy_text'), icon: IconTextCopy, onclick: copyPostText }] : []),
+      { group: 'copy', label: i18n.t('post.copy_id'), detail: `#${postId}`, detailMono: true, icon: IconNumberSymbol, onclick: copyPostId },
+      { group: 'page', label: i18n.t('common.refresh'), icon: IconArrowClockwise, onclick: () => void refreshPost() }
+    ];
+  });
 
   let currentProviderName = $derived.by(() => {
     if (activeProviderId && activeProviderId !== 'auto') {
@@ -412,65 +472,49 @@
     if (url) void openExternalUrl(url);
   }
 
-  function openInBrowser() {
-    openInProvider();
-  }
-
-  let copiedPostLink = $state(false);
-  let copyLinkTimeout: ReturnType<typeof setTimeout> | null = null;
-  function copyPostLink(targetProvId?: string) {
-    const effectiveProvId = targetProvId || (activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined);
-    const doCopy = (url: string) => {
-      void navigator.clipboard.writeText(url);
-      copiedPostLink = true;
-      if (copyLinkTimeout) clearTimeout(copyLinkTimeout);
-      copyLinkTimeout = setTimeout(() => {
-        copiedPostLink = false;
-      }, 2000);
-    };
-
-    if (post?.page_url && (!effectiveProvId || effectiveProvId === post.provider_id)) {
-      doCopy(post.page_url);
+  function copyPostLink() {
+    const providerId = activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined;
+    if (post?.page_url && (!providerId || providerId === post.provider_id)) {
+      copyText(post.page_url, i18n.t('post.link_copied'));
       return;
     }
-
-    apiResolvePostUrl(service, creatorId, postId, effectiveProvId)
+    apiResolvePostUrl(service, creatorId, postId, providerId)
       .then((url) => {
-        if (url) doCopy(url);
+        if (url) copyText(url, i18n.t('post.link_copied'));
+        else notify.error(i18n.t('common.copy_failed'));
       })
-      .catch((err) => logger.warn('Failed to resolve post URL for copy', err));
+      .catch((error) => notify.error(i18n.t('common.copy_failed'), error));
   }
 
-  let copiedOriginalLink = $state(false);
-  let copyOriginalLinkTimeout: ReturnType<typeof setTimeout> | null = null;
   function copyOriginalLink() {
     const url = getPlatformPostUrl(service, creatorId, postId, creatorProfile?.public_id);
-    if (!url) return;
-    void navigator.clipboard.writeText(url);
-    copiedOriginalLink = true;
-    if (copyOriginalLinkTimeout) clearTimeout(copyOriginalLinkTimeout);
-    copyOriginalLinkTimeout = setTimeout(() => {
-      copiedOriginalLink = false;
-    }, 2000);
+    if (url) copyText(url, i18n.t('post.link_copied'));
   }
 
-  let copiedPostId = $state(false);
-  let copyIdTimeout: ReturnType<typeof setTimeout> | null = null;
-  function copyPostId() {
-    if (!postId) return;
-    void navigator.clipboard.writeText(postId);
-    copiedPostId = true;
-    if (copyIdTimeout) clearTimeout(copyIdTimeout);
-    copyIdTimeout = setTimeout(() => {
-      copiedPostId = false;
-    }, 2000);
-  }
-
-  onDestroy(() => {
-    if (copyLinkTimeout) clearTimeout(copyLinkTimeout);
-    if (copyOriginalLinkTimeout) clearTimeout(copyOriginalLinkTimeout);
-    if (copyIdTimeout) clearTimeout(copyIdTimeout);
+  let postPlainText = $derived.by(() => {
+    if (!richContent || typeof DOMParser === 'undefined') return '';
+    const html = richContent.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|h[1-6])>/gi, '$&\n');
+    const text = new DOMParser().parseFromString(html, 'text/html').body.textContent ?? '';
+    return text.replace(/\n{3,}/g, '\n\n').trim();
   });
+
+  function copyPostText() {
+    copyText(postPlainText, i18n.t('post.text_copied'));
+  }
+
+  async function refreshPost() {
+    const providerId = activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined;
+    try {
+      await contentState.loadPost(service, creatorId, postId, true, providerId);
+      void loadComments();
+    } catch (error) {
+      notify.error(i18n.t('feed.refresh_failed'), error);
+    }
+  }
+
+  function copyPostId() {
+    if (postId) copyText(postId);
+  }
 
   let resolvedCloudAttachments = $state<Attachment[]>([]);
   let cloudResolving = $state(false);
@@ -761,8 +805,6 @@
     return false;
   }
 
-
-
   let media = $derived.by(() => {
     const items: Attachment[] = [];
     if (post) {
@@ -854,6 +896,13 @@
 
   let activeMediaTab = $state<'all' | 'video' | 'photo' | 'file' | 'cloud' | 'downloaded'>('all');
   let mediaSort = $state<'default' | 'name_asc' | 'name_desc' | 'size_desc' | 'size_asc'>('default');
+  let mediaSortOptions = $derived([
+    { value: 'default', label: i18n.t('post.media_sort_default') },
+    { value: 'name_asc', label: i18n.t('post.media_sort_name_asc') },
+    { value: 'name_desc', label: i18n.t('post.media_sort_name_desc') },
+    { value: 'size_desc', label: i18n.t('post.media_sort_size_desc') },
+    { value: 'size_asc', label: i18n.t('post.media_sort_size_asc') }
+  ]);
   let mediaSearchQuery = $state('');
   let mediaSearchOpen = $state(false);
 
@@ -1253,7 +1302,7 @@
     name: postEmbed.subject || postEmbed.description || post?.title || 'Embed',
     path: postEmbed.url || `embed:${postId}`,
     server: '',
-    html: postEmbed.html
+    html: embedHtml || undefined
   } as Attachment & { html?: string }) : null);
 
   let viewerItems = $derived.by((): MediaViewerItem[] => viewerFiles.map((file, itemIndex) => {
@@ -1427,7 +1476,7 @@
   });
 
   $effect(() => {
-    const _ver = cloudResolvedVersion;
+    cloudResolvedVersion;
     const isPostFullyLoaded = entry.loaded && Boolean(post?.detail_fetched);
     const isPostLoading = entry.loading || (!isPostFullyLoaded && !entry.loaded && !entry.error);
     const isCloudResolving = cloudResolving;
@@ -1467,8 +1516,6 @@
     }
   });
 
-
-
   function handleCloseViewer(finalIndex?: number, finalTime?: number) {
     const closedIndex = typeof finalIndex === 'number' ? finalIndex : viewerIndex;
     viewerIndex = null;
@@ -1506,7 +1553,6 @@
   
   let saved = $derived(post ? libraryState.isSaved(post) : false);
   let saving = $derived(post ? libraryState.isPending(post) : false);
-  let stashes = $derived(libraryState.allStashes);
   const stashOptions = $derived(libraryState.stashOptions);
   let postStashes = $derived(post ? libraryState.getPostStashes(post) : []);
   let customStashes = $derived(post ? libraryState.getCustomPostStashes(post) : []);
@@ -1528,10 +1574,8 @@
     }
     return i18n.t('library.saved');
   });
-  let authenticated = $derived(accountState.session.authenticated);
 
-  let isFavorited = $state(false);
-  let favoritingPending = $state(false);
+  let isFavorited = $derived(accountState.isPostFavorite(service, creatorId, postId));
   let creatorAvatar = $state('');
   let creatorAvatarFailed = $state(false);
   let deletingDownloadId = $state<string | null>(null);
@@ -1542,8 +1586,8 @@
 
   $effect(() => {
     const currentMedia = media;
-    const downloads = downloadState.downloads;
-    const port = serverPortState.port;
+    downloadState.downloads;
+    serverPortState.port;
 
     for (let i = 0; i < currentMedia.length; i++) {
       const file = currentMedia[i];
@@ -1576,42 +1620,6 @@
   });
 
   let creatorName = $state('');
-
-  let deferredAttachments = $derived.by(() => {
-    if (!post?.attachments) return [];
-    return post.attachments.filter((att: Attachment) => (att as any).deferred === true || (!att.path && att.name));
-  });
-
-  let limitWarningText = $derived.by(() => {
-    if (deferredAttachments.length === 0) {
-      const warning = extraField(post, 'warning');
-      const explicitWarning = typeof warning === 'string' ? warning : '';
-      if (explicitWarning) return explicitWarning;
-      if (
-        post?.detail_fetched &&
-        (post.attachment_count ?? 0) > 0 &&
-        media.length === 0 &&
-        !post.file?.path &&
-        !richContent.includes('<img') &&
-        !richContent.includes('<video')
-      ) {
-        return i18n.t('post.files_exceed_limit_warning', { details: '' });
-      }
-      return '';
-    }
-
-    const videoCount = deferredAttachments.filter((f: Attachment) => isVideoUrl(f.name || '') || /\.(mp4|mkv|webm|mov|avi|flv|wmv|m4v)(?:$|[?#])/i.test(f.name || '')).length;
-    const photoCount = deferredAttachments.filter((f: Attachment) => isImageUrl(f.name || '') || /\.(png|jpe?g|gif|webp|bmp|avif)(?:$|[?#])/i.test(f.name || '')).length;
-    const otherCount = deferredAttachments.length - videoCount - photoCount;
-
-    const parts: string[] = [];
-    if (videoCount > 0) parts.push(i18n.t('counts.videos', { count: videoCount }));
-    if (photoCount > 0) parts.push(i18n.t('counts.photos', { count: photoCount }));
-    if (otherCount > 0) parts.push(i18n.t('counts.files', { count: otherCount }));
-    const details = parts.join(', ') || i18n.t('counts.files', { count: deferredAttachments.length });
-
-    return i18n.t('post.files_exceed_limit_warning', { details });
-  });
 
   let lastLoadedPostKey = '';
   $effect(() => {
@@ -1772,49 +1780,14 @@
 
   async function checkFavoriteStatus() {
     try {
-      const favorites = await accountState.fetchFavorites('post');
-      isFavorited = favorites.some((fav) => String(fav.id) === String(postId) && fav.service === service);
+      await accountState.fetchFavorites('post');
     } catch (error) {
       logger.error(`Failed to check post favorite status for ${service}:${postId}`, error);
     }
   }
 
-  async function toggleFavorite() {
-    if (!post || favoritingPending) return;
-    favoritingPending = true;
-    const targetState = !isFavorited;
-    const previousState = isFavorited;
-
-    isFavorited = targetState;
-    if (!authenticated) {
-      notify.success(i18n.t(targetState ? 'favorites.saved_locally' : 'favorites.removed_locally'), {
-        glyph: targetState ? 'favorited' : 'unfavorited'
-      });
-    } else {
-      notify.success(i18n.t(targetState ? 'post.added_to_favorites' : 'post.removed_from_favorites'), {
-        glyph: targetState ? 'favorited' : 'unfavorited'
-      });
-    }
-    if (targetState) {
-      accountState.addPostFavoriteOptimistic(post);
-    } else {
-      accountState.removePostFavoriteOptimistic(service, creatorId, postId);
-    }
-
-    try {
-      await apiSetPostFavorite(service, creatorId, postId, targetState);
-    } catch (error) {
-      logger.error(`Failed to toggle post favorite for ${service}:${postId}`, error);
-      isFavorited = previousState;
-      if (targetState) {
-        accountState.removePostFavoriteOptimistic(service, creatorId, postId);
-      } else {
-        accountState.addPostFavoriteOptimistic(post);
-      }
-      notify.error(i18n.t('post.favorite_failed'), error);
-    } finally {
-      favoritingPending = false;
-    }
+  function toggleFavorite() {
+    if (post) void favoriteActions.togglePost(post);
   }
 
   function remoteFileUrl(file: Attachment) {
@@ -1934,9 +1907,6 @@
     });
   });
 
-
-
-
   async function deleteDownload(item: DownloadItem) {
     if (deletingDownloadId) return;
     deletingDownloadId = item.id;
@@ -2022,6 +1992,13 @@
     })
   );
 
+  let allMediaQueued = $derived(
+    media.every((file) => {
+      const job = attachmentDownload(file);
+      return Boolean(job && !['failed', 'cancelled', 'missing'].includes(job.status));
+    })
+  );
+
   async function downloadAllMedia() {
     if (!post || downloadingAll) return;
 
@@ -2046,17 +2023,6 @@
       if (failed > 0) notify.error(i18n.t('post.download_all_failed', { count: failed }));
     } finally {
       downloadingAll = false;
-    }
-  }
-
-  async function toggleLibrary() {
-    if (!post) return;
-    const wasSaved = saved;
-    try {
-      await libraryState.toggle(post);
-      notify.success(i18n.t(wasSaved ? 'library.removed' : 'library.saved'), post.title || undefined);
-    } catch (error) {
-      notify.error(i18n.t('library.save_error'), error);
     }
   }
 
@@ -2181,7 +2147,7 @@
       >
         <span class="attachment-button-state downloaded-state">
           <IconCheck class="w-[16px] h-[16px]" />
-          <span>{i18n.t('post.downloaded')} · {formatBytes(Math.max(downloaded.total_bytes, downloaded.downloaded_bytes))}</span>
+          <span><span class="state-word">{i18n.t('post.downloaded')} · </span>{formatBytes(Math.max(downloaded.total_bytes, downloaded.downloaded_bytes))}</span>
         </span>
       </Button>
       <Button
@@ -2218,8 +2184,7 @@
         <span class="attachment-button-state downloading-state">
           {#if hasProgress}<IconDownload />{:else}<IconLoading />{/if}
           <span>
-            {verifying ? i18n.t('downloads.status_verifying') : queued ? i18n.t('downloads.status_queued') : resolving ? i18n.t('downloads.status_resolving') : i18n.t('post.downloading')}
-            {hasProgress ? ` · ${progress}%` : ''}
+            <span class:state-word={hasProgress}>{verifying ? i18n.t('downloads.status_verifying') : queued ? i18n.t('downloads.status_queued') : resolving ? i18n.t('downloads.status_resolving') : i18n.t('post.downloading')}{hasProgress ? ' · ' : ''}</span>{hasProgress ? `${progress}%` : ''}
           </span>
         </span>
       </Button>
@@ -2251,7 +2216,7 @@
         {#if hasProgress}<span class="attachment-progress-fill opacity-50" style:width={`${progress}%`}></span>{/if}
         <span class="attachment-button-state downloading-state text-[var(--status-warning)]">
           <IconPause />
-          <span>{i18n.t('downloads.status_paused')}{hasProgress ? ` · ${progress}%` : ''}</span>
+          <span><span class:state-word={hasProgress}>{i18n.t('downloads.status_paused')}{hasProgress ? ' · ' : ''}</span>{hasProgress ? `${progress}%` : ''}</span>
         </span>
       </Button>
       <Button
@@ -2281,7 +2246,7 @@
       >
         <span class="attachment-button-state text-[var(--status-error)]">
           <IconArrowClockwise />
-          <span>{i18n.t('downloads.retry')}{declaredSize ? ` · ${declaredSize}` : ''}</span>
+          <span><span class:state-word={Boolean(declaredSize)}>{i18n.t('downloads.retry')}{declaredSize ? ' · ' : ''}</span>{declaredSize}</span>
         </span>
       </Button>
       <Button
@@ -2323,7 +2288,7 @@
       >
         <span class="attachment-button-state">
           <IconDownload />
-          <span>{i18n.t('post.download')}{declaredSize ? ` · ${declaredSize}` : ''}</span>
+          <span><span class:state-word={Boolean(declaredSize)}>{i18n.t('post.download')}{declaredSize ? ' · ' : ''}</span>{declaredSize}</span>
         </span>
       </Button>
     {/if}
@@ -2346,113 +2311,68 @@
   </div>
 {/snippet}
 
-<PageShell scrollable={true} scrollKey={navigationState.entryKey}>
-  {#snippet overlay()}
-    <StickyHeader threshold={120}>
-      {#snippet leading()}
-        <Button variant="ghost" onclick={() => navigationState.back()} class="sticky-back-btn btn-icon" title={i18n.t('nav.back')}>
-          <IconArrowLeft class="w-[20px] h-[20px]" />
-        </Button>
-        <span class="sticky-post-title">{cleanPostTitle(post?.title) || ''}</span>
-      {/snippet}
+{#snippet postBarCreator(condensed: boolean)}
+  {#if post}
+    <Button
+      variant="ghost"
+      class="post-bar-creator {condensed ? 'is-condensed' : ''}"
+      onclick={() => navigationState.openCreator(service, creatorId)}
+      title={`${i18n.t('feed.open_creator')}: ${creatorName}`}
+      aria-label={`${i18n.t('feed.open_creator')}: ${creatorName}`}
+    >
+      {#if creatorAvatar && !creatorAvatarFailed}
+        <span class="post-creator-avatar"><img src={creatorAvatar} alt="" onerror={() => (creatorAvatarFailed = true)} /></span>
+      {:else}
+        <ServiceIcon {service} />
+      {/if}
+      {#if !condensed}<span class="post-bar-creator-name">{creatorName}</span>{/if}
+    </Button>
+  {/if}
+{/snippet}
 
-      {#snippet trailing()}
-        {#if post}
-          <Button
-            variant="ghost"
-            onclick={() => navigationState.openCreator(service, creatorId)}
-            class="sticky-creator-btn action-btn"
-            title={`${i18n.t('feed.open_creator')}: ${creatorName}`}
-            aria-label={`${i18n.t('feed.open_creator')}: ${creatorName}`}
-          >
-            {#if creatorAvatar && !creatorAvatarFailed}
-              <span class="post-creator-avatar"><img src={creatorAvatar} alt="" onerror={() => creatorAvatarFailed = true} /></span>
-            {:else}
-              <ServiceIcon {service} />
-            {/if}
-            <span class="sticky-creator-name">{creatorName}</span>
-          </Button>
+{#snippet postBarActions()}
+  {#if post}
+    <Button
+      variant="ghost"
+      class="btn-icon"
+      disabled={Boolean(post && favoriteActions.isPostPending(post))}
+      onclick={toggleFavorite}
+      title={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
+      aria-label={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
+      aria-pressed={isFavorited}
+    >
+      {#if isFavorited}<IconHeartFilled />{:else}<IconHeart />{/if}
+    </Button>
 
-          {#if !layoutState.isMobile}
-            <Button
-              variant={isFavorited ? 'accent' : 'ghost'}
-              disabled={favoritingPending}
-              onclick={toggleFavorite}
-              class="sticky-action-btn action-btn"
-              title={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
-            >
-              {#if isFavorited}
-                <IconHeartFilled class="w-[20px] h-[20px] fav-active-heart" />
-              {:else}
-                <IconHeart class="w-[20px] h-[20px]" />
-              {/if}
-              <span class="btn-text">{i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}</span>
-            </Button>
+    <Select
+      options={stashOptions}
+      selectedValues={postStashes}
+      placeholder={libraryButtonLabel}
+      onchange={handleStashToggle}
+      createLabel={i18n.t('library.new_stash')}
+      onCreate={handleCreateStash}
+      variant="ghost"
+      multi={true}
+      closeOnChange={false}
+      iconOnly={true}
+      icon={saved || postStashes.length > 0 ? IconSaved : IconSave}
+      disabled={saving}
+      ariaLabel={libraryButtonLabel}
+      align="right"
+    />
+  {/if}
+{/snippet}
 
-            <div class="sticky-stash-select">
-              <Select
-                options={stashOptions}
-                selectedValues={postStashes}
-                placeholder={libraryButtonLabel}
-                onchange={handleStashToggle}
-                createLabel={i18n.t('library.new_stash')}
-                onCreate={handleCreateStash}
-                variant={saved || postStashes.length > 0 ? 'accent' : 'ghost'}
-                multi={true}
-                closeOnChange={false}
-                icon={saved || postStashes.length > 0 ? IconSaved : IconSave}
-                disabled={saving}
-                align="right"
-              />
-            </div>
-          {:else}
-            <Button
-              variant={isFavorited ? 'accent' : 'ghost'}
-              disabled={favoritingPending}
-              onclick={toggleFavorite}
-              class="sticky-action-btn btn-icon sticky-fav-btn"
-              title={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
-              aria-label={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
-            >
-              {#if isFavorited}
-                <IconHeartFilled class="w-[18px] h-[18px] fav-active-heart" />
-              {:else}
-                <IconHeart class="w-[18px] h-[18px]" />
-              {/if}
-            </Button>
-
-            <div class="sticky-stash-select">
-              <Select
-                options={stashOptions}
-                selectedValues={postStashes}
-                placeholder={libraryButtonLabel}
-                onchange={handleStashToggle}
-                createLabel={i18n.t('library.new_stash')}
-                onCreate={handleCreateStash}
-                variant={saved || postStashes.length > 0 ? 'accent' : 'ghost'}
-                multi={true}
-                closeOnChange={false}
-                iconOnly={true}
-                icon={saved || postStashes.length > 0 ? IconSaved : IconSave}
-                disabled={saving}
-                ariaLabel={libraryButtonLabel}
-                align="right"
-              />
-            </div>
-
-            <Button
-              variant="ghost"
-              class="btn-icon action-btn"
-              onclick={() => (mobileMoreOpen = true)}
-              title={i18n.t('common.more')}
-              aria-label={i18n.t('common.more')}
-            >
-              <IconMoreVertical class="w-5 h-5" />
-            </Button>
-          {/if}
-        {/if}
-      {/snippet}
-    </StickyHeader>
+<PageShell
+  back
+  title={cleanPostTitle(post?.title) || i18n.t('feed.untitled')}
+  titleTrigger={postTitleEl}
+  menu={postMenu}
+  scrollKey={navigationState.entryKey}
+>
+  {#snippet heading(condensed)}{@render postBarCreator(condensed)}{/snippet}
+  {#snippet actions()}
+    {@render postBarActions()}
   {/snippet}
 
   {#if heroImageUrl}
@@ -2460,153 +2380,11 @@
   {/if}
 
   <div class="post-content-wrapper">
-    <div class="post-actions-bar">
-      {#if !layoutState.isMobile}
-        <div class="left-actions flex items-center gap-2">
-          <Button variant="ghost" onclick={() => navigationState.back()} class="action-btn">
-            <IconArrowLeft class="w-[18px] h-[18px]" />
-            <span>{i18n.t('nav.back')}</span>
-          </Button>
-
-          {#if post}
-            <Button
-              variant="ghost"
-              onclick={() => navigationState.openCreator(service, creatorId)}
-              class="action-btn creator-btn"
-            >
-              {#if creatorAvatar && !creatorAvatarFailed}
-                <span class="post-creator-avatar"><img src={creatorAvatar} alt="" onerror={() => creatorAvatarFailed = true} /></span>
-              {:else}
-                <ServiceIcon {service} />
-              {/if}
-              <span class="creator-name-text">{creatorName}</span>
-            </Button>
-
-            <Button
-              variant={isFavorited ? 'accent' : 'ghost'}
-              disabled={favoritingPending}
-              onclick={toggleFavorite}
-              class="action-btn"
-              title={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
-              aria-label={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
-            >
-              {#if isFavorited}
-                <IconHeartFilled class="w-[18px] h-[18px] fav-active-heart" />
-              {:else}
-                <IconHeart class="w-[18px] h-[18px]" />
-              {/if}
-              <span>{i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}</span>
-            </Button>
-          {/if}
-        </div>
-
-        <div class="right-actions flex items-center gap-2 ml-auto">
-          {#if post}
-            <div class="stash-select-container">
-              <Select
-                options={stashOptions}
-                selectedValues={postStashes}
-                placeholder={libraryButtonLabel}
-                onchange={handleStashToggle}
-                createLabel={i18n.t('library.new_stash')}
-                onCreate={handleCreateStash}
-                variant={saved || postStashes.length > 0 ? 'accent' : 'ghost'}
-                multi={true}
-                closeOnChange={false}
-                icon={saved || postStashes.length > 0 ? IconSaved : IconSave}
-                disabled={saving}
-                class="stash-select"
-                align="right"
-              />
-            </div>
-          {/if}
-        </div>
-      {:else}
-        <div class="left-actions flex items-center gap-2 min-w-0">
-          <Button
-            variant="ghost"
-            onclick={() => navigationState.back()}
-            class="action-btn btn-icon"
-            title={i18n.t('nav.back')}
-            aria-label={i18n.t('nav.back')}
-          >
-            <IconArrowLeft class="w-5 h-5" />
-          </Button>
-
-          {#if post}
-            <Button
-              variant="ghost"
-              onclick={() => navigationState.openCreator(service, creatorId)}
-              class="action-btn creator-btn"
-              title={`${i18n.t('feed.open_creator')}: ${creatorName}`}
-              aria-label={`${i18n.t('feed.open_creator')}: ${creatorName}`}
-            >
-              {#if creatorAvatar && !creatorAvatarFailed}
-                <span class="post-creator-avatar"><img src={creatorAvatar} alt="" onerror={() => creatorAvatarFailed = true} /></span>
-              {:else}
-                <ServiceIcon {service} />
-              {/if}
-              <span class="creator-name-text">{creatorName}</span>
-            </Button>
-
-            <Button
-              variant={isFavorited ? 'accent' : 'ghost'}
-              disabled={favoritingPending}
-              onclick={toggleFavorite}
-              class="action-btn btn-icon"
-              title={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
-              aria-label={i18n.t(isFavorited ? 'post.unfavorite' : 'post.favorite')}
-            >
-              {#if isFavorited}
-                <IconHeartFilled class="w-5 h-5 fav-active-heart" />
-              {:else}
-                <IconHeart class="w-5 h-5" />
-              {/if}
-            </Button>
-          {/if}
-        </div>
-
-        <div class="right-actions flex items-center gap-2 ml-auto shrink-0">
-          {#if post}
-            <div class="stash-select-container mobile-stash-select">
-              <Select
-                options={stashOptions}
-                selectedValues={postStashes}
-                placeholder={libraryButtonLabel}
-                onchange={handleStashToggle}
-                createLabel={i18n.t('library.new_stash')}
-                onCreate={handleCreateStash}
-                variant={saved || postStashes.length > 0 ? 'accent' : 'ghost'}
-                multi={true}
-                closeOnChange={false}
-                iconOnly={true}
-                icon={saved || postStashes.length > 0 ? IconSaved : IconSave}
-                disabled={saving}
-                class="stash-select"
-                ariaLabel={libraryButtonLabel}
-                align="right"
-              />
-            </div>
-
-            <Button
-              variant="ghost"
-              class="action-btn btn-icon"
-              onclick={() => (mobileMoreOpen = true)}
-              title={i18n.t('common.more')}
-              aria-label={i18n.t('common.more')}
-            >
-              <IconMoreVertical class="w-5 h-5" />
-            </Button>
-          {/if}
-        </div>
-      {/if}
-    </div>
-
     {#if post || (entry.loaded && !entry.loading) || (activeProviderId && activeProviderId !== 'auto') || candidateProviders.length > 0}
       <header class="detail-header">
         <div class="min-w-0 flex-1">
           {#if post}
-            <h1>{cleanPostTitle(post.title) || i18n.t('feed.untitled')}</h1>
+            <h1 bind:this={postTitleEl}>{cleanPostTitle(post.title) || i18n.t('feed.untitled')}</h1>
           {:else if autoEntry?.post?.title}
             <h1 class="opacity-75">{cleanPostTitle(autoEntry.post.title)}</h1>
           {/if}
@@ -2635,83 +2413,28 @@
             </div>
           {/if}
 
-          <div class="post-meta-actions-row flex items-center flex-wrap gap-2 mt-1 min-h-[38px] text-sm text-[var(--fg-muted)]">
-            <Button
-              variant="ghost"
-              onclick={openOriginalPost}
-              tooltip={`${i18n.t('post.open_original_post')}: ${service}`}
-              aria-label={`Open on ${service}`}
-            >
-              <ServiceIcon {service} class="w-4 h-4" />
-              <span class="capitalize">{service}</span>
-            </Button>
-
-            {#if post}
-              {#if activeProviderId === 'auto' && providersWithPost.length > 1}
-                {#each providersWithPost as prov}
-                  <span class="text-[var(--fg-subtle)]">·</span>
-                  <Button
-                    variant="ghost"
-                    onclick={() => openInProvider(prov.id)}
-                    tooltip={`${i18n.t('post.open_in_provider')}: ${formatProviderName(prov.name || prov.id)}`}
-                    aria-label={`Open in ${formatProviderName(prov.name || prov.id)}`}
-                  >
-                    <IconOpen class="w-4 h-4" />
-                    <span>{formatProviderName(prov.name || prov.id)}</span>
-                  </Button>
-                {/each}
-              {:else}
-                <span class="text-[var(--fg-subtle)]">·</span>
-                <Button
-                  variant="ghost"
-                  onclick={() => openInProvider(activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined)}
-                  tooltip={`${i18n.t('post.open_in_provider')}: ${currentProviderName}`}
-                  aria-label={`Open in ${currentProviderName}`}
-                >
-                  <IconOpen class="w-4 h-4" />
-                  <span>{currentProviderName}</span>
-                </Button>
-              {/if}
-            {/if}
-
-            <span class="text-[var(--fg-subtle)]">·</span>
-            <Button
-              variant="ghost"
-              onclick={copyPostId}
-              tooltip={i18n.t('post.copy_id')}
-            >
-              <span class="font-mono text-[var(--fg-subtle)]">#{postId}</span>
-              {#if copiedPostId}
-                <IconCheck class="w-[16px] h-[16px] text-accent" />
-              {:else}
-                <IconCopy class="w-[16px] h-[16px] opacity-60" />
-              {/if}
-            </Button>
-
-            {#if candidateProviders.length > 1}
-              <span class="text-[var(--fg-subtle)]">·</span>
-              <div class="inline-flex items-center shrink-0">
-                <Select
-                  variant="ghost"
+          {#if candidateProviders.length > 1 || filteredRevisions.length > 0}
+            <div class="post-meta-actions-row flex items-center flex-wrap gap-2 mt-2 -ml-[10px] min-h-[38px]">
+              {#if candidateProviders.length > 1}
+                <ChipSelect
                   options={providerSelectOptions}
-                  value={activeProviderId}
+                  value={activeProviderId ?? 'auto'}
                   onchange={onProviderChange}
+                  icon={IconSource}
+                  label={i18n.t('post.source')}
                 />
-              </div>
-            {/if}
-
-            {#if filteredRevisions.length > 0}
-              <span class="text-[var(--fg-subtle)]">·</span>
-              <div class="inline-flex items-center shrink-0">
-                <Select
-                  variant="ghost"
+              {/if}
+              {#if filteredRevisions.length > 0}
+                <ChipSelect
                   options={revisionSelectOptions}
                   value={selectedRevId !== null ? String(selectedRevId) : 'latest'}
                   onchange={onRevisionChange}
+                  icon={IconHistory}
+                  label={i18n.t('post.revision_current')}
                 />
-              </div>
-            {/if}
-          </div>
+              {/if}
+            </div>
+          {/if}
 
           {#if postTags.length > 0}
             <div class="post-tags-row mt-2">
@@ -2777,23 +2500,28 @@
                   }}
                 >
                   {#if media.length > 1}
-                    <div class="media-sort-selector">
-                      <Select
-                        options={[
-                          { value: 'default', label: i18n.t('post.media_sort_default') },
-                          { value: 'name_asc', label: i18n.t('post.media_sort_name_asc') },
-                          { value: 'name_desc', label: i18n.t('post.media_sort_name_desc') },
-                          { value: 'size_desc', label: i18n.t('post.media_sort_size_desc') },
-                          { value: 'size_asc', label: i18n.t('post.media_sort_size_asc') }
-                        ]}
-                        value={mediaSort}
-                        onchange={(val) => mediaSort = val as any}
-                        variant="ghost"
-                        icon={IconArrowSort}
-                        iconOnly={layoutState.isMobile}
-                        ariaLabel={i18n.t('favorites.sort_by')}
-                        align="right"
-                      />
+                    <div class="media-sort-selector" class:is-default={mediaSort === 'default'}>
+                      {#if layoutState.isMobile}
+                        <Select
+                          options={mediaSortOptions}
+                          value={mediaSort}
+                          onchange={(val) => (mediaSort = val as typeof mediaSort)}
+                          variant="ghost"
+                          icon={IconArrowSort}
+                          iconOnly
+                          ariaLabel={i18n.t('favorites.sort_by')}
+                          align="right"
+                        />
+                      {:else}
+                        <ChipSelect
+                          options={mediaSortOptions}
+                          value={mediaSort}
+                          onchange={(val) => (mediaSort = val)}
+                          icon={IconArrowSort}
+                          label={i18n.t('favorites.sort_by')}
+                          align="right"
+                        />
+                      {/if}
                     </div>
                   {/if}
                 </HeaderActions>
@@ -2856,14 +2584,15 @@
                         <span class="cloud-source-badge">{postEmbed.provider || postEmbed.provider_url || 'Embed'}</span>
                       </div>
 
-                      {#if postEmbed.html}
+                      {#if embedHtml}
                         <div class="media-embed-player">
-                          {@html postEmbed.html}
+                          {@html embedHtml}
                         </div>
                       {:else if postEmbed.url && isVideoUrl(postEmbed.url)}
                         <!-- svelte-ignore a11y_media_has_caption -->
                         <video
                           src={embedAttachment ? fileUrl(embedAttachment) : postEmbed.url}
+                          poster={videoPoster()}
                           controls
                           playsinline
                           preload="none"
@@ -3102,7 +2831,7 @@
                             <!-- svelte-ignore a11y_media_has_caption -->
                             <video
                               src={url}
-                              poster={thumbUrl}
+                              poster={videoPoster(thumbUrl)}
                               controls
                               autoplay
                               playsinline
@@ -3357,7 +3086,7 @@
           <div class="post-footer-actions-row">
             {#if allMediaDownloaded}
               <Button
-                variant="ghost"
+                variant="tonal"
                 onclick={() => void openPostFolder()}
                 class="post-footer-action"
               >
@@ -3366,11 +3095,8 @@
               </Button>
             {:else if media.length > 0}
               <Button
-                variant="ghost"
-                disabled={downloadingAll || media.every((file) => {
-                  const job = attachmentDownload(file);
-                  return Boolean(job && !['failed', 'cancelled', 'missing'].includes(job.status));
-                })}
+                variant="tonal"
+                disabled={downloadingAll || allMediaQueued}
                 onclick={() => void downloadAllMedia()}
                 class="post-footer-action"
               >
@@ -3386,7 +3112,7 @@
             {/if}
 
             {#if post.file || media.length > 0}
-              <Button variant="ghost" onclick={openPreviewViewer} class="post-footer-action">
+              <Button variant="primary" onclick={openPreviewViewer} class="post-footer-action">
                 <IconEye class="w-[18px] h-[18px]" />
                 <span>{i18n.t('post.view_preview')}</span>
               </Button>
@@ -3394,33 +3120,34 @@
           </div>
         {/if}
 
-        <div class="post-footer-toolbar">
-          <div class="footer-nav-left">
-            <Button
-              variant="ghost"
-              disabled={!effectiveOlderId}
-              onclick={() => effectiveOlderId && navigationState.openPost(service, creatorId, effectiveOlderId)}
-              class="footer-nav-btn"
-              title={i18n.t('post.previous')}
-            >
-              <IconChevronLeft class="w-[18px] h-[18px]" />
-              <span>{leftPostTitle}</span>
-            </Button>
-          </div>
-
-          <div class="footer-nav-right">
-            <Button
-              variant="ghost"
-              disabled={!effectiveNewerId}
-              onclick={() => effectiveNewerId && navigationState.openPost(service, creatorId, effectiveNewerId)}
-              class="footer-nav-btn"
-              title={i18n.t('post.next')}
-            >
-              <span>{rightPostTitle}</span>
-              <IconChevronRight class="w-[18px] h-[18px]" />
-            </Button>
-          </div>
-        </div>
+        <nav class="post-footer-toolbar" aria-label={i18n.t('post.adjacent_posts')}>
+          <button
+            type="button"
+            class="post-nav-card"
+            disabled={!effectiveOlderId}
+            use:ripple
+            onclick={() => effectiveOlderId && navigationState.openPost(service, creatorId, effectiveOlderId)}
+          >
+            <IconChevronLeft />
+            <span class="post-nav-text">
+              <span class="post-nav-label">{i18n.t('post.previous')}</span>
+              <span class="post-nav-title">{leftPostTitle}</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            class="post-nav-card is-next"
+            disabled={!effectiveNewerId}
+            use:ripple
+            onclick={() => effectiveNewerId && navigationState.openPost(service, creatorId, effectiveNewerId)}
+          >
+            <span class="post-nav-text">
+              <span class="post-nav-label">{i18n.t('post.next')}</span>
+              <span class="post-nav-title">{rightPostTitle}</span>
+            </span>
+            <IconChevronRight />
+          </button>
+        </nav>
       {/if}
 
       {#snippet commentNode(comment: Comment, depth = 0)}
@@ -3585,184 +3312,6 @@
   onclose={() => isCodecModalOpen = false}
 />
 
-{#if layoutState.isMobile && post}
-  <BottomSheet
-    open={mobileMoreOpen}
-    title={cleanPostTitle(post.title) || i18n.t('common.more')}
-    onclose={() => (mobileMoreOpen = false)}
-  >
-    <div class="flex flex-col gap-1 py-1">
-      <button
-        type="button"
-        class="sheet-action-item"
-        use:ripple
-        onclick={() => {
-          mobileMoreOpen = false;
-          openOriginalPost();
-        }}
-      >
-        <ServiceIcon {service} />
-        <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('post.open_original_post')}</span>
-          <span class="text-xs text-muted capitalize">{service}</span>
-        </div>
-      </button>
-
-      {#if activeProviderId === 'auto' && providersWithPost.length > 1}
-        {#each providersWithPost as prov}
-          <button
-            type="button"
-            class="sheet-action-item"
-            use:ripple
-            onclick={() => {
-              mobileMoreOpen = false;
-              openInProvider(prov.id);
-            }}
-          >
-            <IconOpen class="text-secondary" />
-            <div class="flex flex-col min-w-0">
-              <span class="text-sm font-semibold text-primary">{i18n.t('post.open_in_provider')}</span>
-              <span class="text-xs text-muted">{formatProviderName(prov.name || prov.id)}</span>
-            </div>
-          </button>
-        {/each}
-      {:else}
-        <button
-          type="button"
-          class="sheet-action-item"
-          use:ripple
-          onclick={() => {
-            mobileMoreOpen = false;
-            openInProvider(activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined);
-          }}
-        >
-          <IconOpen class="text-secondary" />
-          <div class="flex flex-col min-w-0">
-            <span class="text-sm font-semibold text-primary">{i18n.t('post.open_in_provider')}</span>
-            <span class="text-xs text-muted">{currentProviderName}</span>
-          </div>
-        </button>
-      {/if}
-
-      <button
-        type="button"
-        class="sheet-action-item"
-        use:ripple
-        onclick={() => {
-          copyPostLink();
-          notify.success(i18n.t('post.link_copied'), { glyph: 'copied' });
-          mobileMoreOpen = false;
-        }}
-      >
-        <IconCopy class="text-secondary" />
-        <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('post.copy_link')}</span>
-        </div>
-      </button>
-
-      <button
-        type="button"
-        class="sheet-action-item"
-        use:ripple
-        onclick={() => {
-          copyPostId();
-          notify.success(i18n.t('common.copied'), { glyph: 'copied' });
-          mobileMoreOpen = false;
-        }}
-      >
-        <IconDocument class="text-secondary" />
-        <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{i18n.t('post.copy_id')}</span>
-          <span class="text-xs font-mono text-muted">{postId}</span>
-        </div>
-      </button>
-
-      <button
-        type="button"
-        class="sheet-action-item"
-        use:ripple
-        onclick={() => {
-          mobileMoreOpen = false;
-          navigationState.openCreator(service, creatorId);
-        }}
-      >
-        <div class="sheet-action-avatar">
-          {#if creatorAvatar && !creatorAvatarFailed}
-            <img src={creatorAvatar} alt="" />
-          {:else}
-            <ServiceIcon {service} />
-          {/if}
-        </div>
-        <div class="flex flex-col min-w-0">
-          <span class="text-sm font-semibold text-primary">{creatorName}</span>
-          <span class="text-xs text-muted">{i18n.t('feed.open_creator')}</span>
-        </div>
-      </button>
-
-      {#if post.file || media.length > 0}
-        <button
-          type="button"
-          class="sheet-action-item"
-          use:ripple
-          onclick={() => {
-            mobileMoreOpen = false;
-            openPreviewViewer();
-          }}
-        >
-          <IconEye class="text-secondary" />
-          <div class="flex flex-col min-w-0">
-            <span class="text-sm font-semibold text-primary">{i18n.t('post.view_preview')}</span>
-          </div>
-        </button>
-      {/if}
-
-      {#if media.length > 0}
-        {#if allMediaDownloaded}
-          <button
-            type="button"
-            class="sheet-action-item"
-            use:ripple
-            onclick={() => {
-              mobileMoreOpen = false;
-              void openPostFolder();
-            }}
-          >
-            <IconFolder class="text-secondary" />
-            <div class="flex flex-col min-w-0">
-              <span class="text-sm font-semibold text-primary">{i18n.t('downloads.open_post_folder')}</span>
-            </div>
-          </button>
-        {:else}
-          <button
-            type="button"
-            class="sheet-action-item"
-            disabled={downloadingAll || media.every((file) => {
-              const job = attachmentDownload(file);
-              return Boolean(job && !['failed', 'cancelled', 'missing'].includes(job.status));
-            })}
-            use:ripple
-            onclick={() => {
-              mobileMoreOpen = false;
-              void downloadAllMedia();
-            }}
-          >
-            {#if downloadingAll}
-              <IconLoading class="text-accent" />
-            {:else}
-              <IconDownload class="text-secondary" />
-            {/if}
-            <div class="flex flex-col min-w-0">
-              <span class="text-sm font-semibold text-primary">
-                {i18n.t(downloadingAll ? 'post.downloading_all' : 'post.download_all')}{totalMediaBytes > 0 ? ` · ${formatBytes(totalMediaBytes)}` : ''}
-              </span>
-            </div>
-          </button>
-        {/if}
-      {/if}
-    </div>
-  </BottomSheet>
-{/if}
-
 <style>
   .post-content-wrapper {
     position: relative;
@@ -3771,72 +3320,6 @@
     max-width: 100%;
   }
 
-  .post-actions-bar {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 20px;
-    padding-bottom: 14px;
-    z-index: 10;
-    min-width: 0;
-    max-width: 100%;
-    --control-height: var(--control-height-md, 46px);
-    --control-font-size: var(--control-font-md, 14px);
-    --control-icon-size: var(--control-icon-md, 20px);
-    --control-padding-x: var(--control-padding-md, 20px);
-  }
-
-  .post-actions-bar :global(.btn.btn-icon),
-  :global(.sticky-header-bar) :global(.btn.btn-icon) {
-    flex: 0 0 calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    padding: 0 !important;
-    border-radius: 50% !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-  }
-
-  .post-actions-bar :global(.mobile-stash-select) {
-    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    max-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    margin-left: 0 !important;
-  }
-
-  .post-actions-bar :global(.mobile-stash-select .select-trigger),
-  .post-actions-bar :global(.mobile-stash-select .select-trigger.icon-only) {
-    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    border-radius: 50% !important;
-    padding: 0 !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-  }
-
-  :global(.page-shell.mobile) .post-actions-bar,
-  :global(.page-shell.is-mobile) .post-actions-bar {
-    margin-bottom: 8px;
-    padding-bottom: 6px;
-    gap: 6px;
-  }
-
-  @media (max-width: 640px) {
-    .post-actions-bar {
-      margin-bottom: 8px;
-      padding-bottom: 6px;
-      gap: 6px;
-    }
-  }
-
-  .post-actions-bar :global(.btn),
   .media-controls-row :global(.btn),
   .comments-header-row :global(.btn) {
     height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
@@ -3846,15 +3329,10 @@
     gap: 8px !important;
   }
 
-  .post-actions-bar :global(.btn svg),
   .media-controls-row :global(.btn svg),
   .comments-header-row :global(.btn svg) {
     width: 20px;
     height: 20px;
-  }
-
-  .post-actions-bar :global(.fav-active-heart) {
-    color: var(--text-on-accent, var(--text-primary));
   }
 
   .post-creator-avatar {
@@ -3875,44 +3353,24 @@
     object-fit: cover;
   }
 
-  .post-actions-bar :global(.creator-btn) {
-    padding-left: 8px !important;
-    padding-right: 14px !important;
-    gap: 8px !important;
-    min-width: 0 !important;
-    max-width: min(220px, 45vw) !important;
-    flex-shrink: 1 !important;
+  :global(.post-bar-creator) {
+    min-width: 0;
+    max-width: 240px;
+    flex-shrink: 1;
+    padding-inline: 6px 14px;
   }
 
-  .creator-name-text {
+  :global(.post-bar-creator.is-condensed) {
+    padding-inline: 6px;
+  }
+
+  .post-bar-creator-name {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    min-width: 0;
-    font-size: calc(var(--control-font-size, 14px) * var(--ui-scale, 1));
-    font-weight: 500;
   }
 
-  @media (max-width: 640px) {
-    .post-actions-bar :global(.creator-btn) {
-      padding-left: 6px !important;
-      padding-right: 12px !important;
-      max-width: min(150px, 35vw) !important;
-    }
-
-    .creator-name-text {
-      font-size: 13px;
-      max-width: clamp(55px, 20vw, 100px);
-    }
-  }
-
-  .stash-select-container {
-    margin-left: auto;
-    min-width: 170px;
-    max-width: 260px;
-  }
-
-  .stash-select-container :global(.select-trigger),
   .media-sort-selector :global(.select-trigger),
   .comments-header-row :global(.select-trigger) {
     height: 44px !important;
@@ -4047,8 +3505,6 @@
     }
   }
 
-
-
   .media-sort-selector {
     width: 200px;
     flex-shrink: 0;
@@ -4150,23 +3606,20 @@
   .media-gallery {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
-    gap: 20px;
-    max-width: 1000px;
-    margin: 0 auto;
-    padding: 16px 0;
+    gap: 24px 16px;
+    padding-block: 8px 16px;
   }
   
   .media-embed-player {
     position: relative;
     width: 100%;
-    border-radius: var(--radius-lg, 12px);
+    border-radius: var(--radius-md);
     overflow: hidden;
     background: #000;
     display: flex;
     justify-content: center;
     align-items: center;
     max-height: 520px;
-    border: var(--border-width) solid var(--border-color, rgba(255, 255, 255, 0.08));
   }
 
   .media-embed-player :global(iframe) {
@@ -4183,85 +3636,76 @@
     width: 100%;
     height: auto;
     margin: 0;
-    overflow: hidden;
-    background: transparent;
-    border: 0;
-    border-radius: 0;
-    box-shadow: none;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "media media"
+      "name actions";
     align-items: center;
-    text-align: center;
+    column-gap: 8px;
+    row-gap: 4px;
+    text-align: start;
     content-visibility: auto;
     contain-intrinsic-size: 320px 420px;
   }
 
+  .media-item > :global(*) {
+    grid-column: 1 / -1;
+  }
+
+  .media-item > .media-header {
+    grid-area: name;
+  }
+
+  .media-item > .media-download-group {
+    grid-area: actions;
+  }
+
   .media-viewer-open-btn {
     position: absolute;
-    top: 44px;
-    right: 10px;
+    top: 8px;
+    right: 8px;
     z-index: 15;
+    display: grid;
+    place-items: center;
     width: 36px;
     height: 36px;
     padding: 0;
-    border: none;
-    border-radius: var(--radius-full, 9999px);
-    background: rgba(22, 22, 28, 0.82);
-    backdrop-filter: blur(16px) saturate(180%);
-    -webkit-backdrop-filter: blur(16px) saturate(180%);
-    color: var(--text-primary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.5);
-    transition: background var(--duration-fast, 150ms) var(--ease-expo, ease-out),
-                color var(--duration-fast, 150ms) var(--ease-expo, ease-out),
-                transform var(--duration-fast, 150ms) var(--ease-expo, ease-out),
-                box-shadow var(--duration-fast, 150ms) var(--ease-expo, ease-out);
+    border: 0;
+    border-radius: var(--radius-full);
+    background: var(--on-media-scrim-strong);
+    color: var(--on-media);
+    transition: background-color var(--duration-fast) var(--ease-standard);
   }
 
-  .media-viewer-open-btn:hover {
-    background: rgba(38, 38, 46, 0.94);
-    color: var(--text-primary);
-    transform: scale(1.08);
-    box-shadow: 0 6px 20px -2px rgba(0, 0, 0, 0.65);
-  }
-
-  .media-viewer-open-btn:active {
-    transform: scale(0.95);
+  @media (hover: hover) {
+    .media-viewer-open-btn:hover {
+      background: var(--on-media-scrim-strong) linear-gradient(var(--state-layer-hover), var(--state-layer-hover));
+    }
   }
 
   .media-viewer-open-btn :global(svg) {
-    width: 19px;
-    height: 19px;
-    transition: transform var(--duration-fast, 150ms) var(--ease-expo, ease-out);
-  }
-
-  .media-viewer-open-btn:hover :global(svg) {
-    transform: scale(1.05);
+    width: 20px;
+    height: 20px;
   }
 
   .media-header {
-    width: 100%;
     display: flex;
-    justify-content: center;
     align-items: center;
     gap: 6px;
-    padding: 8px 0px;
-    box-sizing: border-box;
-    margin-bottom: 6px;
+    min-width: 0;
+    padding-inline: 4px;
   }
 
   .media-filename {
-    font-size: 12.5px;
+    min-width: 0;
+    overflow: hidden;
     color: var(--text-secondary);
     font-family: var(--font-sans);
-    overflow: hidden;
+    font-size: var(--type-body-sm-size);
+    line-height: var(--type-body-sm-line);
     text-overflow: ellipsis;
     white-space: nowrap;
-    opacity: 0.85;
-    min-width: 0;
   }
 
   .media-header:has(.media-filesize) .media-filename {
@@ -4278,14 +3722,13 @@
   }
 
   .cloud-source-badge {
-    font-size: 10px;
-    font-weight: 600;
-    padding: 2px 7px;
-    border-radius: var(--radius-full, 9999px);
-    background: rgba(var(--surface-tint-rgb), 0.08);
-    color: var(--fg-default);
-    letter-spacing: 0.04em;
     flex-shrink: 0;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    background: var(--surface-container-high);
+    color: var(--text-secondary);
+    font-size: var(--type-label-sm-size);
+    font-weight: 600;
     text-transform: uppercase;
   }
 
@@ -4297,8 +3740,8 @@
     height: auto;
     max-height: 520px;
     object-fit: contain;
-    border-radius: 0;
-    align-self: center;
+    border-radius: var(--radius-md);
+    justify-self: center;
   }
 
   .media-item video {
@@ -4371,19 +3814,13 @@
   }
 
   .play-btn-circle {
-    width: 54px;
-    height: 54px;
-    border-radius: var(--radius-full, 9999px);
-    background: rgba(0, 0, 0, 0.32);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    border: none;
-    outline: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-primary);
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    display: grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    border-radius: var(--radius-full);
+    background: var(--on-media-scrim-strong);
+    color: var(--on-media);
   }
 
   :global(.placeholder-fix-btn) {
@@ -4447,24 +3884,32 @@
   .media-download-group {
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 8px;
-    margin-top: 12px;
-    align-self: center;
-    max-width: 100%;
+    justify-content: flex-end;
+    gap: 2px;
+    min-width: 0;
+    --control-height: var(--control-height-sm);
+    --control-font-size: var(--type-label-lg-size);
+    --control-icon-size: var(--control-icon-sm);
+    --control-padding-x: 12px;
   }
 
   :global(.media-download-btn) {
     position: relative;
-    width: 220px;
     max-width: 100%;
     overflow: hidden;
     isolation: isolate;
   }
 
-  :global(.media-download-btn.is-downloaded) {
-    width: auto;
-    min-width: 180px;
+  .media-sort-selector.is-default :global(.select-trigger.icon-only) {
+    color: var(--text-secondary) !important;
+  }
+
+  .media-download-group .state-word {
+    display: none;
+  }
+
+  .media-download-group :global(.media-download-btn) {
+    font-variant-numeric: tabular-nums;
   }
 
   :global(.media-download-btn.is-downloading:disabled) {
@@ -4472,8 +3917,8 @@
   }
 
   :global(.media-action-icon-btn) {
-    width: 44px !important;
-    height: 44px !important;
+    width: var(--control-height) !important;
+    height: var(--control-height) !important;
     padding: 0 !important;
     border-radius: var(--radius-full) !important;
     display: grid !important;
@@ -4611,14 +4056,14 @@
   :global(.page-shell.mobile) .gallery-collapse-action,
   :global(.page-shell.mobile) .content-collapse-action,
   :global(.page-shell.mobile) .comments-collapse-action {
-    bottom: calc(var(--mobile-nav-height, 64px) + max(16px, env(safe-area-inset-bottom, 16px)));
+    bottom: var(--dock-space);
   }
 
   @media (max-width: 640px) {
     .gallery-collapse-action,
     .content-collapse-action,
     .comments-collapse-action {
-      bottom: calc(var(--mobile-nav-height, 64px) + max(16px, env(safe-area-inset-bottom, 16px)));
+      bottom: var(--dock-space);
     }
   }
 
@@ -4656,8 +4101,6 @@
   .content-fade-overlay :global(.btn) {
     pointer-events: auto;
   }
-
-
 
   .html-content {
     color: var(--text-primary);
@@ -4916,143 +4359,75 @@
     font-size: 14px;
   }
 
-  :global(.sticky-header-bar) :global(.sticky-back-btn) {
-    flex: 0 0 calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    border-radius: 50% !important;
-    padding: 0 !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    flex-shrink: 0 !important;
-  }
-
-  :global(.sticky-header-bar) :global(.sticky-back-btn svg) {
-    width: 20px !important;
-    height: 20px !important;
-    flex-shrink: 0 !important;
-  }
-
-  .sticky-post-title {
-    font-family: var(--font-sans);
-    color: var(--text-primary);
-    font-size: 15px;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    opacity: 0.95;
-    text-align: left;
-    min-width: 0;
-    flex: 1;
-  }
-
-  :global(.sticky-header-bar:not(.is-mobile)) .sticky-post-title {
-    font-size: 17px !important;
-    font-weight: 600 !important;
-  }
-
-  :global(.sticky-header-bar) :global(.sticky-creator-btn) {
-    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    padding: 0 14px 0 8px !important;
-    border-radius: var(--radius-full) !important;
-    display: flex !important;
-    align-items: center !important;
-    gap: 8px !important;
-    flex-shrink: 1 !important;
-    min-width: 0 !important;
-  }
-
-  .sticky-creator-name {
-    font-family: var(--font-sans);
-    font-size: 13.5px;
-    font-weight: 500;
-    max-width: 140px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-
-  :global(.sticky-header-bar.is-mobile) :global(.sticky-creator-btn) {
-    height: 38px !important;
-    padding: 0 10px 0 6px !important;
-    gap: 6px !important;
-    max-width: min(130px, 32vw) !important;
-  }
-
-  :global(.sticky-header-bar.is-mobile) :global(.sticky-creator-btn) .post-creator-avatar {
-    width: 24px !important;
-    height: 24px !important;
-  }
-
-  :global(.sticky-header-bar.is-mobile) .sticky-creator-name {
-    font-size: 12.5px;
-    max-width: clamp(50px, 18vw, 85px);
-  }
-
-  :global(.sticky-header-bar) :global(.sticky-fav-btn) {
-    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    padding: 0 !important;
-    border-radius: 50% !important;
-    flex-shrink: 0 !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-  }
-
-  .sticky-stash-select {
-    display: flex;
-    align-items: center;
-  }
-
-  :global(.sticky-header-bar.is-mobile) .sticky-stash-select {
-    display: flex;
-    width: calc(var(--control-height, 46px) * var(--ui-scale, 1));
-    height: calc(var(--control-height, 46px) * var(--ui-scale, 1));
-    flex-shrink: 0;
-  }
-
-  :global(.sticky-header-bar.is-mobile) .sticky-stash-select :global(.select-trigger) {
-    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    max-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    border-radius: 50% !important;
-    padding: 0 !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    gap: 0 !important;
-  }
-
-  :global(.sticky-header-bar.is-mobile) .sticky-stash-select :global(.select-trigger svg) {
-    width: 20px !important;
-    height: 20px !important;
-    flex-shrink: 0 !important;
-  }
-
-  :global(.sticky-header-bar:not(.is-mobile)) .sticky-stash-select {
-    display: block;
-    min-width: 170px;
-    max-width: 240px;
-  }
-
-
   .post-footer-toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+
+  .post-nav-card {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 12px;
-    min-height: 46px;
-    margin-top: 0;
-    margin-bottom: 24px;
-    padding-top: 0;
-    border-top: none;
+    min-width: 0;
+    min-height: 64px;
+    padding: 12px 16px;
+    border: 0;
+    border-radius: var(--radius-lg);
+    background: var(--surface-container);
+    color: var(--text-primary);
+    text-align: start;
+    transition: background-color var(--duration-fast) var(--ease-standard);
+  }
+
+  .post-nav-card.is-next {
+    justify-content: flex-end;
+    text-align: end;
+  }
+
+  @media (hover: hover) {
+    .post-nav-card:not(:disabled):hover {
+      background: var(--surface-container-high);
+    }
+  }
+
+  .post-nav-card:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+  }
+
+  .post-nav-card:disabled {
+    opacity: var(--opacity-disabled);
+  }
+
+  .post-nav-card :global(svg) {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    color: var(--text-secondary);
+  }
+
+  .post-nav-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .post-nav-label {
+    color: var(--text-secondary);
+    font-size: var(--type-label-md-size);
+    line-height: var(--type-label-md-line);
+  }
+
+  .post-nav-title {
+    overflow: hidden;
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-line);
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .detail-header h1,
@@ -5064,50 +4439,10 @@
 
   .post-footer-actions-row {
     display: flex;
-    align-items: center;
     flex-wrap: wrap;
-    gap: var(--space-2);
-    margin-top: var(--space-3);
-    padding: var(--space-3) 0;
-  }
-
-  .footer-nav-left,
-  .footer-nav-right {
-    display: flex;
     align-items: center;
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .footer-nav-right {
-    justify-content: flex-end;
-  }
-
-  .post-footer-toolbar :global(.footer-nav-btn) {
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  .post-footer-toolbar :global(.footer-nav-btn span) {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  :global(.btn.post-footer-action),
-  .post-footer-toolbar :global(.btn) {
-    height: 44px !important;
-    padding: 0 16px !important;
-    font-size: 13.5px !important;
-    border-radius: var(--radius-full) !important;
-    gap: 6px !important;
-  }
-
-  :global(.btn.post-footer-action svg),
-  .post-footer-toolbar :global(.btn svg) {
-    width: 18px;
-    height: 18px;
+    gap: 8px;
+    margin-block: 16px;
   }
 
   .is-deferred-placeholder {

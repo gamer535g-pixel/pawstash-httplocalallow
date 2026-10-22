@@ -1021,7 +1021,7 @@
   }
 
   .cf.is-sheet {
-    --cf-inset: calc(var(--bottom-sheet-padding-x) * var(--ui-scale, 1));
+    --cf-inset: calc(var(--bottom-sheet-inset) * var(--ui-scale, 1));
   }
 
   .cf-meta-row {
@@ -1074,7 +1074,7 @@
     margin: 0 var(--cf-inset) calc(var(--space-3) * var(--ui-scale, 1));
     padding: calc(var(--space-4) * var(--ui-scale, 1));
     border-radius: calc(var(--radius-lg) * var(--ui-scale, 1));
-    background: var(--bg-card);
+    background: var(--surface-container-highest);
   }
 
   .cf-panel-text {
@@ -1196,12 +1196,15 @@
     transition: background var(--duration-fast) var(--ease-expo);
   }
 
-  .cf-row:hover {
-    background: var(--bg-card-hover);
+  @media (hover: hover) {
+    .cf-row:hover {
+      background: var(--state-layer-hover);
+    }
   }
 
   .cf-row.is-selected {
-    background: var(--accent-subtle);
+    background: var(--accent-container);
+    color: var(--accent-on-container);
   }
 
   .cf-row-main {
@@ -1234,13 +1237,13 @@
     height: calc(var(--file-row-thumb) * var(--ui-scale, 1));
     overflow: hidden;
     border-radius: calc(var(--radius-sm) * var(--ui-scale, 1));
-    background: var(--bg-card);
+    background: var(--surface-container-highest);
     color: var(--text-secondary);
   }
 
   .cf-thumb.is-folder {
-    background: var(--accent-subtle);
-    color: var(--accent-on-surface);
+    background: var(--accent-container);
+    color: var(--accent-on-container);
   }
 
   .cf-thumb :global(.cf-thumb-icon) {
@@ -1279,12 +1282,6 @@
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-clamp: 2;
-  }
-
-  .cf-tile .cf-name {
-    display: block;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .cf-secondary {
@@ -1392,8 +1389,8 @@
   }
 
   .cf-tile.is-selected .cf-thumb {
-    outline: calc(var(--checkbox-outline-width) * var(--ui-scale, 1)) solid var(--accent-primary);
-    outline-offset: calc(var(--checkbox-outline-width) * var(--ui-scale, 1) * -1);
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
   }
 
   .cf-tile-check {

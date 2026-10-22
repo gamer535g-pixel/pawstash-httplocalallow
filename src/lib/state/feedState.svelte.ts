@@ -151,11 +151,7 @@ export class FeedState {
         post.title?.toLowerCase().includes('(ai)')
       );
 
-      if (configState.settings.pawchive_hide_ai || this.aiFilter === 'exclude') {
-        if (isPostAi) return false;
-      } else if (this.aiFilter === 'include') {
-        if (this.mode === 'popular' && !isPostAi) return false;
-      }
+      if ((configState.settings.pawchive_hide_ai || this.aiFilter === 'exclude') && isPostAi) return false;
 
       const matchesFavorites =
         !this.favoritesOnly ||
@@ -262,12 +258,7 @@ export class FeedState {
         } catch {}
       }
 
-      let effectiveQuery = query;
-      if (this.aiFilter === 'exclude') {
-        effectiveQuery = `${query} hide=ai`;
-      } else if (this.aiFilter === 'include') {
-        effectiveQuery = `${query} only=ai`;
-      }
+      const effectiveQuery = this.aiFilter === 'exclude' ? `${query} hide=ai` : query;
 
       const streamId = `search:${requestId}:${Date.now()}`;
       await this.beginStream({
@@ -328,12 +319,7 @@ export class FeedState {
     bucket.loading = true;
     bucket.error = null;
     try {
-      let queryParam: string | undefined = undefined;
-      if (this.aiFilter === 'exclude') {
-        queryParam = 'hide=ai';
-      } else if (this.aiFilter === 'include') {
-        queryParam = 'only=ai';
-      }
+      const queryParam = this.aiFilter === 'exclude' ? 'hide=ai' : undefined;
 
       const streamId = `${mode}:${requestId}:${Date.now()}`;
       await this.beginStream({

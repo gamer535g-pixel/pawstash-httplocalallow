@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { emit, listen } from '@tauri-apps/api/event';
+  import { invoke } from '@tauri-apps/api/core';
+  import { onBackButtonPress } from '@tauri-apps/api/app';
   import { themeState } from '$lib/theme/themeState.svelte';
   import { i18n } from '$lib/i18n';
   import { navigationState } from '$lib/state/navigationState.svelte';
@@ -15,10 +17,10 @@
   import { providerState } from '$lib/state/providerState.svelte';
   import { apiGetSettings, apiGetPendingDeepLink, apiSetAppHidden, apiShowMainWindow } from '$lib/utils/ipc';
   import BackgroundProvider from '$lib/components/providers/BackgroundProvider.svelte';
-  import DesktopTitlebar from '$lib/components/layout/DesktopTitlebar.svelte';
   import SidebarNav from '$lib/components/layout/SidebarNav.svelte';
   import MobileBottomNav from '$lib/components/layout/MobileBottomNav.svelte';
-  import SettingsModal from '$lib/components/settings/SettingsModal.svelte';
+  import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
+  import SettingsNav from '$lib/components/settings/SettingsNav.svelte';
   import FeedView from '$lib/components/content/FeedView.svelte';
   import PostPage from '$lib/components/content/PostPage.svelte';
   import CreatorPage from '$lib/components/content/CreatorPage.svelte';
@@ -28,32 +30,20 @@
   import FavoritesView from '$lib/components/content/FavoritesView.svelte';
   import ProfilePage from '$lib/components/profile/ProfilePage.svelte';
   import UpdateModal from '$lib/components/ui/UpdateModal.svelte';
+  import NoticeModal from '$lib/components/ui/NoticeModal.svelte';
+  import { noticeState } from '$lib/state/noticeState.svelte';
   import SubscriptionModal from '$lib/components/content/SubscriptionModal.svelte';
   import UnsubscribeDialog from '$lib/components/content/UnsubscribeDialog.svelte';
   import { updateState } from '$lib/state/updateState.svelte';
-  import { initFrontendLogging } from '$lib/utils/logger';
+  import { selectionState } from '$lib/state/selectionState.svelte';
+  import { onboardingState } from '$lib/state/onboardingState.svelte';
+  import { initFrontendLogging, logger } from '$lib/utils/logger';
   import { initDeepLinkListener, handleDeepLinkUrl } from '$lib/utils/deepLink';
   import { initRestartNotice } from '$lib/utils/restartNotice';
   import Toaster from '$lib/components/ui/Toaster.svelte';
-  import pawstashLogo from '$lib/assets/pawstash.png';
-  import { logoFlightState } from '$lib/state/logoFlightState.svelte';
+  import ContextMenu from '$lib/components/ui/ContextMenu.svelte';
 
   navigationState.init();
-
-  let flightEl = $state<HTMLElement | null>(null);
-
-  $effect(() => {
-    logoFlightState.registerFlightElement(flightEl);
-  });
-
-  let prevRouteName = navigationState.route.name;
-  $effect(() => {
-    const current = navigationState.route.name;
-    if (prevRouteName === 'settings' && current !== 'settings') {
-      logoFlightState.flyToSidebar();
-    }
-    prevRouteName = current;
-  });
 
   onMount(() => {
     initFrontendLogging();
@@ -80,22 +70,25 @@
         return;
       }
       try {
-        const payload = typeof payloadStr === 'string' ? JSON.parse(payloadStr) : payloadStr;
+        const payload = JSON.parse(payloadStr);
         if (payload.action === 'open_post' && payload.service && payload.creatorId && payload.postId) {
           navigationState.openPost(payload.service, payload.creatorId, payload.postId, undefined, true);
         } else if (payload.action === 'open_downloads') {
           navigationState.navigateRoot('downloads');
         }
       } catch (e) {
-        console.warn('Failed to parse deep link payload:', e);
+        logger.warn('Failed to parse deep link payload', e);
       }
     }
 
     const cleanupDeepLink = initDeepLinkListener();
     const cleanupRestartNotice = initRestartNotice();
-    const reportVisibility = () => void apiSetAppHidden(document.hidden).catch(() => {});
+    const reportVisibility = () =>
+      void apiSetAppHidden(document.hidden).catch((e) => logger.debug('Failed to report window visibility', e));
     document.addEventListener('visibilitychange', reportVisibility);
-    void apiGetPendingDeepLink().then(handleDeepLinkPayload).catch(() => {});
+    void apiGetPendingDeepLink()
+      .then(handleDeepLinkPayload)
+      .catch((e) => logger.warn('Failed to read pending deep link', e));
     const unlistenDeepLink = listen<string>('open-post-deep-link', (event) => {
       handleDeepLinkPayload(event.payload);
     });
@@ -116,21 +109,25 @@
           layoutState.isLinux && settings.linux_transparent_window !== true
         );
         if (settings.auto_check_updates ?? true) {
-          setTimeout(() => void updateState.check(true), 3000);
+          setTimeout(async () => {
+            await noticeState.check();
+            await noticeState.whenClosed();
+            void updateState.check(true);
+          }, 3000);
         }
       })
-      .catch((error) => console.warn('Failed to load application settings', error));
-    void libraryState.init().catch((error) => console.warn('Failed to initialize library', error));
-    void downloadState.init().catch((error) => console.warn('Failed to initialize downloads', error));
-    void subscriptionState.init().catch((error) => console.warn('Failed to initialize subscriptions', error));
-    void accountState.refresh().catch((error) => console.warn('Failed to check Pawchive session', error));
-    void syncState.init().catch((error) => console.warn('Failed to initialize encrypted sync', error));
-    void providerState.loadProviders().catch((error) => console.warn('Failed to load providers', error));
-    void creatorsState.init().catch((error) => console.warn('Failed to initialize creators list', error));
+      .catch((error) => logger.warn('Failed to load application settings', error));
+    void libraryState.init().catch((error) => logger.warn('Failed to initialize library', error));
+    void downloadState.init().catch((error) => logger.warn('Failed to initialize downloads', error));
+    void subscriptionState.init().catch((error) => logger.warn('Failed to initialize subscriptions', error));
+    void accountState.refresh().catch((error) => logger.warn('Failed to check Pawchive session', error));
+    void syncState.init().catch((error) => logger.warn('Failed to initialize encrypted sync', error));
+    void providerState.loadProviders().catch((error) => logger.warn('Failed to load providers', error));
+    void creatorsState.init().catch((error) => logger.warn('Failed to initialize creators list', error));
 
     requestAnimationFrame(() => {
       void emit('frontend-ready');
-      void apiShowMainWindow().catch(() => {});
+      void apiShowMainWindow().catch((e) => logger.warn('Failed to show main window', e));
     });
 
     return () => {
@@ -143,29 +140,53 @@
       void unlistenPanic.then((u) => u());
     };
   });
+
+  $effect(() => {
+    document.documentElement.dataset.layout = layoutState.isMobile ? 'mobile' : 'desktop';
+    document.documentElement.dataset.platform = layoutState.isMobileDevice ? 'touch' : 'desktop';
+  });
+
+  onMount(() => {
+    if (!layoutState.isAndroid) return;
+    let listener: { unregister: () => Promise<void> } | undefined;
+    void onBackButtonPress(() => {
+      if (!navigationState.handleSystemBack()) void invoke('android_minimize');
+    }).then((registered) => (listener = registered));
+    return () => void listener?.unregister();
+  });
+
+  $effect(() => {
+    if (!libraryState.initialized || !syncState.statusLoaded) return;
+    onboardingState.observeLibrary(libraryState.savedCount, libraryState.stashCount, syncState.status.configured);
+  });
+
+  $effect(() => {
+    if (!selectionState.active) return;
+    return untrack(() =>
+      navigationState.registerBackHandler(() => {
+        selectionState.exit();
+        return true;
+      })
+    );
+  });
 </script>
 
 <div
   class="app-shell h-screen w-screen flex overflow-hidden select-none text-[var(--text-primary)] font-sans relative"
-  class:mobile-layout={layoutState.isMobile}
-  data-layout={layoutState.isMobile ? 'mobile' : 'desktop'}
 >
   <BackgroundProvider />
   <Toaster />
+  <ContextMenu />
 
   {#if !layoutState.isMobile}
-    <SidebarNav />
+    {#if navigationState.route.name === 'settings'}
+      <SettingsNav />
+    {:else}
+      <SidebarNav />
+    {/if}
   {/if}
 
-  <div class="flex-1 flex overflow-hidden relative">
-    {#if !layoutState.isMobile}
-      <div class="absolute top-0 left-0 w-full z-50 pointer-events-none">
-        <div class="pointer-events-auto">
-          <DesktopTitlebar />
-        </div>
-      </div>
-    {/if}
-
+  <div class="app-content flex-1 flex overflow-hidden relative min-w-0">
     <main class="flex-1 flex overflow-hidden w-full h-full">
       {#key navigationState.entryKey}
         {#if navigationState.route.name === 'feed'}
@@ -195,11 +216,7 @@
             initialTag={navigationState.route.initialTag}
           />
         {:else if navigationState.route.name === 'settings'}
-          <SettingsModal />
-        {:else}
-          <div class="flex-1 flex items-center justify-center text-ink-faint text-xs">
-            {i18n.t('nav.coming_soon')}
-          </div>
+          <SettingsPage />
         {/if}
       {/key}
     </main>
@@ -210,19 +227,7 @@
   {/if}
 
   <UpdateModal />
+  <NoticeModal />
   <SubscriptionModal />
   <UnsubscribeDialog />
-  <img
-    bind:this={flightEl}
-    src={pawstashLogo}
-    alt=""
-    aria-hidden="true"
-    class="fixed pointer-events-none z-50 hidden select-none object-contain"
-  />
 </div>
-
-<style>
-  .mobile-layout :global(.md\:grid-cols-2) {
-    grid-template-columns: minmax(0, 1fr) !important;
-  }
-</style>

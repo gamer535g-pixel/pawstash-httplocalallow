@@ -14,12 +14,10 @@
   import ProgressRing from '$lib/components/ui/ProgressRing.svelte';
   import IconDownloads from '~icons/fluent/arrow-download-24-regular';
   import IconDownloadsFilled from '~icons/fluent/arrow-download-24-filled';
-  import IconSettings from '~icons/fluent/settings-24-regular';
-  import IconSettingsFilled from '~icons/fluent/settings-24-filled';
   import StableWeightLabel from '$lib/components/ui/StableWeightLabel.svelte';
 
   interface NavItem {
-    id: 'feed' | 'creators' | 'favorites' | 'library' | 'downloads' | 'settings';
+    id: 'feed' | 'creators' | 'favorites' | 'library' | 'downloads';
     labelKey: string;
     icon: any;
     iconActive: any;
@@ -31,8 +29,7 @@
     { id: 'creators', labelKey: 'nav.creators', icon: IconCreators, iconActive: IconCreatorsFilled },
     { id: 'favorites', labelKey: 'nav.favorites', icon: IconFavorites, iconActive: IconFavoritesFilled },
     { id: 'library', labelKey: 'nav.library', icon: IconLibrary, iconActive: IconLibraryFilled },
-    { id: 'downloads', labelKey: 'nav.downloads', icon: IconDownloads, iconActive: IconDownloadsFilled, badge: () => downloadState.activeDownloadsCount },
-    { id: 'settings', labelKey: 'nav.settings', icon: IconSettings, iconActive: IconSettingsFilled }
+    { id: 'downloads', labelKey: 'nav.downloads', icon: IconDownloads, iconActive: IconDownloadsFilled, badge: () => downloadState.activeDownloadsCount }
   ];
 
   let activeRoot = $derived(navigationState.activeRoot);
@@ -40,13 +37,13 @@
   function hasProgressRing(id: string): boolean {
     return id === 'downloads' && downloadState.activeDownloadsCount > 0;
   }
-
 </script>
 
 <nav
   class="mobile-bottom-dock"
   class:hidden-dock={selectionState.active}
   aria-hidden={selectionState.active}
+  inert={selectionState.active}
 >
   <div class="mobile-dock-capsule">
     {#each navItems as item}
@@ -60,7 +57,7 @@
       >
         <div class="dock-icon-wrapper" class:has-progress={hasProgressRing(item.id)}>
           {#if hasProgressRing(item.id)}
-            <ProgressRing value={downloadState.activeProgress} size={34} />
+            <ProgressRing value={downloadState.activeProgress} size={30} />
           {/if}
           {#if isActive}
             <item.iconActive class="dock-icon" />
@@ -69,7 +66,7 @@
           {/if}
 
           {#if item.badge && item.badge() > 0 && !hasProgressRing(item.id)}
-            <span class="dock-badge">{item.badge() > 99 ? '99+' : item.badge()}</span>
+            <span class="dock-badge">{item.badge() > 99 ? '99+' : i18n.number(item.badge())}</span>
           {/if}
         </div>
         <span class="dock-label">
@@ -83,18 +80,17 @@
 <style>
   .mobile-bottom-dock {
     position: fixed;
-    bottom: max(14px, env(safe-area-inset-bottom, 14px));
+    bottom: max(var(--safe-bottom), var(--dock-margin));
     left: 50%;
-    transform: translateX(-50%);
     z-index: 999;
-    width: min(calc(100vw - 28px), 440px);
-    pointer-events: auto;
-    transition: transform var(--duration-normal, 0.24s) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1)),
-                opacity var(--duration-fast, 0.18s) ease;
+    width: min(calc(100vw - var(--dock-margin) * 2), var(--dock-max-width));
+    transform: translateX(-50%);
+    transition: transform var(--duration-normal) var(--ease-standard),
+                opacity var(--duration-fast) var(--ease-standard);
   }
 
   .mobile-bottom-dock.hidden-dock {
-    transform: translate(-50%, calc(100% + 32px)) scale(0.95);
+    transform: translate(-50%, calc(100% + var(--dock-margin) * 2));
     opacity: 0;
     pointer-events: none;
   }
@@ -102,39 +98,32 @@
   .mobile-dock-capsule {
     display: flex;
     align-items: center;
-    justify-content: space-around;
-    height: 64px;
-    padding: 0 8px;
+    height: var(--mobile-nav-height);
+    padding: 0 4px;
+    border-radius: var(--dock-radius);
     background: var(--floating-bg);
-    border: var(--floating-border);
-    border-radius: 22px;
     box-shadow: var(--floating-shadow);
-    backdrop-filter: var(--floating-backdrop) saturate(1.6);
-    -webkit-backdrop-filter: var(--floating-backdrop) saturate(1.6);
   }
 
   .mobile-dock-btn {
     display: flex;
+    flex: 1 1 0;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    flex: 1;
+    gap: 4px;
+    min-width: 0;
     height: 100%;
+    padding: 0;
+    border: 0;
     background: transparent;
-    color: var(--text-muted);
-    border: none;
-    cursor: pointer;
-    padding: 2px 0;
-    outline: none;
-    transition: color var(--duration-fast, 0.18s) ease;
-  }
-
-  .mobile-dock-btn:hover {
     color: var(--text-secondary);
+    outline: none;
   }
 
-  .mobile-dock-btn.active {
-    color: var(--text-primary);
+  .mobile-dock-btn:focus-visible .dock-icon-wrapper {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
   }
 
   .dock-icon-wrapper {
@@ -142,23 +131,23 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: clamp(48px, 88%, 58px);
+    width: 56px;
     height: 32px;
-    border-radius: 9999px;
+    border-radius: var(--radius-full);
     background: transparent;
-    color: var(--text-muted);
-    transition: background-color var(--duration-fast, 0.18s) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1)),
-                color var(--duration-fast, 0.18s) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1)),
-                transform var(--duration-fast, 0.18s) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1));
+    color: inherit;
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
   }
 
-  .mobile-dock-btn:hover:not(.active) .dock-icon-wrapper {
-    background: rgba(var(--surface-tint-rgb), 0.08);
-    color: var(--text-secondary);
+  @media (hover: hover) {
+    .mobile-dock-btn:hover:not(.active) .dock-icon-wrapper {
+      background: var(--state-layer-hover);
+    }
   }
 
-  .mobile-dock-btn:active .dock-icon-wrapper {
-    transform: scale(0.96);
+  .mobile-dock-btn:active:not(.active) .dock-icon-wrapper {
+    background: var(--state-layer-pressed);
   }
 
   .mobile-dock-btn.active .dock-icon-wrapper {
@@ -167,45 +156,50 @@
   }
 
   :global(.dock-icon) {
-    width: 22px !important;
-    height: 22px !important;
     flex-shrink: 0;
+    width: 24px;
+    height: 24px;
     color: inherit;
-    transition: transform var(--duration-normal, 0.22s) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1));
-  }
-
-  .dock-label {
-    font-size: 11px;
-    font-weight: 500;
-    line-height: 1;
-    margin-top: 3px;
-    white-space: nowrap;
-    letter-spacing: -0.01em;
-    color: var(--text-muted);
-    transition: color var(--duration-fast, 0.18s) ease;
-  }
-
-  .mobile-dock-btn.active .dock-label {
-    font-weight: 700;
-    color: var(--text-primary);
+    transition: transform var(--duration-normal) var(--ease-standard);
   }
 
   .dock-icon-wrapper.has-progress :global(.dock-icon) {
-    transform: scale(0.74);
+    transform: scale(0.75);
+  }
+
+  .dock-label {
+    max-width: 100%;
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: var(--type-label-md-size);
+    line-height: var(--type-label-md-line);
+    font-weight: 500;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .mobile-dock-btn.active .dock-label {
+    color: var(--text-primary);
+    font-weight: 700;
   }
 
   .dock-badge {
     position: absolute;
-    top: -2px;
-    right: 3px;
+    top: 0;
+    left: calc(50% + 4px);
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: var(--radius-full);
     background: var(--status-error);
-    color: var(--text-primary);
-    font-size: 9.5px;
-    font-weight: 700;
-    line-height: 1;
-    padding: 2px 4px;
-    border-radius: 9999px;
-    border: 1.5px solid var(--floating-bg);
+    color: var(--on-status);
+    font-size: var(--type-label-sm-size);
+    font-weight: 600;
+    line-height: 16px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    box-shadow: 0 0 0 2px var(--floating-bg);
+    box-sizing: border-box;
   }
 
   .mobile-dock-btn.active :global(.dock-icon-wrapper .progress-ring .ring-track) {

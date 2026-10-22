@@ -626,7 +626,9 @@ impl SyncManager {
                     return Err(e);
                 }
                 for change in batch.iter().filter(|c| c.kind == "session" && !c.tombstone) {
-                    let Some(bytes) = change.plaintext.as_deref() else { continue };
+                    let Some(bytes) = change.plaintext.as_deref() else {
+                        continue;
+                    };
                     if let Err(e) = self.apply_session_record(bytes) {
                         tracing::error!(error = %e, record_id = %change.record_id, "Sync: failed to apply synced Pawchive session");
                     }

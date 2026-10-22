@@ -1,15 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { downloadState } from '$lib/state/downloadState.svelte';
-  import { accountState } from '$lib/state/accountState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
-  import { configState } from '$lib/state/configState.svelte';
   import { i18n } from '$lib/i18n';
   import { motion, tooltip } from '$lib/motion';
   import { syncState } from '$lib/state/syncState.svelte';
-  import { openExternalUrl } from '$lib/utils/ipc';
+  import { COMMUNITY_LINKS, openCommunity } from '$lib/utils/community';
   import { scrollable } from '$lib/actions/scrollable';
   import IconFeed from '~icons/fluent/grid-24-regular';
   import IconFeedFilled from '~icons/fluent/grid-24-filled';
@@ -24,19 +21,15 @@
   import IconDownloadsFilled from '~icons/fluent/arrow-download-24-filled';
   import IconSettings from '~icons/fluent/settings-24-regular';
   import IconSettingsFilled from '~icons/fluent/settings-24-filled';
-  import IconDockLeft from '~icons/fluent/dock-left-24-regular';
-  import IconChevronLeft from '~icons/fluent/chevron-left-24-regular';
-  import IconChevronRight from '~icons/fluent/chevron-right-24-regular';
-  import IconTelegram from '~icons/simple-icons/telegram';
-  import IconDiscord from '~icons/simple-icons/discord';
-  import IconReddit from '~icons/simple-icons/reddit';
-  import IconGithub from '~icons/simple-icons/github';
+  import IconPanelExpand from '~icons/fluent/panel-left-expand-24-regular';
+  import IconPanelContract from '~icons/fluent/panel-left-contract-24-regular';
+  import Button from '$lib/components/ui/Button.svelte';
+  import WindowControls from './WindowControls.svelte';
+  import { syncStatusText } from '$lib/utils/syncStatus';
   import IconUser from '~icons/fluent/person-24-regular';
   import IconCloudSync from '~icons/fluent/cloud-sync-24-regular';
   import StableWeightLabel from '$lib/components/ui/StableWeightLabel.svelte';
   import pawstashLogo from '$lib/assets/pawstash.png';
-  import { logoFlightState } from '$lib/state/logoFlightState.svelte';
-  import { themeState } from '$lib/theme/themeState.svelte';
 
   interface NavItem {
     id: 'feed' | 'favorites' | 'library' | 'creators' | 'downloads' | 'settings';
@@ -55,47 +48,10 @@
     { id: 'settings', labelKey: 'nav.settings', icon: IconSettings, iconActive: IconSettingsFilled }
   ];
 
-  const appWindow = getCurrentWindow();
-  let isMaximized = $state(false);
   let isMacStyle = $derived(layoutState.effectiveTitlebarStyle === 'macos');
   let isCompact = $derived(layoutState.isSidebarCompact);
   let activeRoot = $derived(navigationState.activeRoot);
-  let isTextLogo = $derived(
-    activeRoot === 'settings' || (logoFlightState.isFlying && logoFlightState.direction === 'toSidebar')
-  );
-  let sidebarLogoEl = $state<HTMLElement | null>(null);
-
-  $effect(() => {
-    logoFlightState.registerSidebar(sidebarLogoEl);
-    if (typeof document !== 'undefined') {
-      document.documentElement.style.removeProperty('--sidebar-width-expanded');
-    }
-  });
-
-  function minimize() {
-    appWindow.minimize();
-  }
-
-  function toggleMaximize() {
-    appWindow.toggleMaximize();
-  }
-
-  function close() {
-    appWindow.close();
-  }
-
-
   onMount(() => {
-    void appWindow.isMaximized().then((val) => {
-      isMaximized = val;
-    });
-
-    const unlistenPromise = appWindow.onResized(() => {
-      void appWindow.isMaximized().then((val) => {
-        isMaximized = val;
-      });
-    });
-
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
         const target = e.target as HTMLElement | null;
@@ -109,50 +65,16 @@
     window.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      void unlistenPromise.then((unlisten) => unlisten());
       window.removeEventListener('keydown', handleKeyDown);
     };
   });
 
-  let profileName = $derived(
-    syncState.status.account_id || i18n.t('profile.local')
-  );
-
-  let profileTooltipText = $derived.by(() => {
-    if (syncState.isSyncing) {
-      if (syncState.progress !== null && syncState.progress !== undefined) {
-        return `${profileName} (${Math.round(syncState.progress * 100)}%)`;
-      }
-      return `${profileName} (${i18n.t('sync.status_syncing')})`;
-    }
-    return profileName;
-  });
-
-  let profileSub = $derived.by(() => {
-    if (syncState.isSyncing) {
-      if (syncState.progress !== null && syncState.progress !== undefined) {
-        const pct = Math.round(syncState.progress * 100);
-        if (syncState.phase === 'pushing') {
-          return `${i18n.t('sync.status_pushing')} ${pct}%`;
-        }
-        return `${i18n.t('sync.status_pulling')} ${pct}%`;
-      }
-      if (syncState.phase === 'connecting') return i18n.t('sync.status_connecting');
-      if (syncState.phase === 'pulling') return i18n.t('sync.status_pulling');
-      if (syncState.phase === 'pushing') return i18n.t('sync.status_pushing');
-      return i18n.t('sync.status_syncing');
-    }
-    if (syncState.status.configured) {
-      if (!syncState.status.unlocked) return i18n.t('sync.locked');
-      return i18n.t('sync.title');
-    }
-    return i18n.t('profile.offline_session');
-  });
+  let profileName = $derived(syncState.status.configured ? i18n.t('sync.title') : i18n.t('profile.title'));
+  let profileSub = $derived(syncStatusText());
 
   function hasProgressRing(id: string): boolean {
     return id === 'downloads' && downloadState.activeDownloadsCount > 0;
   }
-
 </script>
 
 <aside
@@ -161,44 +83,20 @@
   class:compact={isCompact}
   class:mac-style={isMacStyle}
 >
-  {#if isMacStyle}
-    <div class="sidebar-traffic-lights" data-tauri-drag-region="false">
-      <button
-        data-tauri-drag-region="false"
-        use:tooltip={i18n.t('actions.close')}
-        onclick={close}
-        class="mac-light mac-close"
-        aria-label={i18n.t('actions.close')}
-      >
-        <svg class="mac-glyph" viewBox="0 0 6 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M1 1L5 5M5 1L1 5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
-        </svg>
-      </button>
-      <button
-        data-tauri-drag-region="false"
-        use:tooltip={i18n.t('actions.minimize')}
-        onclick={minimize}
-        class="mac-light mac-minimize"
-        aria-label={i18n.t('actions.minimize')}
-      >
-        <svg class="mac-glyph" viewBox="0 0 6 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M0.75 3H5.25" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
-        </svg>
-      </button>
-      <button
-        data-tauri-drag-region="false"
-        use:tooltip={i18n.t(isMaximized ? 'actions.restore' : 'actions.maximize')}
-        onclick={toggleMaximize}
-        class="mac-light mac-maximize"
-        aria-label={i18n.t(isMaximized ? 'actions.restore' : 'actions.maximize')}
-      >
-        <svg class="mac-glyph" viewBox="0 0 6 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M1 1H4L1 4V1Z" fill="currentColor"/>
-          <path d="M5 5H2L5 2V5Z" fill="currentColor"/>
-        </svg>
-      </button>
-    </div>
-  {/if}
+  <div class="sidebar-header" data-tauri-drag-region="deep">
+    {#if isMacStyle}
+      <WindowControls variant="macos" />
+    {/if}
+    <Button
+      variant="ghost"
+      class="btn-icon sidebar-toggle"
+      aria-label={isCompact ? i18n.t('nav.expand') : i18n.t('nav.collapse')}
+      tooltip={`${isCompact ? i18n.t('nav.expand') : i18n.t('nav.collapse')}${layoutState.hasKeyboard ? ' (Ctrl+B)' : ''}`}
+      onclick={() => layoutState.toggleSidebar()}
+    >
+      {#if isCompact}<IconPanelExpand />{:else}<IconPanelContract />{/if}
+    </Button>
+  </div>
 
   <div
     data-overlayscrollbars-initialize
@@ -208,170 +106,116 @@
   >
     <div class="sidebar-content" data-tauri-drag-region>
       <button
-    data-tauri-drag-region="false"
-    use:motion={'sidebar-item'}
-    onclick={() => navigationState.navigateRoot('feed')}
-    class="sidebar-btn logo-btn"
-    aria-label="Pawstash"
-    use:tooltip={isCompact ? { text: 'Pawstash', placement: 'right' } : undefined}
-  >
-    <div class="sidebar-icon">
-      <svg viewBox="0 0 602 602" fill="none" class="logo-svg" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <linearGradient id="logo-grad" x1="301" y1="0" x2="-2.17166e-05" y2="584.337" gradientUnits="userSpaceOnUse">
-            <stop stop-color="#FCD8D2"/>
-            <stop offset="1" stop-color="#FEB8AD"/>
-          </linearGradient>
-        </defs>
-        <g transform="translate(0, 8.5)">
-          <path d="M130.548 56.3212L414.821 178.14L301 226.902L18.361 105.771C24.725 99.2782 32.508 94.0322 41.366 90.6352L130.548 56.3212ZM188.082 34.2192L254.732 8.59119C284.529 -2.86373 317.514 -2.86373 347.311 8.59119L560.677 90.6352C569.492 94.0752 577.275 99.2352 583.639 105.771L469.431 154.705L188.082 34.2192ZM601.742 144.815L322.5 264.484V584.834C330.957 583.401 339.227 581.136 347.311 578.04L560.677 495.953C572.841 491.269 583.301 483.01 590.677 472.264C598.054 461.517 602.002 448.788 602 435.753V150.835C602 148.829 601.9 146.822 601.699 144.815M279.5 584.834V264.484L0.300999 144.815C0.130354 146.818 0.0299598 148.826 0 150.835V435.753C0.00172613 448.793 3.95568 461.526 11.3404 472.273C18.7252 483.02 29.1939 491.276 41.366 495.953L254.689 578.04C262.773 581.136 271.043 583.401 279.5 584.834Z" />
-        </g>
-      </svg>
-    </div>
-    <span class="sidebar-label logo-label">
-      <span class="logo-swap logo-swap-text" class:visible={isTextLogo}>
-        Pawstash
-      </span>
-      <span class="logo-swap logo-swap-img" class:visible={!isTextLogo}>
-        <img
-          bind:this={sidebarLogoEl}
-          src={pawstashLogo}
-          alt="Pawstash"
-          class="logo-text-img"
-          class:is-flying={logoFlightState.isFlying}
-        />
-      </span>
-    </span>
-  </button>
+        data-tauri-drag-region="false"
+        use:motion={'sidebar-item'}
+        onclick={() => navigationState.navigateRoot('feed')}
+        class="sidebar-btn logo-btn"
+        aria-label="Pawstash"
+        use:tooltip={isCompact ? { text: 'Pawstash', placement: 'right' } : undefined}
+      >
+        <div class="sidebar-icon">
+          <svg viewBox="0 0 602 602" fill="none" class="logo-svg" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="logo-grad" x1="301" y1="0" x2="-2.17166e-05" y2="584.337" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#FCD8D2"/>
+                <stop offset="1" stop-color="#FEB8AD"/>
+              </linearGradient>
+            </defs>
+            <g transform="translate(0, 8.5)">
+              <path d="M130.548 56.3212L414.821 178.14L301 226.902L18.361 105.771C24.725 99.2782 32.508 94.0322 41.366 90.6352L130.548 56.3212ZM188.082 34.2192L254.732 8.59119C284.529 -2.86373 317.514 -2.86373 347.311 8.59119L560.677 90.6352C569.492 94.0752 577.275 99.2352 583.639 105.771L469.431 154.705L188.082 34.2192ZM601.742 144.815L322.5 264.484V584.834C330.957 583.401 339.227 581.136 347.311 578.04L560.677 495.953C572.841 491.269 583.301 483.01 590.677 472.264C598.054 461.517 602.002 448.788 602 435.753V150.835C602 148.829 601.9 146.822 601.699 144.815M279.5 584.834V264.484L0.300999 144.815C0.130354 146.818 0.0299598 148.826 0 150.835V435.753C0.00172613 448.793 3.95568 461.526 11.3404 472.273C18.7252 483.02 29.1939 491.276 41.366 495.953L254.689 578.04C262.773 581.136 271.043 583.401 279.5 584.834Z" />
+            </g>
+          </svg>
+        </div>
+        <span class="sidebar-label logo-label">
+          <img src={pawstashLogo} alt="Pawstash" class="logo-text-img" />
+        </span>
+      </button>
 
-  <button
-    data-tauri-drag-region="false"
-    use:motion={'sidebar-item'}
-    class="sidebar-btn profile-btn"
-    class:active={activeRoot === 'profile'}
-    aria-label={profileName}
-    onclick={() => navigationState.navigateRoot('profile')}
-    use:tooltip={isCompact ? { text: profileTooltipText, placement: 'right' } : undefined}
-  >
-    <div
-      class="sidebar-icon relative"
-      class:has-progress={syncState.isSyncing}
-    >
-      {#if syncState.isSyncing}
-        <ProgressRing value={syncState.progress} variant="segmented" size={32} />
-      {/if}
-      {#if syncState.status.configured || syncState.isSyncing}
-        <IconCloudSync />
-      {:else}
-        <IconUser />
-      {/if}
-    </div>
-    <span class="sidebar-label profile-label">
-      <span class="profile-name">{profileName}</span>
-      <span class="profile-sub">{profileSub}</span>
-    </span>
-  </button>
-  <div class="profile-divider"></div>
-
-  <nav data-tauri-drag-region class="sidebar-nav">
-    {#each navItems as item}
-      {@const isActive = activeRoot === item.id}
-      {@const title = i18n.t(item.labelKey)}
       <button
         data-tauri-drag-region="false"
         use:motion={'sidebar-item'}
-        onclick={() => navigationState.navigateRoot(item.id)}
-        class="sidebar-btn"
-        class:active={isActive}
-        aria-label={title}
+        class="sidebar-btn profile-btn"
+        class:active={activeRoot === 'profile'}
+        aria-label={profileName}
+        onclick={() => navigationState.navigateRoot('profile')}
+        use:tooltip={isCompact ? { text: `${profileName} · ${profileSub}`, placement: 'right' } : undefined}
       >
         <div
-          class="sidebar-icon"
-          class:active={isActive}
-          class:has-progress={hasProgressRing(item.id)}
+          class="sidebar-icon relative"
+          class:has-progress={syncState.isSyncing}
         >
-          {#if hasProgressRing(item.id)}
-            <ProgressRing value={downloadState.activeProgress} size={32} />
+          {#if syncState.isSyncing}
+            <ProgressRing value={syncState.progress} variant="segmented" size={32} />
           {/if}
-          {#if isActive}
-            <item.iconActive />
+          {#if syncState.status.configured || syncState.isSyncing}
+            <IconCloudSync />
           {:else}
-            <item.icon />
-          {/if}
-
-          {#if item.badge && item.badge() > 0 && !hasProgressRing(item.id)}
-            <span class="sidebar-badge">{item.badge()}</span>
+            <IconUser />
           {/if}
         </div>
-
-        <span class="sidebar-label" class:active={isActive}>
-          <StableWeightLabel text={title} />
+        <span class="sidebar-label profile-label">
+          <span class="profile-name">{profileName}</span>
+          <span class="profile-sub">{profileSub}</span>
         </span>
       </button>
-    {/each}
-  </nav>
+      <div class="profile-divider"></div>
 
-  <div data-tauri-drag-region class="sidebar-bottom">
-    <button
-      type="button"
-      data-tauri-drag-region="false"
-      use:motion={'sidebar-item'}
-      onclick={() => openExternalUrl('https://t.me/pawstashapp')}
-      class="sidebar-btn"
-      aria-label="Telegram"
-      use:tooltip={isCompact ? { text: 'Telegram', placement: 'right' } : undefined}
-    >
-      <div class="sidebar-icon">
-        <IconTelegram />
-      </div>
-      <span class="sidebar-label">Telegram</span>
-    </button>
+      <nav data-tauri-drag-region class="sidebar-nav">
+        {#each navItems as item}
+          {@const isActive = activeRoot === item.id}
+          {@const title = i18n.t(item.labelKey)}
+          <button
+            data-tauri-drag-region="false"
+            use:motion={'sidebar-item'}
+            onclick={() => navigationState.navigateRoot(item.id)}
+            class="sidebar-btn"
+            class:active={isActive}
+            aria-label={title}
+          >
+            <div
+              class="sidebar-icon"
+              class:active={isActive}
+              class:has-progress={hasProgressRing(item.id)}
+            >
+              {#if hasProgressRing(item.id)}
+                <ProgressRing value={downloadState.activeProgress} size={32} />
+              {/if}
+              {#if isActive}
+                <item.iconActive />
+              {:else}
+                <item.icon />
+              {/if}
 
-    <button
-      type="button"
-      data-tauri-drag-region="false"
-      use:motion={'sidebar-item'}
-      onclick={() => openExternalUrl('https://discord.gg/ahcx8ub5Ck')}
-      class="sidebar-btn"
-      aria-label="Discord"
-      use:tooltip={isCompact ? { text: 'Discord', placement: 'right' } : undefined}
-    >
-      <div class="sidebar-icon">
-        <IconDiscord />
-      </div>
-      <span class="sidebar-label">Discord</span>
-    </button>
+              {#if item.badge && item.badge() > 0 && !hasProgressRing(item.id)}
+                <span class="sidebar-badge">{item.badge()}</span>
+              {/if}
+            </div>
 
-    <button
-      type="button"
-      data-tauri-drag-region="false"
-      use:motion={'sidebar-item'}
-      onclick={() => openExternalUrl('https://reddit.com/r/pawstash')}
-      class="sidebar-btn"
-      aria-label="Reddit"
-      use:tooltip={isCompact ? { text: 'Reddit', placement: 'right' } : undefined}
-    >
-      <div class="sidebar-icon">
-        <IconReddit />
-      </div>
-      <span class="sidebar-label">Reddit</span>
-    </button>
+            <span class="sidebar-label" class:active={isActive}>
+              <StableWeightLabel text={title} />
+            </span>
+          </button>
+        {/each}
+      </nav>
 
-    <button
-      type="button"
-      data-tauri-drag-region="false"
-      use:motion={'sidebar-item'}
-      onclick={() => openExternalUrl('https://github.com/pawstash')}
-      class="sidebar-btn"
-      aria-label="GitHub"
-      use:tooltip={isCompact ? { text: 'GitHub', placement: 'right' } : undefined}
-    >
-      <div class="sidebar-icon">
-        <IconGithub />
+      <div data-tauri-drag-region class="sidebar-bottom">
+        {#each COMMUNITY_LINKS as link (link.id)}
+          <button
+            type="button"
+            data-tauri-drag-region="false"
+            use:motion={'sidebar-item'}
+            onclick={() => openCommunity(link)}
+            class="sidebar-btn"
+            aria-label={link.label}
+            use:tooltip={isCompact ? { text: link.label, placement: 'right' } : undefined}
+          >
+            <div class="sidebar-icon">
+              <link.icon />
+            </div>
+            <span class="sidebar-label">{link.label}</span>
+          </button>
+        {/each}
       </div>
-      <span class="sidebar-label">GitHub</span>
-    </button>
-  </div>
     </div>
   </div>
 </aside>
@@ -444,27 +288,6 @@
     transition: width 300ms cubic-bezier(0.16, 1, 0.3, 1), max-width 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease;
   }
 
-  .logo-swap {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    opacity: 0;
-    pointer-events: none;
-    transform: translateY(4px) scale(0.96);
-    transition: opacity 260ms cubic-bezier(0.16, 1, 0.3, 1), transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .logo-swap.visible {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    pointer-events: auto;
-  }
-
   .sidebar-btn.logo-btn:hover .logo-label {
     opacity: 1;
   }
@@ -480,10 +303,6 @@
     pointer-events: none;
     flex-shrink: 0;
     transition: opacity 160ms ease;
-  }
-
-  .logo-text-img.is-flying {
-    opacity: 0;
   }
 
   :global(.light) .logo-text-img {
@@ -566,10 +385,9 @@
     flex-direction: column;
     align-items: stretch;
     height: 100%;
-    width: var(--sidebar-width-expanded, 160px);
-    padding: 0;
-    background: rgba(var(--surface-tint-rgb), 0.02);
-    border-right: 1px solid rgba(var(--surface-tint-rgb), 0.04);
+    width: calc(var(--sidebar-width-expanded, 160px) + var(--edge-left, 0px));
+    padding: var(--edge-top, 0px) 0 var(--edge-bottom, 0px) var(--edge-left, 0px);
+    background: var(--surface-container-low);
     user-select: none;
     flex-shrink: 0;
     border-top: none;
@@ -583,7 +401,7 @@
   }
 
   .sidebar-aside.compact {
-    width: var(--sidebar-width-collapsed, 56px);
+    width: calc(var(--sidebar-width-collapsed, 56px) + var(--edge-left, 0px));
   }
 
   .sidebar-scrollable {
@@ -619,7 +437,7 @@
     min-height: 100%;
     width: 100%;
     box-sizing: border-box;
-    padding: 12px 6px;
+    padding: 4px 6px 12px;
   }
 
   .sidebar-nav {
@@ -784,82 +602,33 @@
     50% { opacity: 0.7; }
   }
 
-  .sidebar-aside.mac-style .sidebar-content {
-    padding-top: 0;
-  }
-
-  .sidebar-traffic-lights {
-    position: relative;
-    height: 38px;
-    padding: 0 0 0 12px;
+  .sidebar-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    z-index: 50;
+    gap: 12px;
+    height: var(--toolbar-height);
+    padding-inline: 8px;
     flex-shrink: 0;
-  }
-
-  .sidebar-aside.compact .sidebar-traffic-lights {
-    padding-left: 8px;
-    gap: 6px;
-  }
-
-  .mac-light {
-    position: relative;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    border: 1px solid transparent;
-    padding: 0;
-    margin: 0;
-    display: grid;
-    place-items: center;
-    cursor: pointer;
     box-sizing: border-box;
-    transition: filter 120ms ease;
+    --control-height: var(--control-height-base);
+    --control-icon-size: var(--control-icon-base);
   }
 
-  .mac-light:active {
-    filter: brightness(0.82);
+  .sidebar-aside.mac-style .sidebar-header {
+    padding-inline-start: 16px;
   }
 
-  .mac-close {
-    background-color: var(--color-mac-close, #ff5f57);
-    border-color: var(--color-mac-close-border, rgba(224, 68, 62, 0.6));
+  .sidebar-aside.compact.mac-style .sidebar-header {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 4px;
+    height: auto;
+    min-height: var(--toolbar-height);
+    padding: 18px 8px 0 10px;
   }
 
-  .mac-close:active {
-    background-color: var(--color-mac-close-active, #bf4942);
-  }
-
-  .mac-minimize {
-    background-color: var(--color-mac-minimize, #febc2e);
-    border-color: var(--color-mac-minimize-border, rgba(216, 158, 36, 0.6));
-  }
-
-  .mac-minimize:active {
-    background-color: var(--color-mac-minimize-active, #be8e25);
-  }
-
-  .mac-maximize {
-    background-color: var(--color-mac-maximize, #28c840);
-    border-color: var(--color-mac-maximize-border, rgba(26, 171, 41, 0.6));
-  }
-
-  .mac-maximize:active {
-    background-color: var(--color-mac-maximize-active, #1f9a31);
-  }
-
-  .mac-glyph {
-    width: 6px;
-    height: 6px;
-    color: var(--color-mac-icon, rgba(0, 0, 0, 0.72));
-    opacity: 0;
-    transition: opacity 120ms ease;
-    pointer-events: none;
-  }
-
-  .sidebar-traffic-lights:hover .mac-glyph {
-    opacity: 1;
+  .sidebar-aside.compact .sidebar-header :global(.traffic-lights) {
+    gap: 6px;
   }
 </style>

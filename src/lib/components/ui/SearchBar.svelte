@@ -12,6 +12,7 @@
     open?: boolean;
     placeholder?: string;
     expandable?: boolean;
+    shortcutHint?: string;
     class?: string;
     onsearch?: (query: string) => void;
     onclose?: () => void;
@@ -22,6 +23,7 @@
     open = $bindable(false),
     placeholder,
     expandable = true,
+    shortcutHint,
     class: extraClass = '',
     onsearch,
     onclose
@@ -37,6 +39,11 @@
     open = true;
     await tick();
     inputEl?.focus();
+  }
+
+  export function focusInput() {
+    inputEl?.focus();
+    inputEl?.select();
   }
 
   export function closeSearch() {
@@ -92,7 +99,7 @@
         type="button"
         class="search-action-btn"
         onclick={handleClearOrClose}
-        aria-label={value ? 'Clear search' : 'Close search'}
+        aria-label={value ? i18n.t('common.clear_search') : i18n.t('common.close')}
         use:tooltip={value ? i18n.t('feed.clear') : i18n.t('nav.close')}
       >
         <IconDismiss class="w-5 h-5" />
@@ -122,6 +129,7 @@
       oninput={handleInput}
       onkeydown={handleKeyDown}
       class="search-input-field"
+      class:has-kbd={!value && shortcutHint}
     />
     {#if value}
       <button
@@ -132,6 +140,8 @@
       >
         <IconDismiss class="w-5 h-5" />
       </button>
+    {:else if shortcutHint}
+      <kbd class="search-kbd" aria-hidden="true">{shortcutHint}</kbd>
     {/if}
   </div>
 {/if}
@@ -142,8 +152,8 @@
     position: relative;
     display: flex;
     align-items: center;
-    width: 240px;
-    height: 44px;
+    width: 280px;
+    height: var(--control-height, 40px);
     flex-shrink: 0;
     animation: searchDesktopExpand var(--duration-fast, 180ms) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1));
   }
@@ -158,13 +168,11 @@
   @keyframes searchDesktopExpand {
     from {
       opacity: 0;
-      width: 44px;
-      transform: scale(0.95);
+      width: var(--control-height, 40px);
     }
     to {
       opacity: 1;
-      width: 240px;
-      transform: scale(1);
+      width: 280px;
     }
   }
 
@@ -181,36 +189,32 @@
 
   .search-input-field {
     width: 100%;
-    height: 44px;
-    padding: 0 44px 0 40px;
-    background: var(--input-bg, rgba(255, 255, 255, 0.06));
-    border: var(--border-width) solid var(--border-color);
+    height: 100%;
+    padding: 0 40px 0 42px;
+    background: var(--surface-container-high);
+    border: 0;
     border-radius: var(--radius-full);
     color: var(--text-primary);
-    font-size: 14px;
+    font-size: var(--type-body-md-size);
     font-family: var(--font-sans);
     line-height: normal;
+    text-overflow: ellipsis;
     outline: none;
     box-sizing: border-box;
-    transition: background var(--duration-fast) var(--ease-expo),
-                border-color var(--duration-fast) var(--ease-expo),
-                box-shadow var(--duration-fast) var(--ease-expo);
+    transition: background-color var(--duration-fast) var(--ease-standard);
   }
 
   .search-input-field::placeholder {
     color: var(--text-secondary);
-    opacity: 0.85;
   }
 
-  .search-input-field:hover {
-    background: var(--input-bg-hover, rgba(255, 255, 255, 0.095));
-    border-color: var(--border-color-hover);
+  .search-input-field.has-kbd {
+    padding-inline-end: 76px;
   }
 
-  .search-input-field:focus {
-    background: var(--input-bg-hover, rgba(255, 255, 255, 0.095));
-    border-color: var(--border-color-focus);
-    box-shadow: 0 0 0 2px var(--accent-glow);
+  .search-input-field:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: -2px;
   }
 
   .search-icon-wrapper {
@@ -248,8 +252,25 @@
     transition: color var(--duration-fast), background var(--duration-fast);
   }
 
-  .search-action-btn:hover {
-    background: rgba(var(--surface-tint-rgb), 0.12);
-    color: var(--text-primary);
+  .search-kbd {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 1px 6px;
+    border-radius: var(--radius-xs);
+    background: var(--surface-container-highest);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: var(--type-label-sm-size);
+    line-height: var(--type-label-sm-line);
+    pointer-events: none;
+  }
+
+  @media (hover: hover) {
+    .search-action-btn:hover {
+      background: var(--state-layer-hover);
+      color: var(--text-primary);
+    }
   }
 </style>

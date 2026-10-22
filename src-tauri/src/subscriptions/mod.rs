@@ -24,6 +24,7 @@ pub struct SubscriptionManager {
 }
 
 impl SubscriptionManager {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         repository: Arc<SubscriptionRepository>,
         client: Arc<ProviderManager>,

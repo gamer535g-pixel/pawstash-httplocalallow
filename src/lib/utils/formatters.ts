@@ -37,20 +37,20 @@ export function formatDate(dateValue?: string | number | null): string {
   }
 }
 
+const NAMED_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+
+export function decodeHtmlEntities(text: string): string {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (entity, code: string) => {
+    if (code[0] !== '#') return NAMED_ENTITIES[code.toLowerCase()] ?? entity;
+    const point = code[1] === 'x' || code[1] === 'X' ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
+    return point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : entity;
+  });
+}
+
+// Tags go before entities are decoded, so escaped text like "&lt;3" survives as "<3".
 export function cleanPostTitle(title?: string | null): string {
   if (!title) return '';
-  let text = String(title);
-
-  text = text
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&nbsp;/g, ' ');
-
-  text = text.replace(/<[^>]*>/g, ' ');
+  let text = decodeHtmlEntities(String(title).replace(/<[^>]*>/g, ' '));
 
   text = text
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
@@ -110,4 +110,13 @@ export function getPostTags(post?: any): string[] {
   }
 
   return Array.from(tagSet);
+}
+
+export function formatDuration(seconds?: number): string {
+  if (!seconds || !Number.isFinite(seconds) || seconds <= 0) return '';
+  const total = Math.floor(seconds);
+  const hrs = Math.floor(total / 3600);
+  const mins = Math.floor((total % 3600) / 60);
+  const secs = String(total % 60).padStart(2, '0');
+  return hrs > 0 ? `${hrs}:${String(mins).padStart(2, '0')}:${secs}` : `${mins}:${secs}`;
 }

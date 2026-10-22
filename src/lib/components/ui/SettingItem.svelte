@@ -1,285 +1,288 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
-  import { fade } from 'svelte/transition';
-  import { ripple, tooltip } from '$lib/motion';
-  import { i18n } from '$lib/i18n/i18nState.svelte';
+  import type { Component, Snippet } from 'svelte';
+  import { ripple } from '$lib/motion';
   import { layoutState } from '$lib/state/layoutState.svelte';
-  import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
-  import IconUndo from '~icons/fluent/arrow-undo-24-regular';
-  import IconQuestion from '~icons/fluent/question-circle-24-regular';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
+  import IconChevronRight from '~icons/fluent/chevron-right-24-regular';
+  import IconOpen from '~icons/fluent/open-24-regular';
 
   interface Props {
     title: string;
     description?: string;
-    icon?: any;
-    value?: unknown;
-    defaultValue?: unknown;
-    onReset?: () => void;
+    summary?: string;
+    icon?: Component;
+    checked?: boolean;
+    onCheckedChange?: (checked: boolean) => void;
+    onclick?: () => void;
+    external?: boolean;
+    action?: boolean;
+    danger?: boolean;
+    stacked?: boolean;
+    disabled?: boolean;
     children?: Snippet;
     class?: string;
-    align?: 'left' | 'right';
   }
 
   let {
     title,
     description = '',
-    icon: IconComponent,
-    value,
-    defaultValue,
-    onReset,
+    summary,
+    icon: Icon,
+    checked,
+    onCheckedChange,
+    onclick,
+    external = false,
+    action = false,
+    danger = false,
+    stacked = false,
+    disabled = false,
     children,
-    class: extraClass = '',
-    align = 'right'
+    class: extraClass = ''
   }: Props = $props();
 
-  function isValuesEqual(a: unknown, b: unknown): boolean {
-    if (a === b) return true;
-    if (typeof a !== typeof b) return false;
-    if (typeof a === 'object' && a !== null && b !== null) {
-      return JSON.stringify(a) === JSON.stringify(b);
-    }
-    return false;
+  let isSwitch = $derived(checked !== undefined && onCheckedChange !== undefined);
+  let isButton = $derived(!isSwitch && onclick !== undefined);
+  let isStacked = $derived(Boolean(children) && (stacked || layoutState.isMobile));
+  let supporting = $derived(summary ?? description);
+
+  function activate() {
+    if (disabled) return;
+    if (isSwitch) onCheckedChange?.(!checked);
+    else onclick?.();
   }
 
-  let showReset = $derived(
-    value !== undefined && defaultValue !== undefined && !isValuesEqual(value, defaultValue)
-  );
-  let isHelpOpen = $state(false);
-
-  function handleHelpClick() {
-    if (layoutState.isMobile) {
-      isHelpOpen = true;
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.target !== event.currentTarget) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      activate();
     }
   }
 </script>
 
-<div class="setting-item {extraClass}">
-  <div class="setting-item__header">
-    <div class="setting-item__title-row">
-      {#if IconComponent}
-        <div class="setting-item__icon">
-          <IconComponent />
-        </div>
-      {/if}
-      <span class="setting-item__title">{title}</span>
-      {#if description}
-        <button
-          type="button"
-          use:tooltip={layoutState.isMobile ? undefined : { text: description, placement: 'top' }}
-          onclick={handleHelpClick}
-          class="setting-item__help"
-          aria-label={description}
-          aria-haspopup={layoutState.isMobile ? 'dialog' : undefined}
-          aria-expanded={layoutState.isMobile ? isHelpOpen : undefined}
-        >
-          <IconQuestion />
-        </button>
-      {/if}
-      {#if onReset && showReset}
-        <button
-          type="button"
-          transition:fade={{ duration: 150 }}
-          use:ripple
-          use:tooltip={layoutState.isMobile ? undefined : { text: i18n.t('settings.reset_setting_to_default'), placement: 'top' }}
-          onclick={(e) => {
-            e.stopPropagation();
-            onReset();
-          }}
-          class="setting-item__reset"
-          aria-label={i18n.t('settings.reset_setting_to_default')}
-        >
-          <IconUndo />
-        </button>
-      {/if}
-    </div>
-  </div>
+{#snippet text()}
+  {#if Icon}
+    <span class="setting-item__icon"><Icon /></span>
+  {/if}
+  <span class="setting-item__text">
+    <span class="setting-item__title">{title}</span>
+    {#if supporting}
+      <span class="setting-item__description">{supporting}</span>
+    {/if}
+  </span>
+{/snippet}
 
+{#if isSwitch}
   <div
-    class="setting-item__control"
-    class:is-right={align === 'right'}
-    class:is-left={align === 'left'}
+    class="setting-item is-interactive {extraClass}"
+    class:is-disabled={disabled}
+    role="switch"
+    aria-checked={checked}
+    aria-disabled={disabled || undefined}
+    tabindex={disabled ? -1 : 0}
+    use:ripple
+    onclick={activate}
+    onkeydown={handleKeydown}
   >
-    {#if children}
-      {@render children()}
+    {@render text()}
+    <span class="setting-item__trailing">
+      <Toggle checked={checked ?? false} {disabled} tabindex={-1} class="pointer-events-none" />
+    </span>
+  </div>
+{:else if isButton}
+  <div
+    class="setting-item is-interactive {extraClass}"
+    class:is-disabled={disabled}
+    class:is-danger={danger}
+    role="button"
+    aria-disabled={disabled || undefined}
+    tabindex={disabled ? -1 : 0}
+    use:ripple
+    onclick={activate}
+    onkeydown={handleKeydown}
+  >
+    {@render text()}
+    {#if !action}
+      <span class="setting-item__trailing">
+        {#if external}<IconOpen />{:else}<IconChevronRight />{/if}
+      </span>
     {/if}
   </div>
-</div>
-
-<BottomSheet
-  isOpen={isHelpOpen && layoutState.isMobile}
-  title={title}
-  closeLabel={i18n.t('common.close')}
-  actionLabel={i18n.t('common.got_it')}
-  onclose={() => (isHelpOpen = false)}
->
-  <p class="setting-item__help-text">{description}</p>
-</BottomSheet>
+{:else}
+  <div
+    class="setting-item {extraClass}"
+    class:is-stacked={isStacked}
+    class:is-disabled={disabled}
+    aria-disabled={disabled || undefined}
+  >
+    {@render text()}
+    {#if children}
+      <div class="setting-item__control">
+        {@render children()}
+      </div>
+    {/if}
+  </div>
+{/if}
 
 <style>
   .setting-item {
+    position: relative;
     display: flex;
     align-items: center;
+    gap: 16px;
     width: 100%;
-    min-height: calc(var(--settings-row-min-height, 58px) * var(--ui-scale, 1));
     min-width: 0;
-    max-width: 100%;
-    gap: calc(16px * var(--ui-scale, 1));
-    padding: calc(9px * var(--ui-scale, 1)) calc(16px * var(--ui-scale, 1));
-    border-radius: calc(var(--radius-sm) * var(--ui-scale, 1));
-    background: var(--settings-row-bg, var(--bg-card));
+    min-height: 52px;
+    padding: 12px 16px;
     box-sizing: border-box;
+    border-radius: var(--radius-xs);
+    background: var(--settings-tile, var(--surface-container));
+    overflow: hidden;
   }
 
-  .setting-item__header {
-    flex: 1 1 auto;
-    min-width: 0;
+  .setting-item:global(.is-revealed) {
+    isolation: isolate;
   }
 
-  .setting-item__title-row {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    gap: calc(10px * var(--ui-scale, 1));
+  .setting-item:global(.is-revealed)::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: var(--accent-container);
+    pointer-events: none;
+    animation: setting-reveal 1600ms var(--ease-standard) forwards;
+  }
+
+  @keyframes setting-reveal {
+    0%,
+    35% {
+      opacity: 0.9;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+
+  .setting-item.is-stacked {
+    flex-wrap: wrap;
+  }
+
+  .setting-item.is-stacked .setting-item__control {
+    flex: 1 0 100%;
+    max-width: none;
+    justify-content: stretch;
+  }
+
+  .setting-item.is-interactive {
+    cursor: default;
+    outline: none;
+  }
+
+  .setting-item.is-interactive::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: transparent;
+    pointer-events: none;
+    transition: background-color var(--duration-fast) var(--ease-standard);
+  }
+
+  @media (hover: hover) {
+    .setting-item.is-interactive:not(.is-disabled):hover::before {
+      background: var(--state-layer-hover);
+    }
+  }
+
+  .setting-item.is-interactive:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: -2px;
+  }
+
+  .setting-item.is-disabled {
+    opacity: 0.38;
+    pointer-events: none;
   }
 
   .setting-item__icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: calc(21.5px * var(--ui-scale, 1));
-    height: calc(21.5px * var(--ui-scale, 1));
-    color: var(--text-secondary);
+    display: grid;
+    place-items: center;
     flex: none;
+    width: 24px;
+    height: 24px;
+    color: var(--text-secondary);
   }
 
   .setting-item__icon :global(svg) {
-    width: 100%;
-    height: 100%;
-    display: block;
+    width: 24px;
+    height: 24px;
+  }
+
+  .setting-item__text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .setting-item__title {
-    min-width: 0;
     color: var(--text-primary);
-    font-family: var(--font-sans);
-    font-size: calc(13.5px * var(--ui-scale, 1));
-    font-weight: var(--font-weight-normal);
-    line-height: 1.35;
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-line);
     overflow-wrap: anywhere;
   }
 
-  .setting-item__help,
-  .setting-item__reset {
-    position: relative;
-    display: inline-grid;
+  .setting-item.is-danger .setting-item__title,
+  .setting-item.is-danger .setting-item__icon {
+    color: var(--status-error);
+  }
+
+  .setting-item__description {
+    color: var(--text-secondary);
+    font-size: var(--type-body-sm-size);
+    line-height: var(--type-body-sm-line);
+    overflow-wrap: anywhere;
+  }
+
+  .setting-item__trailing {
+    display: grid;
     place-items: center;
     flex: none;
-    width: calc(28px * var(--ui-scale, 1));
-    height: calc(28px * var(--ui-scale, 1));
-    padding: 0;
-    border: 0;
-    border-radius: var(--radius-full);
-    background: transparent;
     color: var(--text-secondary);
-    transition:
-      background var(--duration-fast) var(--ease-expo),
-      color var(--duration-fast) var(--ease-expo);
   }
 
-  .setting-item__help {
-    cursor: help;
-  }
-
-  .setting-item__reset {
-    cursor: pointer;
-  }
-
-  .setting-item__help:hover,
-  .setting-item__reset:hover {
-    background: rgba(var(--surface-tint-rgb), 0.08);
-    color: var(--text-primary);
-  }
-
-  .setting-item__help:focus-visible,
-  .setting-item__reset:focus-visible {
-    outline: calc(1.5px * var(--ui-scale, 1)) solid var(--accent-primary) !important;
-    outline-offset: calc(-1.5px * var(--ui-scale, 1)) !important;
-    box-shadow: none !important;
-  }
-
-  .setting-item__help :global(svg) {
-    width: calc(20px * var(--ui-scale, 1));
-    height: calc(20px * var(--ui-scale, 1));
-  }
-
-  .setting-item__reset :global(svg) {
-    width: calc(17px * var(--ui-scale, 1));
-    height: calc(17px * var(--ui-scale, 1));
+  .setting-item__trailing :global(svg) {
+    width: 20px;
+    height: 20px;
   }
 
   .setting-item__control {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    flex: 0 1 calc(var(--settings-control-max-width, 360px) * var(--ui-scale, 1));
+    flex: 0 1 var(--settings-control-max-width);
+    min-width: 0;
+    max-width: var(--settings-control-max-width);
+  }
+
+  .setting-item__control > :global(.input-box),
+  .setting-item__control > :global(.select-root),
+  .setting-item__control > :global(.template-input-wrapper),
+  .setting-item__control > :global(.shortcut-box),
+  .setting-item__control > :global(.m3-slider),
+  .setting-item__control > :global(div.w-full) {
+    flex: 1 1 auto;
     width: 100%;
     min-width: 0;
-    max-width: calc(var(--settings-control-max-width, 360px) * var(--ui-scale, 1));
-    margin-left: auto;
   }
 
-  .setting-item__control.is-right {
-    justify-content: flex-end;
+  .setting-item__control > :global(.choice-group) {
+    flex: none;
   }
 
-  .setting-item__control.is-left {
-    justify-content: flex-start;
-  }
-
-  .setting-item__help-text {
-    margin: 0;
-    color: var(--text-secondary);
-    font-family: var(--font-sans);
-    font-size: calc(var(--text-sm) * var(--ui-scale, 1));
-    line-height: var(--leading-normal);
-    overflow-wrap: anywhere;
-    user-select: text;
-  }
-
-  :global([data-layout='mobile']) .setting-item__help {
-    cursor: pointer;
-  }
-
-  :global([data-layout='mobile']) .setting-item__help + .setting-item__reset {
-    margin-left: calc(var(--space-2) * var(--ui-scale, 1));
-  }
-
-  :global([data-layout='mobile']) .setting-item__help::after,
-  :global([data-layout='mobile']) .setting-item__reset::after {
-    content: '';
-    position: absolute;
-    inset: calc(var(--space-2) * var(--ui-scale, 1) * -1);
-  }
-
-  @media (max-width: 768px) {
-    .setting-item__help {
-      cursor: pointer;
-    }
-
-    .setting-item__help + .setting-item__reset {
-      margin-left: calc(var(--space-2) * var(--ui-scale, 1));
-    }
-
-    .setting-item__help::after,
-    .setting-item__reset::after {
-      content: '';
-      position: absolute;
-      inset: calc(var(--space-2) * var(--ui-scale, 1) * -1);
-    }
-  }
-
-  .setting-item.col-span-full .setting-item__control {
-    max-width: none;
+  .setting-item.is-stacked .setting-item__control > :global(.choice-group) {
+    flex: 1 1 auto;
   }
 
   .setting-item__control :global(.settings-action-group) {
@@ -287,142 +290,29 @@
     flex-wrap: wrap;
     align-items: center;
     justify-content: flex-end;
-    gap: calc(8px * var(--ui-scale, 1));
+    gap: 8px;
     width: 100%;
   }
 
-  .setting-item__control > :global(.input-box),
-  .setting-item__control > :global(.select-root),
-  .setting-item__control > :global(.template-input-container),
-  .setting-item__control > :global(.shortcut-input-container),
-  .setting-item__control > :global(div.w-full) {
-    width: 100%;
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  .setting-item__control > :global(.choice-group) {
-    width: auto;
-    flex: 0 0 auto;
-    margin-left: auto;
-  }
-
-  .setting-item__control > :global(.switch-root) {
-    flex: none;
-    margin-left: auto;
-  }
-
-  .setting-item__control.is-left > :global(.choice-group) {
-    margin-left: 0;
-  }
-
-  :global([data-layout='mobile']) .setting-item {
-    flex-direction: column;
-    align-items: stretch;
-    gap: calc(12px * var(--ui-scale, 1));
-    padding: calc(12px * var(--ui-scale, 1));
-  }
-
-  :global([data-layout='mobile']) .setting-item__control,
-  :global([data-layout='mobile']) .setting-item__control.is-right,
-  :global([data-layout='mobile']) .setting-item__control.is-left {
-    flex: none;
-    width: 100%;
-    max-width: none;
-    margin-left: 0;
+  .setting-item.is-stacked .setting-item__control :global(.settings-action-group) {
     justify-content: flex-start;
   }
 
-  :global([data-layout='mobile']) .setting-item__control > :global(*:not(.switch-root)),
-  :global([data-layout='mobile']) .setting-item__control > :global(.input-box),
-  :global([data-layout='mobile']) .setting-item__control > :global(.select-root),
-  :global([data-layout='mobile']) .setting-item__control > :global(.choice-group),
-  :global([data-layout='mobile']) .setting-item__control > :global(.template-input-container),
-  :global([data-layout='mobile']) .setting-item__control > :global(.shortcut-input-container),
-  :global([data-layout='mobile']) .setting-item__control > :global(div.w-full) {
-    width: 100% !important;
-    max-width: 100% !important;
-    margin-left: 0 !important;
-    flex: 1 1 auto !important;
+  :global([data-layout='mobile']) .setting-item {
+    min-height: 56px;
   }
 
-  :global([data-layout='mobile']) .setting-item__control > :global(.switch-root) {
-    flex: none !important;
-    margin-left: auto !important;
+  :global([data-layout='mobile']) .setting-item.is-interactive:has(.setting-item__description) {
+    min-height: 72px;
   }
 
-  :global([data-layout='mobile']) .setting-item__control > :global(.btn),
-  :global([data-layout='mobile']) .setting-item__control > :global(button.btn) {
-    width: 100%;
-    justify-content: center;
+  :global([data-layout='mobile']) .setting-item__title {
+    font-size: var(--type-body-lg-size);
+    line-height: var(--type-body-lg-line);
   }
 
-  :global([data-layout='mobile']) .setting-item__control :global(.settings-action-group) {
-    width: 100%;
-    justify-content: stretch;
-  }
-
-  :global([data-layout='mobile']) .setting-item__control :global(.settings-action-group > .btn),
-  :global([data-layout='mobile']) .setting-item__control :global(.settings-action-group > button) {
-    flex: 1 1 calc(50% - 6px);
-    min-width: 110px;
-    justify-content: center;
-    text-align: center;
-  }
-
-  @media (max-width: 640px) {
-    .setting-item {
-      flex-direction: column;
-      align-items: stretch;
-      gap: calc(12px * var(--ui-scale, 1));
-      padding: calc(12px * var(--ui-scale, 1));
-    }
-
-    .setting-item__control,
-    .setting-item__control.is-right,
-    .setting-item__control.is-left {
-      flex: none;
-      width: 100%;
-      max-width: none;
-      margin-left: 0;
-      justify-content: flex-start;
-    }
-
-    .setting-item__control > :global(*:not(.switch-root)),
-    .setting-item__control > :global(.input-box),
-    .setting-item__control > :global(.select-root),
-    .setting-item__control > :global(.choice-group),
-    .setting-item__control > :global(.template-input-container),
-    .setting-item__control > :global(.shortcut-input-container),
-    .setting-item__control > :global(div.w-full) {
-      width: 100% !important;
-      max-width: 100% !important;
-      margin-left: 0 !important;
-      flex: 1 1 auto !important;
-    }
-
-    .setting-item__control > :global(.switch-root) {
-      flex: none !important;
-      margin-left: auto !important;
-    }
-
-    .setting-item__control > :global(.btn),
-    .setting-item__control > :global(button.btn) {
-      width: 100%;
-      justify-content: center;
-    }
-
-    .setting-item__control :global(.settings-action-group) {
-      width: 100%;
-      justify-content: stretch;
-    }
-
-    .setting-item__control :global(.settings-action-group > .btn),
-    .setting-item__control :global(.settings-action-group > button) {
-      flex: 1 1 calc(50% - 6px);
-      min-width: 110px;
-      justify-content: center;
-      text-align: center;
-    }
+  :global([data-layout='mobile']) .setting-item__description {
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-line);
   }
 </style>

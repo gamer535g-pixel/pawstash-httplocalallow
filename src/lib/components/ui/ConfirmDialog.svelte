@@ -139,14 +139,8 @@
 <style>
   .confirm-desc {
     margin: 0;
-    font-size: calc(var(--text-sm, 13px) * var(--ui-scale, 1));
-    line-height: var(--leading-relaxed, 1.5);
     color: var(--text-secondary);
-    box-sizing: border-box;
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-line);
   }
-
-  :global(.bottom-sheet) .confirm-desc {
-    font-size: calc(var(--text-sm, 14px) * var(--ui-scale, 1));
-  }
-
 </style>

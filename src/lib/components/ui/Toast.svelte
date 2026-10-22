@@ -3,6 +3,7 @@
   import { toast } from 'svelte-sonner';
   import { ripple } from '$lib/motion';
   import { i18n } from '$lib/i18n';
+  import type { ToastVariant } from '$lib/utils/toast';
   import IconSuccess from '~icons/fluent/checkmark-24-filled';
   import IconError from '~icons/fluent/error-circle-24-filled';
   import IconWarning from '~icons/fluent/warning-24-filled';
@@ -16,8 +17,6 @@
   import IconCopied from '~icons/fluent/copy-24-filled';
   import IconDownload from '~icons/fluent/arrow-download-24-filled';
   import IconCleared from '~icons/fluent/broom-24-regular';
-
-  export type ToastVariant = 'success' | 'error' | 'warning' | 'info' | 'loading';
 
   export type ToastGlyph =
     | 'favorited'
@@ -94,8 +93,8 @@
 
 <div
   class="toast"
-  class:has-close={dismissible}
-  class:is-stacked={Boolean(description) || Boolean(actionLabel)}
+  class:has-desc={Boolean(description)}
+  class:is-stacked={Boolean(actionLabel) && actionLabel!.length > 8}
   class:is-swapped={mounted}
   data-variant={variant}
   style:--toast-duration={countsDown ? `${duration}ms` : undefined}
@@ -119,20 +118,21 @@
           {/if}{description}
         </p>
       {/if}
-      {#if actionLabel}
-        <button
-          type="button"
-          class="toast__action"
-          use:ripple
-          onclick={() => {
-            onaction?.();
-            dismiss();
-          }}
-        >
-          {actionLabel}
-        </button>
-      {/if}
     </div>
+
+    {#if actionLabel}
+      <button
+        type="button"
+        class="toast__action"
+        use:ripple
+        onclick={() => {
+          onaction?.();
+          dismiss();
+        }}
+      >
+        {actionLabel}
+      </button>
+    {/if}
 
     {#if dismissible}
       <button
@@ -155,195 +155,175 @@
 
 <style>
   .toast {
-    --toast-close-slack: calc(
-      (var(--toast-close-size) - var(--toast-close-icon)) / 2 * var(--ui-scale, 1)
-    );
-    position: relative;
-    display: flex;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas: "glyph text action close";
     align-items: center;
-    gap: calc(var(--floating-card-gap) * var(--ui-scale, 1));
+    column-gap: var(--toast-gap);
     width: 100%;
-    min-height: calc(
-      (var(--border-width) * 2 + var(--toast-padding-y) * 2 + var(--toast-close-size)) * var(--ui-scale, 1)
-    );
-    padding: calc(var(--toast-padding-y) * var(--ui-scale, 1))
-             calc(var(--toast-padding-x) * var(--ui-scale, 1));
-    box-sizing: border-box;
+    min-height: 48px;
+    padding: var(--toast-padding-y) 8px var(--toast-padding-y) var(--toast-padding-x);
+    border-radius: var(--toast-radius);
+    background: var(--toast-surface);
+    box-shadow: var(--toast-shadow);
     color: var(--text-primary);
-    background: var(--floating-bg);
-    border: var(--floating-border);
-    border-radius: calc(var(--toast-radius) * var(--ui-scale, 1));
-    box-shadow: var(--floating-shadow);
-    backdrop-filter: var(--floating-backdrop);
-    -webkit-backdrop-filter: var(--floating-backdrop);
+    box-sizing: border-box;
     overflow: hidden;
   }
 
+  .toast.is-stacked {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "glyph text close"
+      ". action action";
+    row-gap: 4px;
+  }
+
+  .toast:not(:has(.toast__close)):not(:has(.toast__action)) {
+    padding-inline-end: var(--toast-padding-x);
+  }
+
+  .toast__glyph { grid-area: glyph; }
+  .toast__text { grid-area: text; }
+  .toast__action { grid-area: action; justify-self: end; }
+  .toast__close { grid-area: close; }
+
+  .toast.has-desc {
+    align-items: start;
+  }
+
   .toast__glyph {
-    flex: none;
     display: grid;
     place-items: center;
-    width: calc(var(--floating-card-icon-size) * var(--ui-scale, 1));
-    height: calc(var(--floating-card-icon-size) * var(--ui-scale, 1));
+    flex: none;
+    height: var(--type-body-md-line);
     color: var(--text-secondary);
   }
 
-  .toast.is-stacked {
-    align-items: flex-start;
-  }
-
-  .toast.is-stacked .toast__glyph {
-    height: calc(
-      var(--floating-card-title-size) * var(--floating-card-title-line-height) * var(--ui-scale, 1)
-    );
-  }
-
   .toast__glyph :global(svg) {
-    width: calc(var(--floating-card-icon-size) * var(--ui-scale, 1));
-    height: calc(var(--floating-card-icon-size) * var(--ui-scale, 1));
+    width: var(--toast-icon-size);
+    height: var(--toast-icon-size);
+  }
+
+  .toast[data-variant='error'] .toast__glyph {
+    color: var(--status-error);
+  }
+
+  .toast[data-variant='warning'] .toast__glyph {
+    color: var(--status-warning);
   }
 
   .toast__text {
-    flex: 1 1 auto;
-    min-width: 0;
     display: flex;
     flex-direction: column;
-  }
-
-  .toast.has-close .toast__title {
-    padding-right: calc(
-      (var(--toast-close-size) + var(--floating-card-gap)) * var(--ui-scale, 1)
-      - var(--toast-close-slack)
-    );
+    gap: 2px;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .toast__title {
     margin: 0;
-    font-family: var(--font-sans);
-    font-size: calc(var(--floating-card-title-size) * var(--ui-scale, 1));
-    font-weight: var(--floating-card-title-weight);
-    line-height: var(--floating-card-title-line-height);
-    letter-spacing: -0.01em;
     color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--type-body-md-size);
+    line-height: var(--type-body-md-line);
+    font-weight: 500;
     overflow-wrap: anywhere;
   }
 
   .toast__desc {
-    margin: calc(var(--space-1) * var(--ui-scale, 1)) 0 0;
-    font-size: calc(var(--floating-card-desc-size) * var(--ui-scale, 1));
-    font-weight: var(--floating-card-desc-weight);
-    line-height: 1.4;
-    color: var(--floating-card-desc-color);
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--type-body-sm-size);
+    line-height: var(--type-body-sm-line);
     overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .toast__action,
+  .toast__close {
+    flex: none;
+    border: 0;
+    background: transparent;
+    outline: none;
+    transition: background-color var(--duration-fast) var(--ease-standard),
+                color var(--duration-fast) var(--ease-standard);
+  }
+
+  .toast.has-desc .toast__action,
+  .toast.has-desc .toast__close {
+    margin-block: calc((var(--type-body-md-line) - var(--toast-close-size)) / 2);
   }
 
   .toast__action {
-    align-self: flex-end;
-    margin-top: calc(var(--space-1) * var(--ui-scale, 1));
-    margin-right: calc(
-      (var(--toast-padding-x) - var(--toast-trailing-inset)) * var(--ui-scale, 1) * -1
-    );
-    margin-bottom: calc(
-      (var(--toast-padding-y) - var(--toast-trailing-inset)) * var(--ui-scale, 1) * -1
-    );
-    height: calc(var(--control-height-sm) * var(--ui-scale, 1));
-    padding: 0 calc(var(--control-padding-sm) * var(--ui-scale, 1));
-    font-family: var(--font-sans);
-    font-size: calc(var(--control-font-sm) * var(--ui-scale, 1));
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-primary);
-    background: transparent;
-    border: none;
+    height: var(--toast-close-size);
+    padding: 0 12px;
     border-radius: var(--radius-full);
-    cursor: pointer;
-    outline: none;
-    transition: background var(--duration-fast) var(--ease-expo);
-  }
-
-  .toast.has-close .toast__action {
-    margin-top: max(
-      calc(var(--space-1) * var(--ui-scale, 1)),
-      calc(
-        (var(--toast-close-size) - var(--floating-card-title-size) * var(--floating-card-title-line-height)) * var(--ui-scale, 1)
-        + var(--space-1)
-      )
-    );
-  }
-
-  .toast__action:hover {
-    background: var(--bg-card-hover);
-  }
-
-  .toast__action:focus-visible {
-    outline: 2px solid var(--accent-on-surface);
-    outline-offset: -1px;
+    color: var(--accent-on-surface);
+    font-family: var(--font-sans);
+    font-size: var(--type-label-lg-size);
+    line-height: var(--type-label-lg-line);
+    font-weight: 500;
+    white-space: nowrap;
   }
 
   .toast__close {
-    position: absolute;
-    top: calc(50% - (var(--toast-close-size) * var(--ui-scale, 1) / 2));
-    right: calc(var(--toast-padding-x) * var(--ui-scale, 1) - var(--toast-close-slack));
+    position: relative;
     display: grid;
     place-items: center;
-    width: calc(var(--toast-close-size) * var(--ui-scale, 1));
-    height: calc(var(--toast-close-size) * var(--ui-scale, 1));
-    color: var(--text-muted);
-    background: transparent;
-    border: none;
+    width: var(--toast-close-size);
+    height: var(--toast-close-size);
+    margin-inline-start: -4px;
+    padding: 0;
     border-radius: var(--radius-full);
-    cursor: pointer;
-    outline: none;
-    transition: color var(--duration-fast) var(--ease-expo),
-                background var(--duration-fast) var(--ease-expo);
+    color: var(--text-secondary);
   }
 
   .toast__close :global(svg:not(.toast__ring)) {
-    width: calc(var(--toast-close-icon) * var(--ui-scale, 1));
-    height: calc(var(--toast-close-icon) * var(--ui-scale, 1));
+    width: var(--toast-close-icon);
+    height: var(--toast-close-icon);
   }
 
-  .toast__close:hover {
-    color: var(--text-primary);
-    background: var(--bg-card-hover);
+  @media (hover: hover) {
+    .toast__action:hover,
+    .toast__close:hover {
+      background: var(--state-layer-hover);
+    }
+
+    .toast__close:hover {
+      color: var(--text-primary);
+    }
   }
 
-  .toast.is-stacked .toast__close {
-    top: max(
-      0px,
-      calc(
-        var(--toast-padding-y) * var(--ui-scale, 1)
-        - (
-          var(--toast-close-size) * var(--ui-scale, 1)
-          - var(--floating-card-title-size) * var(--floating-card-title-line-height) * var(--ui-scale, 1)
-        ) / 2
-      )
-    );
-  }
-
+  .toast__action:focus-visible,
   .toast__close:focus-visible {
-    outline: 2px solid var(--accent-on-surface);
-    outline-offset: -1px;
+    outline: 2px solid var(--accent-primary);
+    outline-offset: -2px;
   }
 
   .toast__swatch {
     display: inline-block;
-    width: calc(var(--toast-swatch-size) * var(--ui-scale, 1));
-    height: calc(var(--toast-swatch-size) * var(--ui-scale, 1));
-    margin-right: calc(var(--space-1) * var(--ui-scale, 1));
+    width: var(--toast-swatch-size);
+    height: var(--toast-swatch-size);
+    margin-inline-end: 6px;
     border-radius: var(--radius-full);
     vertical-align: baseline;
-    flex: none;
   }
 
   .toast__repeat {
-    margin-left: calc(var(--space-1) * var(--ui-scale, 1));
+    margin-inline-start: 4px;
+    color: var(--text-secondary);
+    font-weight: 400;
     font-variant-numeric: tabular-nums;
-    font-weight: var(--font-weight-normal);
-    color: var(--text-muted);
   }
 
   .toast.is-swapped .toast__glyph,
   .toast.is-swapped .toast__text,
+  .toast.is-swapped .toast__action,
   .toast.is-swapped .toast__close {
     animation: toast-swap var(--duration-normal) var(--ease-merge) both;
   }
@@ -359,33 +339,31 @@
     }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .toast.is-swapped .toast__glyph,
-    .toast.is-swapped .toast__text,
-    .toast.is-swapped .toast__close {
-      animation: none;
-    }
-  }
-
   .toast__ring {
     position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
+    inset: 4px;
+    width: calc(100% - 8px);
+    height: calc(100% - 8px);
     fill: none;
     stroke: currentColor;
     stroke-width: var(--toast-ring-width);
     stroke-linecap: round;
-    opacity: 0.9;
+    opacity: 0.6;
     transform: rotate(-90deg);
     stroke-dasharray: var(--toast-ring-length);
     animation: toast-ring var(--toast-duration) linear forwards;
     pointer-events: none;
   }
 
-  :global([data-sonner-toast][data-expanded='true']) .toast__ring,
+  /* Tracks sonner's timer, which holds on toaster hover and swipe; data-expanded is always true under `expand`. */
   :global([data-sonner-toast][data-swiping='true']) .toast__ring {
     animation-play-state: paused;
+  }
+
+  @media (hover: hover) {
+    :global([data-sonner-toaster]:hover) .toast__ring {
+      animation-play-state: paused;
+    }
   }
 
   @keyframes toast-ring {
@@ -398,18 +376,19 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .toast.is-swapped .toast__glyph,
+    .toast.is-swapped .toast__text,
+    .toast.is-swapped .toast__action,
+    .toast.is-swapped .toast__close {
+      animation: none;
+    }
+
     .toast__ring {
       display: none;
     }
   }
 
-  @media (pointer: coarse) {
-    .toast {
-      --toast-close-size: var(--tap-target-min);
-    }
-
-    .toast__action {
-      min-height: calc(var(--tap-target-min) * var(--ui-scale, 1));
-    }
+  .toast.is-stacked .toast__action {
+    margin-block: 0;
   }
 </style>

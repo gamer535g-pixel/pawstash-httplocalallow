@@ -2,7 +2,7 @@ import type { AccentPalette, ColorMode, ContrastLevel, SchemeVariant } from './p
 
 export type FontSizeScale = 'compact' | 'standard' | 'large';
 export type RadiusScale = 'sharp' | 'smooth' | 'rounded' | 'pill';
-export type SurfaceStyle = 'glass' | 'oled' | 'acrylic';
+export type SurfaceStyle = 'flat' | 'oled';
 export type AccentPreset = '#D69085' | 'rose' | 'violet' | 'cyan' | 'emerald' | 'amber' | 'indigo';
 export type AccentColor = 'system' | AccentPreset | (string & {});
 export type MotionSpeed = 'instant' | 'snappy' | 'smooth';
@@ -21,7 +21,6 @@ export interface ThemeTokens {
   motionSpeed: MotionSpeed;
   backdropBlurPx: number;
   borderWidthPx: number;
-  titlebarHeightPx: number;
   sidebarWidthPx?: number;
 }
 
@@ -31,22 +30,17 @@ export const FONT_SCALE_MAP: Record<FontSizeScale, { xs: string; sm: string; bas
   large: { xs: '13px', sm: '15px', base: '17px', lg: '19px', xl: '22px' },
 };
 
-export const RADIUS_SCALE_MAP: Record<RadiusScale, { sm: string; md: string; lg: string; xl: string }> = {
-  sharp: { sm: '2px', md: '4px', lg: '6px', xl: '8px' },
-  smooth: { sm: '6px', md: '10px', lg: '14px', xl: '20px' },
-  rounded: { sm: '10px', md: '16px', lg: '22px', xl: '28px' },
-  pill: { sm: '9999px', md: '9999px', lg: '9999px', xl: '9999px' },
+export const FONT_SCALE_FACTOR: Record<FontSizeScale, number> = {
+  compact: 0.93,
+  standard: 1,
+  large: 1.07
 };
 
-export const ACCENT_COLOR_MAP: Record<AccentPreset | 'system', { primary: string; hover: string; glow: string }> = {
-  '#D69085': { primary: '#d69085', hover: '#bc7f75', glow: 'rgba(214, 144, 133, 0.35)' },
-  rose: { primary: '#f43f5e', hover: '#e11d48', glow: 'rgba(244, 63, 94, 0.35)' },
-  violet: { primary: '#8b5cf6', hover: '#7c3aed', glow: 'rgba(139, 92, 246, 0.35)' },
-  cyan: { primary: '#06b6d4', hover: '#0891b2', glow: 'rgba(6, 182, 212, 0.35)' },
-  emerald: { primary: '#10b981', hover: '#059669', glow: 'rgba(16, 185, 129, 0.35)' },
-  amber: { primary: '#f59e0b', hover: '#d97706', glow: 'rgba(245, 158, 11, 0.35)' },
-  indigo: { primary: '#6366f1', hover: '#4f46e5', glow: 'rgba(99, 102, 241, 0.35)' },
-  system: { primary: '#d69085', hover: '#bc7f75', glow: 'rgba(214, 144, 133, 0.35)' }
+export const RADIUS_SCALE_MAP: Record<RadiusScale, { sm: string; md: string; lg: string; xl: string }> = {
+  sharp: { sm: '2px', md: '4px', lg: '6px', xl: '8px' },
+  smooth: { sm: '8px', md: '12px', lg: '16px', xl: '20px' },
+  rounded: { sm: '10px', md: '16px', lg: '22px', xl: '28px' },
+  pill: { sm: '9999px', md: '9999px', lg: '9999px', xl: '9999px' },
 };
 
 export const MOTION_SPEED_MAP: Record<MotionSpeed, { fast: string; normal: string; slow: string }> = {

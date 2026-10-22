@@ -314,8 +314,9 @@ impl SyncHttpClient {
         expected: StatusCode,
     ) -> Result<T, String> {
         let response = builder.send().await.map_err(|e| {
-            tracing::error!("Sync HTTP request network error: {e}");
-            format!("Network error: {e}")
+            let details = crate::net::error_chain(&e);
+            tracing::error!("Sync HTTP request network error: {details}");
+            format!("Network error: {details}")
         })?;
         if response.status() != expected {
             let err = Self::error(response).await;

@@ -1,15 +1,19 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
 use tokio::io::AsyncWriteExt;
 
 const GITHUB_REPO: &str = "pawstash/pawstash";
 const MAX_UPDATE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const CANCELLED: &str = "UPDATE_CANCELLED";
 const USER_AGENT: &str = concat!(
     "Pawstash/",
     env!("CARGO_PKG_VERSION"),
     " (https://github.com/pawstash/pawstash)"
 );
+
+static CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReleaseAsset {
@@ -45,6 +49,35 @@ pub struct UpdateInfo {
     pub download_url: Option<String>,
     pub asset_name: Option<String>,
     pub asset_size: Option<u64>,
+    #[serde(default)]
+    pub contributors: Vec<Contributor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Contributor {
+    pub login: String,
+    pub avatar_url: String,
+    pub html_url: String,
+    pub commits: u32,
+}
+
+#[derive(Deserialize)]
+struct CompareResponse {
+    commits: Vec<CompareCommit>,
+}
+
+#[derive(Deserialize)]
+struct CompareCommit {
+    author: Option<CommitAuthor>,
+}
+
+#[derive(Deserialize)]
+struct CommitAuthor {
+    login: String,
+    avatar_url: String,
+    html_url: String,
+    #[serde(rename = "type")]
+    kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,6 +175,20 @@ pub async fn check_for_updates(include_prereleases: bool) -> Result<UpdateInfo, 
                 .join("\n\n")
         };
 
+        let installed_tag = releases
+            .iter()
+            .find(|r| r.tag_name.trim_start_matches('v') == current_version)
+            .map(|r| r.tag_name.as_str());
+        let contributors = match installed_tag {
+            Some(base) => fetch_contributors(&client, base, &latest.tag_name)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "Couldn't list the update's contributors");
+                    Vec::new()
+                }),
+            None => Vec::new(),
+        };
+
         return Ok(UpdateInfo {
             available: true,
             current_version: current_version.clone(),
@@ -157,6 +204,7 @@ pub async fn check_for_updates(include_prereleases: bool) -> Result<UpdateInfo, 
             download_url: asset_url,
             asset_name,
             asset_size,
+            contributors,
         });
     }
 
@@ -172,6 +220,7 @@ pub async fn check_for_updates(include_prereleases: bool) -> Result<UpdateInfo, 
         download_url: None,
         asset_name: None,
         asset_size: None,
+        contributors: Vec::new(),
     })
 }
 
@@ -226,6 +275,11 @@ fn get_update_temp_dir() -> Result<std::path::PathBuf, String> {
 }
 
 #[tauri::command]
+pub fn cancel_update_download() {
+    CANCEL_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command]
 pub async fn download_and_install_update(
     app_handle: tauri::AppHandle,
     download_url: String,
@@ -247,6 +301,7 @@ pub async fn download_and_install_update(
             .unwrap_or_else(|| "pawstash-update".to_string())
     };
     let target_path = temp_dir.join(&safe_name);
+    CANCEL_REQUESTED.store(false, Ordering::SeqCst);
 
     let client = crate::net::builder_proxied()
         .user_agent(USER_AGENT)
@@ -307,77 +362,87 @@ pub async fn download_and_install_update(
         .await
         .map_err(|e| format!("Failed to create temp update file: {e}"))?;
 
-    let mut stream = response.bytes_stream();
-    let mut downloaded_bytes: u64 = 0;
-    let mut last_emit = std::time::Instant::now();
-    let mut last_bytes: u64 = 0;
-    let mut hasher = Sha256::new();
+    let downloaded = async {
+        let mut stream = response.bytes_stream();
+        let mut downloaded_bytes: u64 = 0;
+        let mut last_emit = std::time::Instant::now();
+        let mut last_bytes: u64 = 0;
+        let mut hasher = Sha256::new();
 
-    while let Some(chunk_res) = futures_util::StreamExt::next(&mut stream).await {
-        let chunk = chunk_res.map_err(|e| format!("Error during stream chunk read: {e}"))?;
-        file.write_all(&chunk)
-            .await
-            .map_err(|e| format!("Failed to write chunk: {e}"))?;
-
-        downloaded_bytes += chunk.len() as u64;
-        if downloaded_bytes > total_bytes {
-            return Err("Downloaded update exceeds its declared size".to_string());
-        }
-        hasher.update(&chunk);
-
-        if last_emit.elapsed().as_millis() >= 100
-            || (total_bytes > 0 && downloaded_bytes >= total_bytes)
-        {
-            let elapsed_sec = last_emit.elapsed().as_secs_f64();
-            let speed = if elapsed_sec > 0.0 {
-                ((downloaded_bytes.saturating_sub(last_bytes)) as f64 / elapsed_sec) as u64
-            } else {
-                0
-            };
-
-            let percentage = if total_bytes > 0 {
-                ((downloaded_bytes as f64 / total_bytes as f64) * 100.0).clamp(0.0, 100.0)
-            } else {
-                0.0
-            };
-
-            if let Err(error) = app_handle.emit(
-                "update-download-progress",
-                UpdateProgressPayload {
-                    downloaded: downloaded_bytes,
-                    total: total_bytes,
-                    percentage,
-                    speed_bytes_per_sec: speed,
-                },
-            ) {
-                tracing::warn!("Failed to emit update progress: {error}");
+        while let Some(chunk_res) = futures_util::StreamExt::next(&mut stream).await {
+            if CANCEL_REQUESTED.swap(false, Ordering::SeqCst) {
+                return Err(CANCELLED.to_string());
             }
+            let chunk = chunk_res.map_err(|e| format!("Error during stream chunk read: {e}"))?;
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| format!("Failed to write chunk: {e}"))?;
 
-            last_emit = std::time::Instant::now();
-            last_bytes = downloaded_bytes;
+            downloaded_bytes += chunk.len() as u64;
+            if downloaded_bytes > total_bytes {
+                return Err("Downloaded update exceeds its declared size".to_string());
+            }
+            hasher.update(&chunk);
+
+            if last_emit.elapsed().as_millis() >= 100
+                || (total_bytes > 0 && downloaded_bytes >= total_bytes)
+            {
+                let elapsed_sec = last_emit.elapsed().as_secs_f64();
+                let speed = if elapsed_sec > 0.0 {
+                    ((downloaded_bytes.saturating_sub(last_bytes)) as f64 / elapsed_sec) as u64
+                } else {
+                    0
+                };
+
+                let percentage = if total_bytes > 0 {
+                    ((downloaded_bytes as f64 / total_bytes as f64) * 100.0).clamp(0.0, 100.0)
+                } else {
+                    0.0
+                };
+
+                if let Err(error) = app_handle.emit(
+                    "update-download-progress",
+                    UpdateProgressPayload {
+                        downloaded: downloaded_bytes,
+                        total: total_bytes,
+                        percentage,
+                        speed_bytes_per_sec: speed,
+                    },
+                ) {
+                    tracing::warn!("Failed to emit update progress: {error}");
+                }
+
+                last_emit = std::time::Instant::now();
+                last_bytes = downloaded_bytes;
+            }
         }
-    }
 
-    file.flush()
-        .await
-        .map_err(|e| format!("Failed to flush downloaded file: {e}"))?;
-    drop(file);
-
-    let meta = tokio::fs::metadata(&target_path)
-        .await
-        .map_err(|e| format!("Downloaded file missing: {e}"))?;
-    if meta.len() != total_bytes {
-        return Err(format!(
-            "Downloaded update size mismatch: expected {total_bytes}, got {}",
-            meta.len()
-        ));
-    }
-    let actual_digest = format!("{:x}", hasher.finalize());
-    if actual_digest != expected_digest {
-        tokio::fs::remove_file(&target_path)
+        file.flush()
             .await
-            .map_err(|e| format!("Update checksum failed and cleanup also failed: {e}"))?;
-        return Err("Downloaded update failed SHA-256 verification".to_string());
+            .map_err(|e| format!("Failed to flush downloaded file: {e}"))?;
+        drop(file);
+
+        let meta = tokio::fs::metadata(&target_path)
+            .await
+            .map_err(|e| format!("Downloaded file missing: {e}"))?;
+        if meta.len() != total_bytes {
+            return Err(format!(
+                "Downloaded update size mismatch: expected {total_bytes}, got {}",
+                meta.len()
+            ));
+        }
+        let actual_digest = format!("{:x}", hasher.finalize());
+        if actual_digest != expected_digest {
+            return Err("Downloaded update failed SHA-256 verification".to_string());
+        }
+        Ok::<(), String>(())
+    }
+    .await;
+    if let Err(error) = downloaded {
+        if let Err(cleanup) = tokio::fs::remove_file(&target_path).await {
+            tracing::warn!(%cleanup, "Couldn't remove the unfinished update download");
+        }
+        return Err(error);
     }
 
     #[cfg(target_os = "android")]
@@ -445,8 +510,8 @@ async fn launch_installer_and_exit(
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(target_path, std::fs::Permissions::from_mode(0o755));
 
-        let is_sandboxed = std::path::Path::new("/.flatpak-info").exists()
-            || std::env::var_os("SNAP").is_some();
+        let is_sandboxed =
+            std::path::Path::new("/.flatpak-info").exists() || std::env::var_os("SNAP").is_some();
         if is_sandboxed {
             return crate::linux_open::open(target_path)
                 .await
@@ -646,8 +711,8 @@ fn find_platform_asset_ref(assets: &[ReleaseAsset]) -> Option<&ReleaseAsset> {
 
     #[cfg(all(target_os = "linux", not(target_os = "android")))]
     {
-        let is_sandboxed = std::path::Path::new("/.flatpak-info").exists()
-            || std::env::var_os("SNAP").is_some();
+        let is_sandboxed =
+            std::path::Path::new("/.flatpak-info").exists() || std::env::var_os("SNAP").is_some();
         let is_running_appimage =
             std::env::var_os("APPIMAGE").is_some() || std::env::var_os("APPDIR").is_some();
 
@@ -700,6 +765,50 @@ async fn fetch_releases(client: &reqwest::Client) -> Result<Vec<GitHubRelease>, 
         .json()
         .await
         .map_err(|e| format!("Failed to parse GitHub releases response: {e}"))
+}
+
+async fn fetch_contributors(
+    client: &reqwest::Client,
+    base: &str,
+    head: &str,
+) -> Result<Vec<Contributor>, String> {
+    let url = format!("https://api.github.com/repos/{GITHUB_REPO}/compare/{base}...{head}");
+    let response = client
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to compare releases on GitHub: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("GitHub API returned status: {}", response.status()));
+    }
+    let compare: CompareResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse GitHub compare response: {e}"))?;
+
+    let mut contributors: Vec<Contributor> = Vec::new();
+    for author in compare
+        .commits
+        .into_iter()
+        .filter_map(|commit| commit.author)
+    {
+        if author.kind == "Bot" {
+            continue;
+        }
+        match contributors.iter_mut().find(|c| c.login == author.login) {
+            Some(existing) => existing.commits += 1,
+            None => contributors.push(Contributor {
+                login: author.login,
+                avatar_url: author.avatar_url,
+                html_url: author.html_url,
+                commits: 1,
+            }),
+        }
+    }
+    contributors.sort_by(|a, b| b.commits.cmp(&a.commits));
+    Ok(contributors)
 }
 
 fn is_official_asset_url(url: &reqwest::Url) -> bool {
@@ -758,7 +867,7 @@ fn compare_prerelease_tokens(a: &str, b: &str) -> std::cmp::Ordering {
     a_parts.len().cmp(&b_parts.len())
 }
 
-fn is_version_newer(latest: &str, current: &str) -> bool {
+pub(crate) fn is_version_newer(latest: &str, current: &str) -> bool {
     let (latest_nums, latest_pre) = parse_semver(latest);
     let (current_nums, current_pre) = parse_semver(current);
 
