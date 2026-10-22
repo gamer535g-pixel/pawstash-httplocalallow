@@ -13,7 +13,7 @@ export interface CloudNode {
 }
 
 export interface CloudFolderResult {
-  provider: 'mega' | 'dropbox' | 'pixeldrain' | 'googledrive' | 'archive' | string;
+  provider: 'mega' | 'dropbox' | 'pixeldrain' | 'googledrive' | 'filen' | 'archive' | string;
   url: string;
   title: string;
   total_files: number;

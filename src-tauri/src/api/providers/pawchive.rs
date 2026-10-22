@@ -4,6 +4,7 @@ use super::traits::{
 };
 use crate::api::models::*;
 use crate::api::providers::queue::{ProviderQueueConfig, ProviderRequestQueue};
+use crate::api::providers::{split_ai_directive, AiDirective};
 use crate::config::settings::AppSettings;
 use crate::smart_links::{is_known_shortener_url, parse_external_post_link};
 use async_trait::async_trait;
@@ -292,67 +293,23 @@ impl PawchiveClient {
         offset: u32,
     ) -> Result<Vec<(&'static str, String)>, String> {
         let mut params = vec![("o", offset.to_string())];
-        let mut hide_ai_directive = false;
-        let mut show_ai_directive = false;
-        let mut clean_query = String::new();
-
-        if let Some(raw_q) = query.map(str::trim).filter(|q| !q.is_empty()) {
-            if raw_q.contains("hide=ai")
-                || raw_q.contains("hide=(ai)")
-                || raw_q.contains("?hide=ai")
-                || raw_q.contains("?hide=(ai)")
-                || raw_q.contains("ai:hide")
-            {
-                hide_ai_directive = true;
-            } else if raw_q.contains("only=ai")
-                || raw_q.contains("only=(ai)")
-                || raw_q.contains("show=ai")
-                || raw_q.contains("show=(ai)")
-                || raw_q.contains("?only=ai")
-                || raw_q.contains("?only=(ai)")
-                || raw_q.contains("?show=ai")
-                || raw_q.contains("?show=(ai)")
-                || raw_q.contains("ai:only")
-                || raw_q.contains("ai:show")
-            {
-                show_ai_directive = true;
-            }
-            let cleaned = raw_q
-                .replace("?hide=(ai)", "")
-                .replace("hide=(ai)", "")
-                .replace("?hide=ai", "")
-                .replace("hide=ai", "")
-                .replace("?only=(ai)", "")
-                .replace("only=(ai)", "")
-                .replace("?only=ai", "")
-                .replace("only=ai", "")
-                .replace("?show=(ai)", "")
-                .replace("show=(ai)", "")
-                .replace("?show=ai", "")
-                .replace("show=ai", "")
-                .replace("ai:hide", "")
-                .replace("ai:only", "")
-                .replace("ai:show", "")
-                .trim()
-                .to_string();
-            if !cleaned.is_empty() {
-                if cleaned.chars().count() < 2 {
-                    return Err(
-                        "Pawchive search query must contain at least 2 characters".to_string()
-                    );
-                }
-                clean_query = cleaned;
-            }
-        }
+        let (clean_query, directive) = query
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .map(split_ai_directive)
+            .unwrap_or((String::new(), AiDirective::None));
 
         if !clean_query.is_empty() {
+            if clean_query.chars().count() < 2 {
+                return Err("Pawchive search query must contain at least 2 characters".to_string());
+            }
             params.push(("q", clean_query));
         }
 
         let settings = self.settings.read().await;
-        if settings.pawchive_hide_ai || hide_ai_directive {
+        if settings.pawchive_hide_ai || directive == AiDirective::Hide {
             params.push(("hide", "ai".to_string()));
-        } else if show_ai_directive {
+        } else if directive == AiDirective::Only {
             params.push(("only", "ai".to_string()));
         }
 

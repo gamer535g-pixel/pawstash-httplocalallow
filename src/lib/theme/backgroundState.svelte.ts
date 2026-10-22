@@ -31,6 +31,8 @@ export interface BackgroundSettings {
 
 const FLAT_DEFAULT_KEY = 'pawstash_bg_flat_default';
 
+export type Backdrop = 'native' | 'custom';
+
 export class BackgroundState {
   version = $state(0);
   settings = $state<BackgroundSettings>({
@@ -47,6 +49,16 @@ export class BackgroundState {
     acrylicTint: false,
     acrylicOpacity: 0.5
   });
+
+  get backdrop(): Backdrop | null {
+    const { type } = this.settings;
+    if (type === 'custom') return 'custom';
+    if (isWindowsPlatform() && (type === 'acrylic' || type === 'mica-dark' || type === 'tabbed')) return 'native';
+    if (type === 'vibrancy' && typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('mac')) {
+      return 'native';
+    }
+    return null;
+  }
 
   reset() {
     Object.assign(this.settings, {

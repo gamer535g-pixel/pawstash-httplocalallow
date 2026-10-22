@@ -95,7 +95,8 @@
   import IconGlobe from '~icons/fluent/globe-24-regular';
   import IconOpen from '~icons/fluent/open-24-regular';
   import IconSparkle from '~icons/fluent/sparkle-24-regular';
-  import IconArrowSort from '~icons/fluent/arrow-sort-24-regular';
+  import SortControl from '$lib/components/layout/SortControl.svelte';
+  import { defaultSortOption, sortOption } from '$lib/utils/sort';
   import CloudFolderModal from '$lib/components/content/CloudFolderModal.svelte';
   import CloudLinkCard from '$lib/components/content/CloudLinkCard.svelte';
   import CodecGuideModal from '$lib/components/content/CodecGuideModal.svelte';
@@ -897,11 +898,11 @@
   let activeMediaTab = $state<'all' | 'video' | 'photo' | 'file' | 'cloud' | 'downloaded'>('all');
   let mediaSort = $state<'default' | 'name_asc' | 'name_desc' | 'size_desc' | 'size_asc'>('default');
   let mediaSortOptions = $derived([
-    { value: 'default', label: i18n.t('post.media_sort_default') },
-    { value: 'name_asc', label: i18n.t('post.media_sort_name_asc') },
-    { value: 'name_desc', label: i18n.t('post.media_sort_name_desc') },
-    { value: 'size_desc', label: i18n.t('post.media_sort_size_desc') },
-    { value: 'size_asc', label: i18n.t('post.media_sort_size_asc') }
+    defaultSortOption('default'),
+    sortOption('name_asc', 'name', 'asc'),
+    sortOption('name_desc', 'name', 'desc'),
+    sortOption('size_desc', 'size', 'desc'),
+    sortOption('size_asc', 'size', 'asc')
   ]);
   let mediaSearchQuery = $state('');
   let mediaSearchOpen = $state(false);
@@ -1133,6 +1134,7 @@
     if (mediaCounts.downloaded > 0) count++;
     return count;
   });
+  let showMediaTabs = $derived((media.length > 1 || (hasEmbed && media.length > 0)) && activeCategoriesCount > 1);
 
   type MediaTab = 'all' | 'video' | 'photo' | 'file' | 'cloud' | 'downloaded';
 
@@ -2474,9 +2476,9 @@
 
       {#if media.length > 0 || hasEmbed}
         <div class="media-section">
-          {#if ((media.length > 1 || (hasEmbed && media.length > 0)) && activeCategoriesCount > 1) || media.length >= 20 || mediaSearchQuery || media.length > 1}
+          {#if showMediaTabs || media.length >= 20 || mediaSearchQuery || media.length > 1}
             <div class="media-controls-row" class:search-active={mediaSearchOpen}>
-              {#if (media.length > 1 || (hasEmbed && media.length > 0)) && activeCategoriesCount > 1}
+              {#if showMediaTabs}
                 <div class="post-tabs-scroll">
                   <ChoiceGroup
                     options={mediaTabOptions}
@@ -2485,7 +2487,12 @@
                     ariaLabel="Media categories"
                     align="left"
                     class="post-media-choice"
-                  />
+                    hasAddon={() => media.length > 1}
+                  >
+                    {#snippet addon()}
+                      <SortControl options={mediaSortOptions} value={mediaSort} onchange={(val) => (mediaSort = val as typeof mediaSort)} />
+                    {/snippet}
+                  </ChoiceGroup>
                 </div>
               {/if}
 
@@ -2499,30 +2506,8 @@
                     if (!open) closeMediaSearch();
                   }}
                 >
-                  {#if media.length > 1}
-                    <div class="media-sort-selector" class:is-default={mediaSort === 'default'}>
-                      {#if layoutState.isMobile}
-                        <Select
-                          options={mediaSortOptions}
-                          value={mediaSort}
-                          onchange={(val) => (mediaSort = val as typeof mediaSort)}
-                          variant="ghost"
-                          icon={IconArrowSort}
-                          iconOnly
-                          ariaLabel={i18n.t('favorites.sort_by')}
-                          align="right"
-                        />
-                      {:else}
-                        <ChipSelect
-                          options={mediaSortOptions}
-                          value={mediaSort}
-                          onchange={(val) => (mediaSort = val)}
-                          icon={IconArrowSort}
-                          label={i18n.t('favorites.sort_by')}
-                          align="right"
-                        />
-                      {/if}
-                    </div>
+                  {#if media.length > 1 && !showMediaTabs}
+                    <SortControl variant="standalone" options={mediaSortOptions} value={mediaSort} onchange={(val) => (mediaSort = val as typeof mediaSort)} />
                   {/if}
                 </HeaderActions>
               </div>
@@ -3371,7 +3356,6 @@
     white-space: nowrap;
   }
 
-  .media-sort-selector :global(.select-trigger),
   .comments-header-row :global(.select-trigger) {
     height: 44px !important;
     font-size: 13.5px !important;
@@ -3467,49 +3451,6 @@
     flex-shrink: 0 !important;
   }
 
-  :global(.page-shell.mobile) .media-sort-selector,
-  :global(.page-shell.is-mobile) .media-sort-selector {
-    width: auto !important;
-    max-width: none !important;
-  }
-
-  @media (max-width: 640px) {
-    .media-sort-selector {
-      width: auto !important;
-      max-width: none !important;
-    }
-  }
-
-  :global(.page-shell.mobile) .media-sort-selector :global(.select-trigger),
-  :global(.page-shell.is-mobile) .media-sort-selector :global(.select-trigger) {
-    width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    padding: 0 !important;
-    border-radius: 50% !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-  }
-
-  @media (max-width: 640px) {
-    .media-sort-selector :global(.select-trigger) {
-      width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-      min-width: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-      height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-      padding: 0 !important;
-      border-radius: 50% !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-    }
-  }
-
-  .media-sort-selector {
-    width: 200px;
-    flex-shrink: 0;
-  }
-
   .media-controls-actions {
     display: flex;
     align-items: center;
@@ -3567,7 +3508,7 @@
     }
     .media-controls-actions.search-active :global(.action-buttons-cluster),
     .media-controls-actions :global(.search-active .action-buttons-cluster),
-    .media-controls-row.search-active .media-sort-selector {
+    .media-controls-row.search-active :global(.sort-control) {
       display: none !important;
     }
   }
@@ -3898,10 +3839,6 @@
     max-width: 100%;
     overflow: hidden;
     isolation: isolate;
-  }
-
-  .media-sort-selector.is-default :global(.select-trigger.icon-only) {
-    color: var(--text-secondary) !important;
   }
 
   .media-download-group .state-word {

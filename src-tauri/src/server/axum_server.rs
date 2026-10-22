@@ -368,6 +368,7 @@ impl MediaServer {
         let app = Router::new()
             .route("/media/*file_path", get(serve_media_handler))
             .route("/cloud_stream/mega", get(serve_mega_stream_handler))
+            .route("/cloud_stream/filen", get(serve_filen_stream_handler))
             .route(
                 "/cloud_stream/proxy",
                 get(serve_cloud_proxy_stream_handler).head(serve_cloud_proxy_stream_handler),
@@ -775,6 +776,121 @@ async fn serve_mega_stream_handler(
         res_headers.insert(header::CONTENT_LENGTH, HeaderValue::from(chunk_size));
     }
 
+    Ok(response)
+}
+
+#[derive(Debug, Deserialize)]
+struct FilenStreamQuery {
+    token: String,
+    region: String,
+    bucket: String,
+    uuid: String,
+    key: String,
+    size: u64,
+    name: Option<String>,
+}
+
+async fn serve_filen_stream_handler(
+    State(state): State<Arc<MediaServerState>>,
+    Query(params): Query<FilenStreamQuery>,
+    headers: HeaderMap,
+) -> Result<Response, (StatusCode, String)> {
+    use crate::cloud::filen::{chunk_cipher, chunk_url, decrypt_chunk, CHUNK_SIZE};
+
+    require_token(&state, &params.token)?;
+    let cipher = chunk_cipher(&params.key).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    let total_size = params.size;
+    let mime = mime_guess::from_path(params.name.as_deref().unwrap_or("file.bin"))
+        .first_or_octet_stream()
+        .to_string();
+    if total_size == 0 {
+        return Ok(([(header::CONTENT_TYPE, mime)], Body::empty()).into_response());
+    }
+
+    let requested = headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| parse_range(value, total_size));
+    let (range_start, range_end) = requested.unwrap_or((0, total_size - 1));
+
+    let settings = state
+        .config_manager
+        .load()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let (_, client) = state
+        .upstream
+        .upstream_clients(&settings)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+
+    let first = range_start / CHUNK_SIZE;
+    let last = range_end / CHUNK_SIZE;
+    let FilenStreamQuery {
+        region,
+        bucket,
+        uuid,
+        ..
+    } = params;
+    let decrypted_stream = async_stream::stream! {
+        for index in first..=last {
+            let encrypted = match client
+                .get(chunk_url(&region, &bucket, &uuid, index))
+                .send()
+                .await
+                .and_then(reqwest::Response::error_for_status)
+            {
+                Ok(resp) => match resp.bytes().await {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        yield Err(std::io::Error::other(e.to_string()));
+                        return;
+                    }
+                },
+                Err(e) => {
+                    yield Err(std::io::Error::other(e.to_string()));
+                    return;
+                }
+            };
+            let plain = match decrypt_chunk(&cipher, &encrypted) {
+                Ok(plain) => plain,
+                Err(e) => {
+                    yield Err(std::io::Error::other(e));
+                    return;
+                }
+            };
+            let from = if index == first { (range_start % CHUNK_SIZE) as usize } else { 0 };
+            let to = if index == last {
+                ((range_end % CHUNK_SIZE) as usize + 1).min(plain.len())
+            } else {
+                plain.len()
+            };
+            if from < to {
+                yield Ok::<_, std::io::Error>(bytes::Bytes::copy_from_slice(&plain[from..to]));
+            }
+        }
+    };
+
+    let body = Body::from_stream(decrypted_stream);
+    let mut response = if requested.is_some() {
+        let mut resp = (StatusCode::PARTIAL_CONTENT, body).into_response();
+        if let Ok(val) =
+            HeaderValue::from_str(&format!("bytes {range_start}-{range_end}/{total_size}"))
+        {
+            resp.headers_mut().insert(header::CONTENT_RANGE, val);
+        }
+        resp
+    } else {
+        (StatusCode::OK, body).into_response()
+    };
+    let res_headers = response.headers_mut();
+    if let Ok(val) = HeaderValue::from_str(&mime) {
+        res_headers.insert(header::CONTENT_TYPE, val);
+    }
+    res_headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    res_headers.insert(
+        header::CONTENT_LENGTH,
+        HeaderValue::from(range_end - range_start + 1),
+    );
     Ok(response)
 }
 

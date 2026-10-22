@@ -30,12 +30,14 @@
   }: Props = $props();
 
   let inputEl: HTMLInputElement | undefined = $state();
+  let opening = $state(false);
 
   const effectivePlaceholder = $derived(
     placeholder || i18n.t('feed.search_placeholder')
   );
 
   export async function openSearch() {
+    opening = true;
     open = true;
     await tick();
     inputEl?.focus();
@@ -47,6 +49,7 @@
   }
 
   export function closeSearch() {
+    opening = false;
     open = false;
     value = '';
     onsearch?.('');
@@ -82,6 +85,7 @@
     <div
       class="search-bar-expanded {extraClass}"
       class:is-mobile={layoutState.isMobile}
+      class:is-opening={opening}
     >
       <span class="search-icon-wrapper">
         <IconSearch class="w-[18px] h-[18px]" />
@@ -155,13 +159,19 @@
     width: 280px;
     height: var(--control-height, 40px);
     flex-shrink: 0;
-    animation: searchDesktopExpand var(--duration-fast, 180ms) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1));
   }
 
   .search-bar-expanded.is-mobile,
   .search-bar-fixed.is-mobile {
     width: 100%;
     flex: 1;
+  }
+
+  .search-bar-expanded.is-opening {
+    animation: searchDesktopExpand var(--duration-fast, 180ms) var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1));
+  }
+
+  .search-bar-expanded.is-mobile.is-opening {
     animation: searchMobileExpand 0.18s var(--ease-expo, cubic-bezier(0.16, 1, 0.3, 1));
   }
 

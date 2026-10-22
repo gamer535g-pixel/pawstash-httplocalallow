@@ -9,7 +9,7 @@
   import type { Post } from '$lib/types/content';
   import { configState } from '$lib/state/configState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
-  import { apiSaveSettings } from '$lib/utils/ipc';
+  import { gridScaleWheel } from '$lib/state/scaleState.svelte';
   import { i18n } from '$lib/i18n';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import PostCard from './PostCard.svelte';
@@ -44,9 +44,6 @@
     emptyDescription = i18n.t('feed.empty_desc'),
     showCreator = true
   }: Props = $props();
-  let saveTimer: ReturnType<typeof setTimeout> | undefined;
-  let scaleVisible = $state(false);
-  let hideTimer: ReturnType<typeof setTimeout> | undefined;
   let root: HTMLDivElement;
   let loadSentinel: HTMLDivElement;
   const scrollContext = getContext<ScrollableContext | undefined>(SCROLLABLE_CONTEXT);
@@ -97,31 +94,6 @@
   const handoff = new GridHandoff();
   $effect(() => handoff.sync(posts.length > 0, loading));
   onDestroy(() => handoff.destroy());
-
-  function scheduleSave() {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => void apiSaveSettings(configState.settings), 300);
-  }
-
-  function setScale(next: number) {
-    configState.settings.grid_scale = Math.max(60, Math.min(160, Math.round(next / 5) * 5));
-    scaleVisible = true;
-    if (hideTimer) clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => scaleVisible = false, 900);
-    scheduleSave();
-  }
-
-  function handleWheel(event: WheelEvent) {
-    if (!event.ctrlKey) return;
-    event.preventDefault();
-    setScale(configState.settings.grid_scale + (event.deltaY < 0 ? 5 : -5));
-  }
-
-  function handleKeydown(event: KeyboardEvent) {
-    if (!event.ctrlKey || event.key !== '0') return;
-    event.preventDefault();
-    setScale(100);
-  }
 
   function updateSizeMetrics() {
     if (!root || !viewport) return;
@@ -264,8 +236,6 @@
   });
 
   onDestroy(() => {
-    if (saveTimer) clearTimeout(saveTimer);
-    if (hideTimer) clearTimeout(hideTimer);
     if (viewport) {
       gridScrollPositions.set(activeStateKey, viewport.scrollTop);
       viewport.removeEventListener('scroll', handleScroll);
@@ -276,7 +246,6 @@
   });
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
 
 <div
   bind:this={root}
@@ -284,12 +253,9 @@
   use:paintSelect={{ scope: 'posts', keys: postKeys, items: postsMap }}
   role="feed"
   aria-label={ariaLabel}
-  {@attach ctrlWheel(handleWheel)}
+  {@attach ctrlWheel(gridScaleWheel)}
   style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-ratio: ${ratios[configState.settings.grid_aspect_ratio]}; --grid-gap: ${gap}px;`}
 >
-  {#if scaleVisible}
-    <div class="scale-indicator">{configState.settings.grid_scale}%</div>
-  {/if}
 
   {#if posts.length > 0}
     <div class="virtual-grid" style:height={`${virtualHeight}px`}>

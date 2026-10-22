@@ -39,6 +39,7 @@ export interface AppSettings {
   cloud_timeout_secs?: number;
   cloud_max_redirects?: number;
   cloud_scraping_enabled?: boolean;
+  content_indexing_enabled?: boolean;
   cloud_user_agent?: string;
   cloud_proxy_url?: string;
   titlebar_style?: 'auto' | 'windows' | 'macos';

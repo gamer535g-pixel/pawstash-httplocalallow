@@ -387,7 +387,7 @@
     height: 100%;
     width: calc(var(--sidebar-width-expanded, 160px) + var(--edge-left, 0px));
     padding: var(--edge-top, 0px) 0 var(--edge-bottom, 0px) var(--edge-left, 0px);
-    background: var(--surface-container-low);
+    background: var(--chrome-surface);
     user-select: none;
     flex-shrink: 0;
     border-top: none;

@@ -1,6 +1,5 @@
 import type { AccentPalette, ColorMode, ContrastLevel, SchemeVariant } from './palette';
 
-export type FontSizeScale = 'compact' | 'standard' | 'large';
 export type RadiusScale = 'sharp' | 'smooth' | 'rounded' | 'pill';
 export type SurfaceStyle = 'flat' | 'oled';
 export type AccentPreset = '#D69085' | 'rose' | 'violet' | 'cyan' | 'emerald' | 'amber' | 'indigo';
@@ -10,7 +9,6 @@ export type MotionSpeed = 'instant' | 'snappy' | 'smooth';
 export type { AccentPalette, ColorMode, ContrastLevel, SchemeVariant };
 
 export interface ThemeTokens {
-  fontScale: FontSizeScale;
   fontFamily?: string;
   radiusScale: RadiusScale;
   surfaceStyle: SurfaceStyle;
@@ -24,17 +22,22 @@ export interface ThemeTokens {
   sidebarWidthPx?: number;
 }
 
-export const FONT_SCALE_MAP: Record<FontSizeScale, { xs: string; sm: string; base: string; lg: string; xl: string }> = {
-  compact: { xs: '11px', sm: '13px', base: '14px', lg: '16px', xl: '18px' },
-  standard: { xs: '12px', sm: '14px', base: '16px', lg: '18px', xl: '20px' },
-  large: { xs: '13px', sm: '15px', base: '17px', lg: '19px', xl: '22px' },
-};
+export const UI_SCALE_MIN = 80;
+export const UI_SCALE_MAX = 150;
+export const UI_SCALE_STEP = 5;
 
-export const FONT_SCALE_FACTOR: Record<FontSizeScale, number> = {
-  compact: 0.93,
-  standard: 1,
-  large: 1.07
-};
+const BASE_TEXT_SIZES = { xs: 12, sm: 14, base: 16, lg: 18, xl: 20 };
+
+export function textSizes(factor: number): Record<keyof typeof BASE_TEXT_SIZES, string> {
+  const size = (px: number) => `${Math.round(px * factor * 10) / 10}px`;
+  return {
+    xs: size(BASE_TEXT_SIZES.xs),
+    sm: size(BASE_TEXT_SIZES.sm),
+    base: size(BASE_TEXT_SIZES.base),
+    lg: size(BASE_TEXT_SIZES.lg),
+    xl: size(BASE_TEXT_SIZES.xl)
+  };
+}
 
 export const RADIUS_SCALE_MAP: Record<RadiusScale, { sm: string; md: string; lg: string; xl: string }> = {
   sharp: { sm: '2px', md: '4px', lg: '6px', xl: '8px' },

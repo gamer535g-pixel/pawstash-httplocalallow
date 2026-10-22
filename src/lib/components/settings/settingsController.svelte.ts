@@ -5,6 +5,7 @@ import { feedState } from '$lib/state/feedState.svelte';
 import { creatorsState } from '$lib/state/creatorsState.svelte';
 import { downloadState } from '$lib/state/downloadState.svelte';
 import { themeState } from '$lib/theme/themeState.svelte';
+import { uiScaleState } from '$lib/state/uiScaleState.svelte';
 import { backgroundState } from '$lib/theme/backgroundState.svelte';
 import { i18n } from '$lib/i18n';
 import { notify } from '$lib/utils/toast';
@@ -45,6 +46,7 @@ const SECTION_KEYS: Partial<Record<string, Key[]>> = {
     'network_timeout_secs',
     'network_connect_timeout_secs',
     'cloud_scraping_enabled',
+    'content_indexing_enabled',
     'cloud_proxy_url',
     'cloud_user_agent',
     'cloud_timeout_secs',
@@ -199,15 +201,14 @@ class SettingsController {
         const next = { ...this.settings };
         for (const key of SECTION_KEYS[id] ?? []) (next as Record<Key, unknown>)[key] = defaults[key];
         if (id === 'appearance') {
-          const { fontScale, fontFamily } = themeState.tokens;
+          const { fontFamily } = themeState.tokens;
           themeState.reset();
-          themeState.setFontScale(fontScale);
           themeState.setFontFamily(fontFamily ?? '');
           backgroundState.reset();
         }
         if (id === 'interface') {
-          themeState.setFontScale('standard');
           themeState.setFontFamily('');
+          uiScaleState.set(0);
         }
         this.settings = next;
         configState.updateSettings(next);

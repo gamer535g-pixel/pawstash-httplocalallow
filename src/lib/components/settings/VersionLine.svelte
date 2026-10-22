@@ -24,5 +24,6 @@
     font-size: var(--type-label-sm-size);
     line-height: var(--type-label-sm-line);
     user-select: text;
+    contain: inline-size;
   }
 </style>

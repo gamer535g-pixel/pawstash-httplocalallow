@@ -17,7 +17,8 @@
   import Select from '$lib/components/ui/Select.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
-  import SortSection from '$lib/components/layout/SortSection.svelte';
+  import SortControl from '$lib/components/layout/SortControl.svelte';
+  import { sortOption } from '$lib/utils/sort';
   import type { MenuItem } from '$lib/components/layout/OverflowMenu.svelte';
   import IconChevronDown from '~icons/fluent/chevron-down-20-regular';
   import ServiceIcon from '$lib/components/content/ServiceIcon.svelte';
@@ -208,12 +209,12 @@
   });
 
   let sortOptions = $derived([
-    { value: 'added_desc', label: i18n.t('library.sort_added_desc') },
-    { value: 'added_asc', label: i18n.t('library.sort_added_asc') },
-    { value: 'published_desc', label: i18n.t('library.sort_published_desc') },
-    { value: 'published_asc', label: i18n.t('library.sort_published_asc') },
-    { value: 'title_asc', label: i18n.t('library.sort_title_asc') },
-    { value: 'title_desc', label: i18n.t('library.sort_title_desc') }
+    sortOption('added_desc', 'added', 'desc'),
+    sortOption('added_asc', 'added', 'asc'),
+    sortOption('published_desc', 'published', 'desc'),
+    sortOption('published_asc', 'published', 'asc'),
+    sortOption('title_asc', 'title', 'asc'),
+    sortOption('title_desc', 'title', 'desc')
   ]);
 
   let mobileManageOpen = $state(false);
@@ -703,6 +704,7 @@
       {/snippet}
     </Select>
   </div>
+  <SortControl variant="standalone" options={sortOptions} value={currentSortValue} onchange={handleSortChange} />
   {@render manageStashPopover()}
 {/snippet}
 
@@ -714,7 +716,6 @@
     active={activeFilterCount > 0}
     icon={IconOptions}
   >
-    <SortSection options={sortOptions} value={currentSortValue} onchange={handleSortChange} />
     {@render filterInnerContent()}
   </PopoverMenu>
 {/snippet}
@@ -840,6 +841,11 @@
 <style>
   .title-picker-anchor {
     display: flex;
+    min-width: 0;
+  }
+
+  .title-picker-anchor :global(.select-root),
+  .title-picker-anchor :global(.select-custom-trigger) {
     min-width: 0;
   }
 

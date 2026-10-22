@@ -32,6 +32,11 @@
   import UpdateModal from '$lib/components/ui/UpdateModal.svelte';
   import NoticeModal from '$lib/components/ui/NoticeModal.svelte';
   import { noticeState } from '$lib/state/noticeState.svelte';
+  import { innerFormatsState } from '$lib/state/innerFormatsState.svelte';
+  import { uiScaleState } from '$lib/state/uiScaleState.svelte';
+  import { scaleIndicator } from '$lib/state/scaleState.svelte';
+  import IconGrid from '~icons/fluent/grid-24-regular';
+  import IconWindow from '~icons/fluent/window-24-regular';
   import SubscriptionModal from '$lib/components/content/SubscriptionModal.svelte';
   import UnsubscribeDialog from '$lib/components/content/UnsubscribeDialog.svelte';
   import { updateState } from '$lib/state/updateState.svelte';
@@ -122,6 +127,11 @@
     void subscriptionState.init().catch((error) => logger.warn('Failed to initialize subscriptions', error));
     void accountState.refresh().catch((error) => logger.warn('Failed to check Pawchive session', error));
     void syncState.init().catch((error) => logger.warn('Failed to initialize encrypted sync', error));
+    void innerFormatsState.init().catch((error) => logger.warn('Failed to load indexed post contents', error));
+    void uiScaleState.init().then(() => {
+      const legacyScale = themeState.takeLegacyUiScale();
+      if (legacyScale && !uiScaleState.percent) uiScaleState.set(legacyScale);
+    });
     void providerState.loadProviders().catch((error) => logger.warn('Failed to load providers', error));
     void creatorsState.init().catch((error) => logger.warn('Failed to initialize creators list', error));
 
@@ -228,6 +238,12 @@
 
   <UpdateModal />
   <NoticeModal />
+  {#if scaleIndicator.kind}
+    <div class="scale-indicator" role="status">
+      {#if scaleIndicator.kind === 'grid'}<IconGrid />{:else}<IconWindow />{/if}
+      {i18n.t(scaleIndicator.kind === 'grid' ? 'settings.grid_scale_indicator' : 'settings.ui_scale_indicator', { percent: scaleIndicator.percent })}
+    </div>
+  {/if}
   <SubscriptionModal />
   <UnsubscribeDialog />
 </div>

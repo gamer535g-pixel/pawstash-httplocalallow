@@ -829,6 +829,36 @@ impl ArchiveRegistry {
         Ok(base(parsed.to_string(), false))
     }
 
+    pub fn can_list(name: &str) -> bool {
+        detect_format(name) == "zip"
+    }
+
+    pub async fn list_entry_names(&self, url: &str, name: &str) -> Result<Vec<String>, String> {
+        if !Self::can_list(name) {
+            return Err(format!("'{name}' is not a ZIP archive"));
+        }
+        let origin = self
+            .origin_for(&ArchiveOpenRequest {
+                url: Some(url.to_string()),
+                local_path: None,
+                name: name.to_string(),
+                service: String::new(),
+                creator_id: String::new(),
+                post_id: String::new(),
+                post_text: None,
+            })
+            .await?;
+        let source = self.connect(&origin).await?;
+        let id = archive_id_for(&origin.source);
+        let session = blocking(move || ArchiveSession::load(id, origin, source)).await?;
+        Ok(session
+            .entries
+            .into_iter()
+            .filter(|entry| !entry.is_dir)
+            .map(|entry| entry.path)
+            .collect())
+    }
+
     pub async fn open(&self, request: ArchiveOpenRequest) -> Result<ArchiveOpenResult, String> {
         if request.name.trim().is_empty() {
             return Err("The archive has no file name".to_string());

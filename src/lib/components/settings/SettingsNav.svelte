@@ -16,7 +16,7 @@
   let isMacStyle = $derived(layoutState.effectiveTitlebarStyle === 'macos');
 </script>
 
-<nav class="settings-nav" class:is-mac={isMacStyle} aria-label={i18n.t('nav.settings')}>
+<nav class="settings-nav" class:is-mac={isMacStyle} aria-label={i18n.t('nav.settings')} data-tauri-drag-region>
   <div class="settings-nav__header" data-tauri-drag-region="deep">
     {#if isMacStyle}
       <WindowControls variant="macos" />
@@ -27,7 +27,12 @@
     <h1 class="settings-nav__title">{i18n.t('nav.settings')}</h1>
   </div>
 
-  <div class="settings-nav__scroll" data-overlayscrollbars-initialize use:scrollable={{ overflowX: 'hidden' }}>
+  <div
+    class="settings-nav__scroll"
+    data-overlayscrollbars-initialize
+    use:scrollable={{ overflowX: 'hidden' }}
+    data-tauri-drag-region="deep"
+  >
     <div class="settings-nav__list">
       {#each SECTION_GROUPS as group}
         <div class="settings-nav__group">
@@ -58,10 +63,12 @@
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
-    width: calc(var(--nav-width) + var(--edge-left, 0px));
+    width: max-content;
+    min-width: calc(var(--nav-min-width) + var(--edge-left, 0px));
+    max-width: calc(var(--nav-max-width) + var(--edge-left, 0px));
     height: 100%;
     padding: var(--edge-top, 0px) 0 var(--edge-bottom, 0px) var(--edge-left, 0px);
-    background: var(--surface-container-low);
+    background: var(--chrome-surface);
   }
 
   .settings-nav__header {

@@ -8,6 +8,7 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { serverPortState } from '$lib/state/serverPort.svelte';
 import { configState } from '$lib/state/configState.svelte';
 import { layoutState } from '$lib/state/layoutState.svelte';
+import { innerFormatsState } from '$lib/state/innerFormatsState.svelte';
 
 // Android WebView 155 pins a request thread forever for each <video> without a poster; ~6 of them stall every request.
 const BLANK_POSTER = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
@@ -579,6 +580,7 @@ export function isDocumentUrl(url: string | null): boolean {
   return /\.(epub|pdf|txt)(?:$|\?)/i.test(url);
 }
 
+const FILE_LINK_PATTERN = /mega\.nz|drive\.google|dropbox\.com|mediafire\.com|catbox\.moe|pixeldrain|filen\.io|\.(zip|rar|7z)/i;
 const postFormatsCache = new WeakMap<Post, string[]>();
 
 export function getPostFormats(post: Post): string[] {
@@ -658,7 +660,7 @@ function computePostFormats(post: Post): string[] {
   }
 
   const hasArchiveFile = allFiles.some((f) => /\.(zip|rar|7z|tar|gz|pdf|txt|epub|html|cbz|cbr|psd|clip|blend|fbx|obj|stl)(?:$|[?#])/i.test(f));
-  const hasArchiveLink = /mega\.nz|drive\.google|dropbox\.com|mediafire\.com|catbox\.moe|pixeldrain|\.(zip|rar|7z)/i.test(contentStr) || /mega\.nz|drive\.google|dropbox\.com|mediafire\.com|catbox\.moe|pixeldrain|\.(zip|rar|7z)/i.test(embedStr);
+  const hasArchiveLink = Boolean(p.cloud_urls?.length) || FILE_LINK_PATTERN.test(contentStr) || FILE_LINK_PATTERN.test(embedStr);
   const hasArchiveTitle = /\b(pack|set|zip|rar|7z|dl|download|drive|mega|pdf|file|files|psd|clip|brush|brushes|model|blend)\b/i.test(titleStr);
   const hasArchiveTag = /\b(pack|set|zip|rar|7z|dl|download|drive|mega|pdf|files|psd|clip|brush|brushes|model|blend)\b/i.test(tagsStr);
   if (hasArchiveFile || hasArchiveLink || hasArchiveTitle || hasArchiveTag) {
@@ -679,12 +681,14 @@ function computePostFormats(post: Post): string[] {
 /** Scraped feed cards and favorite stubs don't list their files until the post detail is fetched. */
 export function isPostFormatUnknown(post: Post): boolean {
   if (post.detail_fetched === true) return false;
-  if (post.preview_state === 'scraped') return true;
+  if (post.preview_state === 'scraped' && post.detail_fetched === false) return true;
   return post.file == null && post.attachments == null;
 }
 
 export function matchesPostFormatFilter(post: Post, filterMap: FilterMap): boolean {
-  return matchesTriStateFilter(getPostFormats(post), filterMap, !isPostFormatUnknown(post));
+  const inner = innerFormatsState.of(post);
+  const formats = inner.length > 0 ? [...getPostFormats(post), ...inner] : getPostFormats(post);
+  return matchesTriStateFilter(formats, filterMap, inner.length > 0 || !isPostFormatUnknown(post));
 }
 
 export function matchesPostFormat(post: Post, format: string): boolean {

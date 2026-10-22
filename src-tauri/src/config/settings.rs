@@ -59,6 +59,8 @@ pub struct AppSettings {
     pub dynamic_accent: bool,
     pub sticky_header: bool,
     pub layout_mode: String,
+    #[serde(default)]
+    pub ui_scale: u32,
     pub sync_enabled: bool,
     pub sync_auto: bool,
     pub sync_on_change: bool,
@@ -123,6 +125,8 @@ pub struct AppSettings {
     pub cloud_max_redirects: u64,
     #[serde(default = "default_true")]
     pub cloud_scraping_enabled: bool,
+    #[serde(default = "default_true")]
+    pub content_indexing_enabled: bool,
     #[serde(default)]
     pub cloud_user_agent: String,
     #[serde(default)]
@@ -219,6 +223,7 @@ impl Default for AppSettings {
             dynamic_accent: true,
             sticky_header: true,
             layout_mode: "auto".to_string(),
+            ui_scale: 0,
             sync_enabled: true,
             sync_auto: true,
             sync_on_change: true,
@@ -263,6 +268,7 @@ impl Default for AppSettings {
             cloud_timeout_secs: 0,
             cloud_max_redirects: 0,
             cloud_scraping_enabled: true,
+            content_indexing_enabled: true,
             cloud_user_agent: String::new(),
             cloud_proxy_url: String::new(),
         }
@@ -523,6 +529,7 @@ impl AppSettings {
             ("dynamic_accent", self.dynamic_accent.to_string()),
             ("sticky_header", self.sticky_header.to_string()),
             ("layout_mode", self.layout_mode.clone()),
+            ("ui_scale", self.ui_scale.to_string()),
             ("sync_enabled", self.sync_enabled.to_string()),
             ("sync_auto", self.sync_auto.to_string()),
             ("sync_on_change", self.sync_on_change.to_string()),
@@ -571,6 +578,10 @@ impl AppSettings {
             (
                 "cloud_scraping_enabled",
                 self.cloud_scraping_enabled.to_string(),
+            ),
+            (
+                "content_indexing_enabled",
+                self.content_indexing_enabled.to_string(),
             ),
             ("cloud_user_agent", self.cloud_user_agent.clone()),
             ("cloud_proxy_url", self.cloud_proxy_url.clone()),
@@ -800,8 +811,14 @@ impl AppSettings {
         if let Some(value) = get("cloud_max_redirects").and_then(|v| v.parse().ok()) {
             self.cloud_max_redirects = value;
         }
+        if let Some(value) = get("ui_scale").and_then(|v| v.parse().ok()) {
+            self.ui_scale = value;
+        }
         if let Some(value) = get("cloud_scraping_enabled").and_then(|v| v.parse().ok()) {
             self.cloud_scraping_enabled = value;
+        }
+        if let Some(value) = get("content_indexing_enabled").and_then(|v| v.parse().ok()) {
+            self.content_indexing_enabled = value;
         }
         if let Some(value) = get("cache_max_mb").and_then(|v| v.parse().ok()) {
             self.cache_max_mb = value;
@@ -842,10 +859,16 @@ impl AppSettings {
     }
 
     pub fn normalize(&mut self) {
+        if let Some(absolute) = absolute_download_dir(&self.download_dir) {
+            self.download_dir = absolute;
+        }
         self.cache_max_mb = self.cache_max_mb.clamp(64, 2048);
         self.grid_scale = self.grid_scale.clamp(60, 160);
         self.download_max_concurrent = self.download_max_concurrent.clamp(1, 10);
         self.download_auto_retry_max = self.download_auto_retry_max.clamp(1, 10);
+        if self.ui_scale != 0 {
+            self.ui_scale = self.ui_scale.clamp(50, 300);
+        }
         if !matches!(self.layout_mode.as_str(), "auto" | "mobile" | "desktop") {
             self.layout_mode = "auto".to_string();
         }
@@ -1135,9 +1158,35 @@ fn endpoint_is_missing_or_api_origin(endpoint: Option<&str>, api_url: &str) -> b
     })
 }
 
+fn absolute_download_dir(raw: &str) -> Option<String> {
+    let path = std::path::Path::new(raw.trim());
+    if raw.trim().is_empty() || !path.is_relative() {
+        return None;
+    }
+    #[cfg(target_os = "android")]
+    let base = crate::db::storage::android_external_storage();
+    #[cfg(not(target_os = "android"))]
+    let base = dirs::home_dir()?;
+    Some(base.join(path).to_string_lossy().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relative_download_dir_is_anchored_to_home() {
+        let mut settings = AppSettings {
+            download_dir: "Downloads/Pawstash".into(),
+            ..AppSettings::default()
+        };
+        settings.normalize();
+        assert!(std::path::Path::new(&settings.download_dir).is_absolute());
+        assert!(settings.download_dir.ends_with("Pawstash"));
+        let absolute = settings.download_dir.clone();
+        settings.normalize();
+        assert_eq!(settings.download_dir, absolute);
+    }
 
     #[test]
     fn legacy_onlyhaven_saved_as_coomer_is_renamed_not_duplicated() {

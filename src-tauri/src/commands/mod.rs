@@ -54,6 +54,17 @@ pub struct AppState {
     pub sync_manager: Arc<SyncManager>,
     pub config_manager: Arc<ConfigManager>,
     pub archives: Arc<crate::archive::ArchiveRegistry>,
+    pub content_index: Arc<crate::db::content_index::ContentIndexRepository>,
+}
+
+#[tauri::command]
+pub async fn list_post_inner_formats(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::db::content_index::IndexedFormats>, String> {
+    let repository = state.content_index.clone();
+    tokio::task::spawn_blocking(move || repository.list())
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -310,6 +321,7 @@ pub async fn save_settings(
     let previous = state.config_manager.load()?;
     // Backend-owned: the frontend's copy is stale after any theme change.
     settings.window_background_color = previous.window_background_color.clone();
+    settings.ui_scale = previous.ui_scale;
     if settings.session_cookie.is_empty() {
         settings.session_cookie = previous.session_cookie.clone();
     }
@@ -4260,6 +4272,85 @@ pub async fn resolve_deep_link(
 ) -> Result<crate::smart_links::DeepLinkTarget, String> {
     let configs = state.provider_manager.get_provider_configs().await;
     crate::smart_links::parse_deep_link(&url, &configs)
+}
+
+fn system_text_scale() -> f64 {
+    #[cfg(target_os = "windows")]
+    let scale = windows_registry::CURRENT_USER
+        .open(r"Software\Microsoft\Accessibility")
+        .and_then(|key| key.get_u32("TextScaleFactor"))
+        .map_or(1.0, |percent| f64::from(percent) / 100.0);
+    #[cfg(target_os = "android")]
+    let scale = with_android_context(|env, activity| {
+        let resources = env
+            .call_method(
+                activity,
+                "getResources",
+                "()Landroid/content/res/Resources;",
+                &[],
+            )
+            .and_then(|value| value.l())
+            .map_err(|e| format!("getResources failed: {e}"))?;
+        let configuration = env
+            .call_method(
+                &resources,
+                "getConfiguration",
+                "()Landroid/content/res/Configuration;",
+                &[],
+            )
+            .and_then(|value| value.l())
+            .map_err(|e| format!("getConfiguration failed: {e}"))?;
+        env.get_field(&configuration, "fontScale", "F")
+            .and_then(|value| value.f())
+            .map(f64::from)
+            .map_err(|e| format!("fontScale failed: {e}"))
+    })
+    .unwrap_or(1.0);
+    #[cfg(not(any(target_os = "windows", target_os = "android")))]
+    let scale = 1.0;
+    scale.clamp(0.5, 3.0)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UiScale {
+    pub percent: u32,
+    pub system: f64,
+}
+
+pub fn apply_ui_scale(app: &AppHandle, settings: &AppSettings) -> UiScale {
+    let system = system_text_scale();
+    let scale = match settings.ui_scale {
+        0 => system,
+        percent => f64::from(percent) / 100.0,
+    };
+    if let Some(window) = app.get_webview_window("main") {
+        if let Err(error) = window.set_zoom(scale) {
+            tracing::warn!(%error, scale, "Could not apply the interface scale");
+        }
+    }
+    UiScale {
+        percent: settings.ui_scale,
+        system,
+    }
+}
+
+#[tauri::command]
+pub fn refresh_ui_scale(app: AppHandle, state: State<'_, AppState>) -> Result<UiScale, String> {
+    let settings = state.config_manager.load()?;
+    Ok(apply_ui_scale(&app, &settings))
+}
+
+#[tauri::command]
+pub fn set_ui_scale(
+    percent: u32,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<UiScale, String> {
+    let mut settings = state.config_manager.load()?;
+    settings.ui_scale = percent;
+    settings.normalize();
+    state.config_manager.save(&settings)?;
+    Ok(apply_ui_scale(&app, &settings))
 }
 
 /// Back at the root backgrounds the task instead of finishing the activity, as Android 12+ launchers do.

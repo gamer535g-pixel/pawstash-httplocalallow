@@ -4,6 +4,7 @@
   import type { AppSettings } from '$lib/types/config';
   import SettingItem from '$lib/components/ui/SettingItem.svelte';
   import Slider from '$lib/components/ui/Slider.svelte';
+  import { GRID_SCALE_MAX, GRID_SCALE_MIN, GRID_SCALE_STEP } from '$lib/state/scaleState.svelte';
   import SettingsGroup from '../SettingsGroup.svelte';
   import SettingChoice from '../SettingChoice.svelte';
   import { settingsController as ctl } from '../settingsController.svelte';
@@ -20,9 +21,9 @@
     stacked
   >
     <Slider
-      min={60}
-      max={160}
-      step={5}
+      min={GRID_SCALE_MIN}
+      max={GRID_SCALE_MAX}
+      step={GRID_SCALE_STEP}
       ticks
       value={settings.grid_scale}
       ariaLabel={i18n.t('settings.grid_scale')}

@@ -16,7 +16,8 @@
   import ServiceIcon from './ServiceIcon.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
-  import { apiSaveSettings, apiSetCreatorFavorite } from '$lib/utils/ipc';
+  import { apiSetCreatorFavorite } from '$lib/utils/ipc';
+  import { gridScaleWheel } from '$lib/state/scaleState.svelte';
   import { creatorAvatarSrc, creatorPlaceholderUrl, formatProviderName, onAvatarError, onAvatarLoad } from '$lib/utils/media';
   import { notify } from '$lib/utils/toast';
   import { tooltip, ripple } from '$lib/motion';
@@ -27,7 +28,8 @@
   import { creatorMenuItems } from '$lib/utils/contextMenus';
   import { providerState } from '$lib/state/providerState.svelte';
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
-  import SortSection from '$lib/components/layout/SortSection.svelte';
+  import SortControl from '$lib/components/layout/SortControl.svelte';
+  import { sortOption, type SortOption } from '$lib/utils/sort';
   import type { MenuItem } from '$lib/components/layout/OverflowMenu.svelte';
   import SkeletonGrid from '$lib/components/ui/SkeletonGrid.svelte';
   import { GridHandoff } from '$lib/motion/gridHandoff.svelte';
@@ -86,9 +88,6 @@
     });
   });
 
-  let saveTimer: ReturnType<typeof setTimeout> | undefined;
-  let scaleVisible = $state(false);
-  let hideTimer: ReturnType<typeof setTimeout> | undefined;
 
   const ratios = {
     square: '1 / 1',
@@ -114,11 +113,6 @@
       await creatorsState.loadServices();
     }
     void creatorsState.loadPage(false);
-  });
-
-  onDestroy(() => {
-    if (saveTimer) clearTimeout(saveTimer);
-    if (hideTimer) clearTimeout(hideTimer);
   });
 
   function loadMore() {
@@ -158,43 +152,22 @@
     void creatorsState.loadPage(true);
   }
 
-  function handleWheel(event: WheelEvent) {
-    if (!event.ctrlKey) return;
-    event.preventDefault();
-
-    const direction = event.deltaY < 0 ? 1 : -1;
-    const step = 5;
-    const nextScale = Math.min(200, Math.max(50, configState.settings.grid_scale + direction * step));
-    configState.settings.grid_scale = nextScale;
-
-    scaleVisible = true;
-    if (hideTimer) clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => {
-      scaleVisible = false;
-    }, 1000);
-
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      void apiSaveSettings(configState.settings);
-    }, 500);
-  }
-
   let activeCreatorSorts = $derived(providerState.activeCapabilities?.creator_sorts);
 
   let sortOptions = $derived.by(() => {
     const sorts = activeCreatorSorts;
     const allOptions = [
-      { id: 'favorited', desc: { value: 'favorited_desc', label: i18n.t('creators.sort_favorited_desc') }, asc: { value: 'favorited_asc', label: i18n.t('creators.sort_favorited_asc') } },
-      { id: 'updated', desc: { value: 'updated_desc', label: i18n.t('creators.sort_updated_desc') }, asc: { value: 'updated_asc', label: i18n.t('creators.sort_updated_asc') } },
-      { id: 'indexed', desc: { value: 'indexed_desc', label: i18n.t('creators.sort_indexed_desc') }, asc: { value: 'indexed_asc', label: i18n.t('creators.sort_indexed_asc') } },
-      { id: 'name', asc: { value: 'name_asc', label: i18n.t('creators.sort_name_asc') }, desc: { value: 'name_desc', label: i18n.t('creators.sort_name_desc') } }
+      { id: 'favorited', desc: sortOption('favorited_desc', 'popularity', 'desc'), asc: sortOption('favorited_asc', 'popularity', 'asc') },
+      { id: 'updated', desc: sortOption('updated_desc', 'updated', 'desc'), asc: sortOption('updated_asc', 'updated', 'asc') },
+      { id: 'indexed', desc: sortOption('indexed_desc', 'indexed', 'desc'), asc: sortOption('indexed_asc', 'indexed', 'asc') },
+      { id: 'name', asc: sortOption('name_asc', 'name', 'asc'), desc: sortOption('name_desc', 'name', 'desc') }
     ];
 
     if (!sorts || sorts.length === 0) {
       return allOptions.flatMap(o => o.id === 'name' ? [o.asc, o.desc] : [o.desc, o.asc]);
     }
 
-    const result: { value: string; label: string }[] = [];
+    const result: SortOption<string>[] = [];
     for (const s of sorts) {
       const matched = allOptions.find(o => o.id === s.id);
       if (matched) {
@@ -486,7 +459,11 @@
     onchange={(val) => selectTab(val as 'all' | 'subscribed')}
     align="left"
     class="creators-mode-choice"
-  />
+  >
+    {#snippet addon()}
+      <SortControl options={sortOptions} value={currentSortValue} onchange={handleSortChange} />
+    {/snippet}
+  </ChoiceGroup>
 {/snippet}
 
 {#snippet creatorsFilter()}
@@ -497,7 +474,6 @@
     active={activeFilterCount > 0}
     icon={IconOptions}
   >
-    <SortSection options={sortOptions} value={currentSortValue} onchange={handleSortChange} />
     {@render filterInnerContent()}
   </PopoverMenu>
 {/snippet}
@@ -546,15 +522,12 @@
       </div>
     {/if}
   {:else}
-    {#if scaleVisible}
-      <div class="scale-indicator">{configState.settings.grid_scale}%</div>
-    {/if}
 
     <div class="grid-stack">
       <div
         class="creators-grid"
         use:paintSelect={{ scope: 'creators', keys: creatorsKeys, items: creatorsMap }}
-        {@attach ctrlWheel(handleWheel)}
+        {@attach ctrlWheel(gridScaleWheel)}
         style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}
       >
       {#each creatorsList as creator, index (creator.service + ':' + creator.id)}

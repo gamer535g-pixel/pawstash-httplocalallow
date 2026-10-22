@@ -181,7 +181,8 @@
   :root {
     --sidebar-width-expanded: 160px;
     --sidebar-width-collapsed: 56px;
-    --nav-width: 256px;
+    --nav-min-width: 200px;
+    --nav-max-width: 280px;
     --mobile-nav-height: 64px;
     --dock-margin: 12px;
     --dock-max-width: 440px;
@@ -254,6 +255,7 @@
     --surface-container-high: #2a2a2a;
     --surface-container-highest: #343434;
     --outline-variant: #474747;
+    --chrome-surface: var(--surface-container-low);
 
     --state-hover: 0.08;
     --state-focus: 0.1;
@@ -1505,6 +1507,9 @@ html.is-paint-selecting * {
 .scale-indicator {
   position: fixed;
   z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   left: 50%;
   bottom: var(--toast-offset);
   padding: 8px 16px;
@@ -1518,6 +1523,12 @@ html.is-paint-selecting * {
   font-variant-numeric: tabular-nums;
   transform: translateX(-50%);
   pointer-events: none;
+}
+
+.scale-indicator svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
 }
 
 .field-action {
@@ -1957,6 +1968,14 @@ html.is-paint-selecting * {
   .app-tooltip {
     transform: none;
   }
+}
+
+html[data-backdrop='native'] {
+  --chrome-surface: color-mix(in srgb, var(--surface-container-low) 35%, transparent);
+}
+
+html[data-backdrop='custom'] {
+  --chrome-surface: color-mix(in srgb, var(--surface-container-low) 62%, transparent);
 }
 
 html.opaque-window,

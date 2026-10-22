@@ -9,7 +9,8 @@
   import { libraryState } from '$lib/state/libraryState.svelte';
   import { i18n } from '$lib/i18n';
   import { convertFileSrc } from '@tauri-apps/api/core';
-  import { apiOpenDownloadsFolder, apiSaveSettings, apiShowInFolder } from '$lib/utils/ipc';
+  import { apiOpenDownloadsFolder, apiShowInFolder } from '$lib/utils/ipc';
+  import { gridScaleWheel } from '$lib/state/scaleState.svelte';
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import type { DownloadItem } from '$lib/types/download';
   import PageShell from '$lib/components/layout/PageShell.svelte';
@@ -18,7 +19,8 @@
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
-  import SortSection from '$lib/components/layout/SortSection.svelte';
+  import SortControl from '$lib/components/layout/SortControl.svelte';
+  import { sortOption } from '$lib/utils/sort';
   import type { MenuItem } from '$lib/components/ui/MenuList.svelte';
   import { ripple } from '$lib/motion';
   import DownloadItemCard from './DownloadItemCard.svelte';
@@ -64,7 +66,14 @@
   }
 
   type DownloadSort = 'newest' | 'oldest' | 'name_asc' | 'name_desc' | 'size_desc' | 'size_asc';
-  const sortOptions: DownloadSort[] = ['newest', 'oldest', 'name_asc', 'name_desc', 'size_desc', 'size_asc'];
+  const sortOptions = $derived([
+    sortOption<DownloadSort>('newest', 'added', 'desc'),
+    sortOption<DownloadSort>('oldest', 'added', 'asc'),
+    sortOption<DownloadSort>('name_asc', 'name', 'asc'),
+    sortOption<DownloadSort>('name_desc', 'name', 'desc'),
+    sortOption<DownloadSort>('size_desc', 'size', 'desc'),
+    sortOption<DownloadSort>('size_asc', 'size', 'asc')
+  ]);
 
   const savedState = navigationState.getViewState<{
     searchQuery?: string;
@@ -82,9 +91,6 @@
   let searchQuery = $state(savedState?.searchQuery ?? '');
   let searchOpen = $state(savedState?.searchOpen ?? Boolean(savedState?.searchQuery));
   let filterOpen = $state(false);
-  let scaleVisible = $state(false);
-  let scaleTimer: ReturnType<typeof setTimeout> | undefined;
-  let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let scale = $derived(configState.settings.grid_scale / 100);
   let gap = $derived(Math.round((layoutState.isMobile ? 8 : 10) * scale));
   let targetCardWidth = $derived((layoutState.isMobile ? 155 : 245) * scale);
@@ -337,11 +343,6 @@
     void downloadState.init().then(() => downloadState.refresh()).catch((error) => downloadState.error = String(error));
     void libraryState.init();
     void serverPortState.ensurePort();
-
-    return () => {
-      if (scaleTimer) clearTimeout(scaleTimer);
-      if (saveTimer) clearTimeout(saveTimer);
-    };
   });
 
   async function openDownloadsFolder() {
@@ -352,14 +353,6 @@
     }
   }
 
-  function setScale(next: number) {
-    configState.settings.grid_scale = Math.max(60, Math.min(160, Math.round(next / 5) * 5));
-    scaleVisible = true;
-    if (scaleTimer) clearTimeout(scaleTimer);
-    if (saveTimer) clearTimeout(saveTimer);
-    scaleTimer = setTimeout(() => scaleVisible = false, 900);
-    saveTimer = setTimeout(() => void apiSaveSettings(configState.settings), 300);
-  }
 
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'downloads');
 
@@ -452,20 +445,9 @@
     }
   }
 
-  function handleGridWheel(event: WheelEvent) {
-    if (!event.ctrlKey) return;
-    event.preventDefault();
-    setScale(configState.settings.grid_scale + (event.deltaY < 0 ? 5 : -5));
-  }
 
-  function handleGridKeydown(event: KeyboardEvent) {
-    if (!event.ctrlKey || event.key !== '0') return;
-    event.preventDefault();
-    setScale(100);
-  }
 </script>
 
-<svelte:window onkeydown={handleGridKeydown} />
 
 {#snippet downloadTabs()}
   <ChoiceGroup
@@ -477,6 +459,17 @@
     }}
     align="left"
     class="downloads-mode-choice"
+  >
+    {#snippet addon()}{@render sortControl('addon')}{/snippet}
+  </ChoiceGroup>
+{/snippet}
+
+{#snippet sortControl(variant: 'addon' | 'standalone')}
+  <SortControl
+    {variant}
+    options={sortOptions}
+    value={sortBy}
+    onchange={(value) => (sortBy = value)}
   />
 {/snippet}
 
@@ -547,11 +540,6 @@
     active={activeFilterCount > 0}
     icon={IconOptions}
   >
-    <SortSection
-      options={sortOptions.map((option) => ({ value: option, label: i18n.t(`downloads.sort_${option}`) }))}
-      value={sortBy}
-      onchange={(value) => (sortBy = value)}
-    />
     {@render downloadFilterInnerContent()}
   </PopoverMenu>
 {/snippet}
@@ -568,12 +556,14 @@
   views={downloadTabOptions.length > 1 ? downloadTabs : undefined}
 >
   {#snippet filter()}{@render filterControl()}{/snippet}
-  {#snippet actions()}{@render search()}{/snippet}
+  {#snippet actions()}
+    {#if downloadTabOptions.length <= 1}{@render sortControl('standalone')}{/if}
+    {@render search()}
+  {/snippet}
 
   {#if sortedDownloads.length > 0 || handoff.skeletonMounted}
-    {#if scaleVisible}<div class="scale-indicator">{configState.settings.grid_scale}%</div>{/if}
     <div class="grid-stack">
-      <div class="downloads-grid" use:paintSelect={{ scope: 'downloads', keys: downloadKeys, items: downloadsMap }} {@attach ctrlWheel(handleGridWheel)} style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
+      <div class="downloads-grid" use:paintSelect={{ scope: 'downloads', keys: downloadKeys, items: downloadsMap }} {@attach ctrlWheel(gridScaleWheel)} style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
         {#if showQueueTile}
           <DownloadQueueTile onshowfailed={() => (downloadState.filter = 'failed')} />
         {/if}

@@ -3,6 +3,7 @@ pub mod archive;
 pub mod cloud;
 pub mod commands;
 pub mod config;
+pub mod content_index;
 pub mod db;
 pub mod downloader;
 pub mod linux_open;
@@ -68,6 +69,10 @@ pub fn run() {
     );
     let _ = content.set_cache_limit_mb(settings.cache_max_mb);
     let library = Arc::new(LibraryRepository::new().expect("Failed to initialize local library"));
+    let content_index = Arc::new(
+        db::content_index::ContentIndexRepository::new()
+            .expect("Failed to initialize the content index"),
+    );
 
     let provider_manager = Arc::new(ProviderManager::new(settings.providers.clone()));
     let pawchive_client = Arc::new(
@@ -141,6 +146,7 @@ pub fn run() {
 
     builder
         .setup(move |app| {
+            commands::apply_ui_scale(app.handle(), &settings);
             let window_handle = app.handle().clone();
             let wh = window_handle.clone();
             app.listen("frontend-ready", move |_| {
@@ -265,8 +271,10 @@ pub fn run() {
                 sync_manager: sync_manager.clone(),
                 config_manager: config_manager.clone(),
                 archives: archives.clone(),
+                content_index: content_index.clone(),
             });
             db::compaction::spawn(app.handle().clone());
+            content_index::spawn(app.handle().clone());
 
             Ok(())
         })
@@ -276,6 +284,9 @@ pub fn run() {
             set_app_hidden,
             open_app_links_settings,
             get_axum_port,
+            list_post_inner_formats,
+            refresh_ui_scale,
+            set_ui_scale,
             check_aria2c_installed,
             probe_download_size,
             probe_download_sizes,

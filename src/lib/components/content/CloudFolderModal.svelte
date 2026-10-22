@@ -115,7 +115,8 @@
     mega: 'Mega',
     dropbox: 'Dropbox',
     pixeldrain: 'Pixeldrain',
-    googledrive: 'Google Drive'
+    googledrive: 'Google Drive',
+    filen: 'Filen'
   };
 
   const KIND_ICONS: Record<NodeKind, Component> = {

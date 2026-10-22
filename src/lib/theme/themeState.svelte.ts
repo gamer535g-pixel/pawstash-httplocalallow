@@ -1,5 +1,5 @@
-import type { ThemeTokens, FontSizeScale, SurfaceStyle, AccentColor } from './tokens';
-import { FONT_SCALE_MAP, FONT_SCALE_FACTOR, RADIUS_SCALE_MAP, MOTION_SPEED_MAP } from './tokens';
+import type { ThemeTokens, SurfaceStyle, AccentColor } from './tokens';
+import { RADIUS_SCALE_MAP, MOTION_SPEED_MAP, textSizes } from './tokens';
 import {
   DEFAULT_COLOR_MODE,
   DEFAULT_CONTRAST_LEVEL,
@@ -15,6 +15,24 @@ import {
 import { apiGetSystemAccentColor, apiSetWindowBackgroundColor } from '$lib/utils/ipc';
 import { logger } from '$lib/utils/logger';
 
+const LEGACY_FONT_SCALES: Record<string, number> = { compact: 90, large: 110 };
+
+function measureTextZoom(): number {
+  const sample = 'MMMMMMMMMM';
+  const context = document.createElement('canvas').getContext('2d');
+  if (!context) return 1;
+  context.font = '100px monospace';
+  const expected = context.measureText(sample).width;
+  const probe = document.createElement('span');
+  probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;font:100px monospace';
+  probe.textContent = sample;
+  document.body.appendChild(probe);
+  const rendered = probe.getBoundingClientRect().width;
+  probe.remove();
+  const zoom = rendered / expected;
+  return Number.isFinite(zoom) && zoom > 0.5 && zoom < 4 && Math.abs(zoom - 1) > 0.02 ? zoom : 1;
+}
+
 export interface SystemMonetPalette {
   primary: string;
   quadrants: [string, string, string, string];
@@ -22,7 +40,6 @@ export interface SystemMonetPalette {
 
 export class ThemeState {
   tokens = $state<ThemeTokens>({
-    fontScale: 'standard',
     fontFamily: '',
     radiusScale: 'smooth',
     surfaceStyle: 'flat',
@@ -38,6 +55,8 @@ export class ThemeState {
   systemPalette = $state<SystemMonetPalette | null>(null);
   overrideAccent = $state<string | null>(null);
   systemPrefersDark = $state(true);
+  private textZoom = 1;
+  private legacyUiScale: number | null = null;
   private lastWindowBackground: string | null = null;
 
   get isDark(): boolean {
@@ -83,7 +102,6 @@ export class ThemeState {
 
   reset() {
     Object.assign(this.tokens, {
-      fontScale: 'standard',
       fontFamily: '',
       radiusScale: 'smooth',
       surfaceStyle: 'flat',
@@ -97,6 +115,12 @@ export class ThemeState {
     } satisfies ThemeTokens);
     this.overrideAccent = null;
     this.applyCssTokens();
+  }
+
+  takeLegacyUiScale(): number | null {
+    const legacy = this.legacyUiScale;
+    this.legacyUiScale = null;
+    return legacy;
   }
 
   async fetchSystemPalette() {
@@ -136,6 +160,12 @@ export class ThemeState {
             localStorage.setItem('pawstash_theme_settings', JSON.stringify(parsed));
           }
           delete (this.tokens as any).sidebarWidthPx;
+          if ('fontScale' in parsed) {
+            const legacy = parsed.fontScale;
+            this.legacyUiScale = typeof legacy === 'number' ? legacy : (LEGACY_FONT_SCALES[legacy] ?? null);
+            delete parsed.fontScale;
+            localStorage.setItem('pawstash_theme_settings', JSON.stringify(parsed));
+          }
           Object.assign(this.tokens, parsed);
           if (this.tokens.surfaceStyle !== 'oled') this.tokens.surfaceStyle = 'flat';
         } catch (e) {
@@ -146,6 +176,7 @@ export class ThemeState {
 
     this.watchSystemColorScheme();
     await this.fetchSystemPalette();
+    if (typeof document !== 'undefined') this.textZoom = measureTextZoom();
 
     if (!savedAccent && this.systemPalette) {
       this.tokens.accent = 'system';
@@ -169,11 +200,6 @@ export class ThemeState {
       this.applyCssTokens();
       this.refreshWindowEffect();
     }
-  }
-
-  setFontScale(fontScale: FontSizeScale) {
-    this.tokens.fontScale = fontScale;
-    this.applyCssTokens();
   }
 
   setFontFamily(fontFamily: string) {
@@ -232,7 +258,8 @@ export class ThemeState {
     this.save();
 
     const root = document.documentElement;
-    const font = FONT_SCALE_MAP[this.tokens.fontScale];
+    const textFactor = 1 / this.textZoom;
+    const font = textSizes(textFactor);
     const radius = RADIUS_SCALE_MAP[this.tokens.radiusScale];
     const motion = MOTION_SPEED_MAP[this.tokens.motionSpeed];
 
@@ -241,7 +268,7 @@ export class ThemeState {
     root.style.setProperty('--text-base', font.base);
     root.style.setProperty('--text-lg', font.lg);
     root.style.setProperty('--text-xl', font.xl);
-    root.style.setProperty('--font-scale', String(FONT_SCALE_FACTOR[this.tokens.fontScale]));
+    root.style.setProperty('--font-scale', String(textFactor));
 
     root.style.setProperty('--radius-sm', radius.sm);
     root.style.setProperty('--radius-md', radius.md);

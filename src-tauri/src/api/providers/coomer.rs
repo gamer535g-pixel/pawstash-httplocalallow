@@ -1,4 +1,5 @@
 use super::queue::{ProviderQueueConfig, ProviderRequestQueue};
+use super::split_ai_directive;
 use super::traits::{
     path_has_image_mime, AuthField, PopularCapabilities, PopularPeriodOption, ProviderAuthSchema,
     ProviderCapabilities, ProviderConfig, ProviderHealth, SortOption, SourceProvider,
@@ -729,8 +730,11 @@ impl SourceProvider for CoomerProvider {
         offset: u32,
     ) -> Result<Vec<Post>, String> {
         let mut params = vec![("o", offset.to_string())];
-        if let Some(q) = query.map(str::trim).filter(|q| !q.is_empty()) {
-            params.push(("q", q.to_string()));
+        if let Some(q) = query
+            .map(|q| split_ai_directive(q).0)
+            .filter(|q| !q.is_empty())
+        {
+            params.push(("q", q));
         }
         let resp: CoomerPostsResponse = self.get_json("/posts", &params).await?;
         Ok(resp

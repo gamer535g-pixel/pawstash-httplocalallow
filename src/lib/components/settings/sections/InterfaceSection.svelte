@@ -1,10 +1,13 @@
 <script lang="ts">
   import { themeState } from '$lib/theme/themeState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
+  import { uiScaleState } from '$lib/state/uiScaleState.svelte';
   import { i18n } from '$lib/i18n';
-  import type { FontSizeScale } from '$lib/theme/tokens';
+  import { UI_SCALE_MAX, UI_SCALE_MIN, UI_SCALE_STEP } from '$lib/theme/tokens';
   import type { AppSettings } from '$lib/types/config';
   import SettingItem from '$lib/components/ui/SettingItem.svelte';
+  import Slider from '$lib/components/ui/Slider.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import ShortcutInput from '$lib/components/ui/ShortcutInput.svelte';
   import SettingsGroup from '../SettingsGroup.svelte';
@@ -29,17 +32,6 @@
     onchange={(locale) => i18n.setLocale(locale as typeof i18n.currentLocale)}
   />
 
-  <SettingChoice
-    title={i18n.t('settings.text_size')}
-    description={i18n.t('settings.text_size_desc')}
-    options={(['compact', 'standard', 'large'] as FontSizeScale[]).map((scale) => ({
-      value: scale,
-      label: i18n.t(`settings.text_size_${scale}`)
-    }))}
-    value={themeState.tokens.fontScale}
-    onchange={(scale) => themeState.setFontScale(scale)}
-  />
-
   <SettingItem title={i18n.t('settings.font_family')} description={i18n.t('settings.font_family_desc')}>
     <Input
       value={themeState.tokens.fontFamily || ''}
@@ -51,6 +43,33 @@
 </SettingsGroup>
 
 <SettingsGroup label={i18n.t('settings.group_display')}>
+  <SettingItem
+    title={i18n.t('settings.ui_scale')}
+    description={layoutState.hasKeyboard
+      ? `${i18n.t('settings.ui_scale_desc')} ${i18n.t('settings.ui_scale_desc_keyboard')}`
+      : i18n.t('settings.ui_scale_desc')}
+    stacked
+  >
+    <div class="ui-scale">
+      <Slider
+        class="ui-scale__slider"
+        min={UI_SCALE_MIN}
+        max={UI_SCALE_MAX}
+        step={UI_SCALE_STEP}
+        ticks
+        value={uiScaleState.effective}
+        ariaLabel={i18n.t('settings.ui_scale')}
+        formatValue={(value) => `${value}%`}
+        onchange={(value) => uiScaleState.set(value)}
+      />
+      {#if uiScaleState.percent}
+        <Button variant="ghost" size="sm" onclick={() => uiScaleState.set(0)}>
+          {i18n.t('settings.ui_scale_system', { percent: uiScaleState.systemPercent })}
+        </Button>
+      {/if}
+    </div>
+  </SettingItem>
+
   <SettingChoice
     title={i18n.t('settings.layout_mode')}
     description={i18n.t('settings.layout_mode_desc')}
@@ -98,3 +117,19 @@
     {/if}
   </SettingsGroup>
 {/if}
+
+<style>
+  .ui-scale {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px 16px;
+    width: 100%;
+  }
+
+  .ui-scale > :global(.ui-scale__slider) {
+    flex: 1 1 240px;
+    min-width: 0;
+  }
+</style>

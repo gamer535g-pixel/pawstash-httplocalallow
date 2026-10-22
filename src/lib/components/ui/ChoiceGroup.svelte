@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Component } from 'svelte';
+  import type { Component, Snippet } from 'svelte';
   import { ripple } from '$lib/motion';
   import StableWeightLabel from './StableWeightLabel.svelte';
 
@@ -20,6 +20,8 @@
     class?: string;
     align?: 'left' | 'right' | 'center';
     disabled?: boolean;
+    addon?: Snippet;
+    hasAddon?: (option: ChoiceOption<T>) => boolean;
   }
 
   let {
@@ -29,7 +31,9 @@
     ariaLabel,
     class: extraClass = '',
     align = 'right',
-    disabled = false
+    disabled = false,
+    addon,
+    hasAddon
   }: Props<any> = $props();
 
   let buttons: HTMLButtonElement[] = [];
@@ -68,12 +72,14 @@
 >
   {#each options as option, index}
     {@const isActive = option.value === value}
+    {@const withAddon = Boolean(addon) && (hasAddon ? hasAddon(option) : true)}
     <button
       bind:this={buttons[index]}
       type="button"
       use:ripple
       class="choice-group__option"
       class:is-active={isActive}
+      class:has-addon={isActive && withAddon}
       role="radio"
       aria-checked={isActive}
       title={option.title}
@@ -91,6 +97,11 @@
         <span class="choice-group__count">{option.count}</span>
       {/if}
     </button>
+    {#if withAddon && addon}
+      <div class="choice-group__addon" class:is-open={isActive} inert={!isActive}>
+        {@render addon()}
+      </div>
+    {/if}
   {/each}
 </div>
 
@@ -132,7 +143,38 @@
     overflow: hidden;
     transition:
       background-color var(--duration-fast) var(--ease-standard),
-      color var(--duration-fast) var(--ease-standard);
+      color var(--duration-fast) var(--ease-standard),
+      border-radius var(--duration-normal) var(--ease-expo);
+  }
+
+  .choice-group__option.has-addon {
+    border-start-end-radius: var(--radius-xs);
+    border-end-end-radius: var(--radius-xs);
+  }
+
+  .choice-group__addon {
+    --choice-addon-width: calc(var(--choice-height) - 2 * var(--choice-inset) + 6px);
+
+    display: inline-flex;
+    align-items: stretch;
+    flex: none;
+    max-width: 0;
+    margin-inline-start: -2px;
+    overflow: hidden;
+    border-radius: var(--radius-xs) var(--radius-full) var(--radius-full) var(--radius-xs);
+    background: color-mix(in srgb, var(--text-primary) 12%, var(--surface-container-highest));
+    color: var(--text-primary);
+    opacity: 0;
+    transition:
+      max-width var(--duration-normal) var(--ease-expo),
+      margin var(--duration-normal) var(--ease-expo),
+      opacity var(--duration-fast) var(--ease-standard);
+  }
+
+  .choice-group__addon.is-open {
+    max-width: var(--choice-addon-width);
+    margin-inline-start: 0;
+    opacity: 1;
   }
 
   @media (hover: hover) {
@@ -179,7 +221,8 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .choice-group__option {
+    .choice-group__option,
+    .choice-group__addon {
       transition: none;
     }
   }

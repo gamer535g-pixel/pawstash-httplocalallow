@@ -1,4 +1,5 @@
 pub mod dropbox;
+pub mod filen;
 pub mod googledrive;
 pub mod iframely;
 pub mod mega;
@@ -21,6 +22,7 @@ pub const NETWORK_HOSTS: &[&str] = &[
     "dropbox.com",
     "dropboxusercontent.com",
     "pixeldrain.com",
+    "filen.io",
     "iframely.net",
     "iframely.com",
     "iframe.ly",
@@ -82,6 +84,8 @@ impl CloudResolver {
             dropbox::resolve_dropbox(&self.client, trimmed).await?
         } else if googledrive::supports_url(trimmed) {
             googledrive::resolve_googledrive(&self.client, trimmed).await?
+        } else if filen::supports_url(trimmed) {
+            filen::resolve_filen(&self.client, trimmed).await?
         } else {
             return Err(format!(
                 "Unsupported cloud link provider for URL: {trimmed}"
@@ -152,6 +156,7 @@ pub fn supports_url(url: &str) -> bool {
         || pixeldrain::supports_url(url)
         || dropbox::supports_url(url)
         || googledrive::supports_url(url)
+        || filen::supports_url(url)
 }
 
 pub fn extract_supported_urls(raw: &str) -> Vec<String> {
@@ -308,5 +313,15 @@ mod tests {
             extract_supported_urls(raw),
             vec!["https://mega.nz/folder/0jUU2SxQ#QWMvysdMd30JRHNtF7j-Ew".to_string()]
         );
+    }
+
+    #[test]
+    fn extracts_filen_folder_links() {
+        let link = "https://app.filen.io/#/f/ed204269-428e-42e0-af64-220471a7a124%236576743441697556695335625a584f446c7967716842427567575f6334453839";
+        let raw = format!(
+            r#"{{"content":"<a href=\"{}\">4K</a>"}}"#,
+            link.replace('/', r"\/")
+        );
+        assert_eq!(extract_supported_urls(&raw), vec![link.to_string()]);
     }
 }

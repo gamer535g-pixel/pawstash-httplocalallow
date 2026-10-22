@@ -4,7 +4,7 @@ use std::time::Duration;
 
 pub const INBOX_COLLECTION_ID: &str = "00000000-0000-0000-0000-000000000001";
 
-const CURRENT_SCHEMA_VERSION: i64 = 8;
+const CURRENT_SCHEMA_VERSION: i64 = 9;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -533,6 +533,22 @@ pub fn initialize_schema(connection: &mut Connection) -> Result<(), String> {
                     )
                     .map_err(|e| e.to_string())?;
             }
+            9 => {
+                transaction
+                    .execute_batch(
+                        "CREATE TABLE IF NOT EXISTS post_inner_formats (
+                            service TEXT NOT NULL,
+                            creator_id TEXT NOT NULL,
+                            post_id TEXT NOT NULL,
+                            sources TEXT NOT NULL,
+                            formats TEXT NOT NULL DEFAULT '[]',
+                            complete INTEGER NOT NULL DEFAULT 1,
+                            checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (service, creator_id, post_id)
+                        );",
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
             _ => return Err(format!("Missing database migration {next_version}")),
         }
         transaction
@@ -588,6 +604,7 @@ mod tests {
         assert!(column_exists(&connection, "thumb_refs", "content_key").unwrap());
         assert!(column_exists(&connection, "subscriptions", "save_to_library").unwrap());
         assert!(column_exists(&connection, "archive_passwords", "source").unwrap());
+        assert!(column_exists(&connection, "post_inner_formats", "sources").unwrap());
     }
 
     #[test]

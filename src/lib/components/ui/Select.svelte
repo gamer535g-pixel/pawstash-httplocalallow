@@ -17,6 +17,7 @@
     value: string | number;
     label: string;
     icon?: any;
+    ariaLabel?: string;
     color?: string;
     count?: number | string | null;
     showZero?: boolean;
@@ -352,12 +353,15 @@
               type="button"
               role="option"
               aria-selected={active}
+              aria-label={opt.ariaLabel}
               class="floating-item select-option"
               onclick={() => selectOption(opt.value)}
               use:ripple
             >
               {#if opt.color}
                 <span class="option-color-dot" style:background={opt.color}></span>
+              {:else if opt.icon}
+                <opt.icon />
               {/if}
               <span class="floating-item-label">{opt.label}</span>
               {#if opt.count !== undefined && opt.count !== null && (opt.count !== 0 || (opt.showZero ?? true))}

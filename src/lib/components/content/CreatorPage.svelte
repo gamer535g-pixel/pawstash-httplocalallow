@@ -45,7 +45,8 @@
   import { countActiveFilters, matchesTriStateFilter, toggleFilterKey } from '$lib/types/filter';
   import PageShell from '$lib/components/layout/PageShell.svelte';
   import HeaderActions from '$lib/components/layout/HeaderActions.svelte';
-  import SortSection from '$lib/components/layout/SortSection.svelte';
+  import SortControl from '$lib/components/layout/SortControl.svelte';
+  import { defaultSortOption, sortOption } from '$lib/utils/sort';
   import type { MenuItem } from '$lib/components/layout/OverflowMenu.svelte';
   import HeroBackdrop from '$lib/components/ui/HeroBackdrop.svelte';
   import TagList from '$lib/components/ui/TagList.svelte';
@@ -464,12 +465,12 @@
 
   let sortOptions = $derived.by(() => {
     const opts = [
-      { value: 'default', label: i18n.t('post.media_sort_default') },
-      { value: 'newest', label: i18n.t('favorites.sort_published_desc') },
-      { value: 'oldest', label: i18n.t('favorites.sort_published_asc') }
+      defaultSortOption('default'),
+      sortOption('newest', 'published', 'desc'),
+      sortOption('oldest', 'published', 'asc')
     ];
     if (hasPopularityData) {
-      opts.push({ value: 'popular', label: i18n.t('creators.sort_favorited_desc') });
+      opts.push(sortOption('popular', 'popularity', 'desc'));
     }
     return opts;
   });
@@ -1232,7 +1233,12 @@
           onchange={(val) => activeTab = val as typeof activeTab}
           align="left"
           class="creator-sections-choice"
-        />
+          hasAddon={(option) => option.value === 'posts'}
+        >
+          {#snippet addon()}
+            <SortControl options={sortOptions} value={sortOrder} onchange={(value) => (sortOrder = value as typeof sortOrder)} />
+          {/snippet}
+        </ChoiceGroup>
       </div>
 
       <div class="media-controls-right">
@@ -1252,7 +1258,6 @@
               badge={activeFilterCount}
               active={activeFilterCount > 0}
             >
-              <SortSection options={sortOptions} value={sortOrder} onchange={(value) => (sortOrder = value as typeof sortOrder)} />
               {@render filterInnerContent()}
             </PopoverMenu>
           </HeaderActions>

@@ -4,6 +4,7 @@ use super::traits::{
 };
 use crate::api::models::*;
 use crate::api::providers::queue::{ProviderQueueConfig, ProviderRequestQueue};
+use crate::api::providers::split_ai_directive;
 use async_trait::async_trait;
 use base64::prelude::*;
 use futures_util::future::join_all;
@@ -1151,8 +1152,11 @@ impl SourceProvider for OnlyHavenProvider {
         offset: u32,
     ) -> Result<Vec<Post>, String> {
         let mut path = format!("/api/v1/posts?n=50&o={offset}");
-        if let Some(q) = query.filter(|q| !q.trim().is_empty()) {
-            path.push_str(&format!("&q={}", urlencoding::encode(q.trim())));
+        if let Some(q) = query
+            .map(|q| split_ai_directive(q).0)
+            .filter(|q| !q.is_empty())
+        {
+            path.push_str(&format!("&q={}", urlencoding::encode(&q)));
         }
 
         let res: OnlyHavenListResponse<OnlyHavenPostRow> = self.request(&path).await?;

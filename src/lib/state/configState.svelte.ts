@@ -43,6 +43,7 @@ export class ConfigState {
     cloud_timeout_secs: 0,
     cloud_max_redirects: 0,
     cloud_scraping_enabled: true,
+    content_indexing_enabled: true,
     cloud_user_agent: '',
     cloud_proxy_url: '',
     titlebar_style: 'auto',

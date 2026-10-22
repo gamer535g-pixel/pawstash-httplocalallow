@@ -103,6 +103,19 @@ export interface CacheStats {
 
 export const apiGetCacheStats = () => invoke<CacheStats>('get_cache_stats');
 export const apiSetAppHidden = (hidden: boolean) => invoke<void>('set_app_hidden', { hidden });
+export interface UiScale {
+  percent: number;
+  system: number;
+}
+export const apiRefreshUiScale = () => invoke<UiScale>('refresh_ui_scale');
+export const apiSetUiScale = (percent: number) => invoke<UiScale>('set_ui_scale', { percent });
+export interface IndexedFormats {
+  service: string;
+  creator_id: string;
+  post_id: string;
+  formats: string[];
+}
+export const apiListPostInnerFormats = () => invoke<IndexedFormats[]>('list_post_inner_formats');
 export const apiClearContentCache = () => invoke<CacheStats>('clear_content_cache');
 export const apiClearAllContentCache = () => invoke<CacheStats>('clear_all_content_cache');
 export const apiWipeAllData = () => invoke<CacheStats>('wipe_all_data');

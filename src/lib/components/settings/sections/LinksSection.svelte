@@ -18,6 +18,12 @@
     checked={enabled}
     onCheckedChange={(value) => void ctl.save('cloud_scraping_enabled', value)}
   />
+  <SettingItem
+    title={i18n.t('settings.content_indexing_enabled')}
+    description={i18n.t('settings.content_indexing_enabled_desc')}
+    checked={settings.content_indexing_enabled ?? true}
+    onCheckedChange={(value) => void ctl.save('content_indexing_enabled', value)}
+  />
 
   {#if enabled}
     <SettingItem title={i18n.t('settings.cloud_proxy_url')} description={i18n.t('settings.cloud_proxy_url_desc')}>

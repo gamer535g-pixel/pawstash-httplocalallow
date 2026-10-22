@@ -12,7 +12,7 @@
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { i18n } from '$lib/i18n';
-  import { apiSaveSettings } from '$lib/utils/ipc';
+  import { gridScaleWheel } from '$lib/state/scaleState.svelte';
   import { formatDate } from '$lib/utils/formatters';
   import { creatorAvatarSrc, creatorPlaceholderUrl, onAvatarError, onAvatarLoad } from '$lib/utils/media';
   import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
@@ -26,7 +26,8 @@
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import PopoverMenu from '$lib/components/ui/PopoverMenu.svelte';
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
-  import SortSection from '$lib/components/layout/SortSection.svelte';
+  import SortControl from '$lib/components/layout/SortControl.svelte';
+  import { sortOption } from '$lib/utils/sort';
   import type { MenuItem } from '$lib/components/layout/OverflowMenu.svelte';
   import SkeletonGrid from '$lib/components/ui/SkeletonGrid.svelte';
   import { GridHandoff } from '$lib/motion/gridHandoff.svelte';
@@ -141,7 +142,6 @@
   let onlyWithAttachments = $state<boolean>(savedState?.onlyWithAttachments ?? false);
   let filtersOpen = $state(false);
   let initialized = $state(false);
-  let saveTimer: ReturnType<typeof setTimeout> | undefined;
   let visibleCreatorsCount = $state(80);
   const scrollContext = getContext<ScrollableContext | undefined>(SCROLLABLE_CONTEXT);
 
@@ -306,20 +306,20 @@
   });
   let sortOptions = $derived(activeTab === 'posts'
     ? [
-        { value: 'favorite_desc', label: i18n.t('favorites.sort_favorite_desc') },
-        { value: 'favorite_asc', label: i18n.t('favorites.sort_favorite_asc') },
-        { value: 'published_desc', label: i18n.t('favorites.sort_published_desc') },
-        { value: 'published_asc', label: i18n.t('favorites.sort_published_asc') },
-        { value: 'title_asc', label: i18n.t('favorites.sort_title_asc') },
-        { value: 'title_desc', label: i18n.t('favorites.sort_title_desc') }
+        sortOption('favorite_desc', 'favorited', 'desc'),
+        sortOption('favorite_asc', 'favorited', 'asc'),
+        sortOption('published_desc', 'published', 'desc'),
+        sortOption('published_asc', 'published', 'asc'),
+        sortOption('title_asc', 'title', 'asc'),
+        sortOption('title_desc', 'title', 'desc')
       ]
     : [
-        { value: 'favorite_desc', label: i18n.t('favorites.sort_favorite_desc') },
-        { value: 'favorite_asc', label: i18n.t('favorites.sort_favorite_asc') },
-        { value: 'updated_desc', label: i18n.t('favorites.sort_updated_desc') },
-        { value: 'updated_asc', label: i18n.t('favorites.sort_updated_asc') },
-        { value: 'title_asc', label: i18n.t('favorites.sort_name_asc') },
-        { value: 'title_desc', label: i18n.t('favorites.sort_name_desc') }
+        sortOption('favorite_desc', 'favorited', 'desc'),
+        sortOption('favorite_asc', 'favorited', 'asc'),
+        sortOption('updated_desc', 'updated', 'desc'),
+        sortOption('updated_asc', 'updated', 'asc'),
+        sortOption('title_asc', 'name', 'asc'),
+        sortOption('title_desc', 'name', 'desc')
       ]);
   let currentSort = $derived(activeTab === 'posts' ? postSort : creatorSort);
   let favoriteTabOptions = $derived<ChoiceOption<'posts' | 'creators'>[]>([
@@ -677,15 +677,6 @@
     });
   }
 
-  function handleCreatorWheel(event: WheelEvent) {
-    if (!event.ctrlKey) return;
-    event.preventDefault();
-    const next = configState.settings.grid_scale + (event.deltaY < 0 ? 5 : -5);
-    configState.settings.grid_scale = Math.max(60, Math.min(160, Math.round(next / 5) * 5));
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => void apiSaveSettings(configState.settings), 300);
-  }
-
   onMount(() => {
     void loadFavorites();
   });
@@ -720,7 +711,11 @@
     onchange={(val) => selectTab(val as 'posts' | 'creators')}
     align="left"
     class="favorites-mode-choice"
-  />
+  >
+    {#snippet addon()}
+      <SortControl options={sortOptions} value={currentSort} onchange={handleSort} />
+    {/snippet}
+  </ChoiceGroup>
 {/snippet}
 
 {#snippet filterContent()}
@@ -823,7 +818,6 @@
     active={activeFilterCount > 0}
     icon={IconOptions}
   >
-    <SortSection options={sortOptions} value={currentSort} onchange={handleSort} />
     {@render filterContent()}
   </PopoverMenu>
 {/snippet}
@@ -872,7 +866,7 @@
       <div
         class="creators-grid"
         use:paintSelect={{ scope: 'creators', keys: creatorKeys, items: creatorsMap }}
-        {@attach ctrlWheel(handleCreatorWheel)}
+        {@attach ctrlWheel(gridScaleWheel)}
         style={`--favorites-card-width: ${targetCardWidth}px; --favorites-gap: ${gap}px;`}
       >
       {#each visibleCreators as creator, index (creator.service + ':' + creator.id)}

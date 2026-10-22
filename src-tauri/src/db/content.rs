@@ -367,6 +367,9 @@ impl ContentRepository {
         transaction
             .execute("DELETE FROM archive_passwords", [])
             .map_err(|e| e.to_string())?;
+        transaction
+            .execute("DELETE FROM post_inner_formats", [])
+            .map_err(|e| e.to_string())?;
         transaction.commit().map_err(|error| error.to_string())?;
         drop(connection);
         self.compact();

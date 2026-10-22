@@ -198,7 +198,7 @@
     mask-image: none;
   }
 
-  :global(html.webkitgtk) .page-body.fades::after {
+  :global(html.webkitgtk:not([data-backdrop])) .page-body.fades::after {
     content: '';
     position: absolute;
     top: 0;

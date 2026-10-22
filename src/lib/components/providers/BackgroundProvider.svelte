@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
-  import { backgroundState, defaultAcrylicOpacity, isWindowsPlatform } from '$lib/theme/backgroundState.svelte';
+  import { backgroundState, defaultAcrylicOpacity } from '$lib/theme/backgroundState.svelte';
   import { themeState } from '$lib/theme/themeState.svelte';
   import { isIdentityFilter, renderFilteredBackground } from '$lib/theme/backgroundFilter';
   import { layoutState } from '$lib/state/layoutState.svelte';
@@ -82,10 +82,13 @@
 
   onDestroy(releasePrefiltered);
 
-  let isNativeEffect = $derived.by(() => {
-    if (isWindowsPlatform() && ['acrylic', 'mica-dark', 'tabbed'].includes(settings.type)) return true;
-    if (typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('mac') && settings.type === 'vibrancy') return true;
-    return false;
+  let isNativeEffect = $derived(backgroundState.backdrop === 'native');
+
+  $effect(() => {
+    const backdrop = backgroundState.backdrop;
+    const root = document.documentElement;
+    if (backdrop) root.dataset.backdrop = backdrop;
+    else delete root.dataset.backdrop;
   });
 </script>
 
