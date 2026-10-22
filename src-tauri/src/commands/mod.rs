@@ -4307,7 +4307,7 @@ fn system_text_scale() -> f64 {
     })
     .unwrap_or(1.0);
     #[cfg(not(any(target_os = "windows", target_os = "android")))]
-    let scale = 1.0;
+    let scale: f64 = 1.0;
     scale.clamp(0.5, 3.0)
 }
 
