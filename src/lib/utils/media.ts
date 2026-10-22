@@ -157,21 +157,19 @@ export function resolveLocalMediaUrl(path?: string | null): string | undefined {
   }
 }
 
-function getProviderBaseUrl(service?: string, explicitProviderId?: string, preferImage = false): string {
+function getProviderBaseUrl(service?: string, explicitProviderId?: string): string {
   const prov = (explicitProviderId ? providerState.getProviderById(explicitProviderId) : undefined)
     || providerState.getProviderForService(service)
     || providerState.providers.find((p) => p.enabled)
     || providerState.providers[0];
-  const baseUrl = (preferImage ? prov?.image_url : undefined)
-    || prov?.image_url
-    || prov?.api_url
+  const baseUrl = prov?.api_url
     || (configState.settings.api_domain ? `https://${configState.settings.api_domain}` : 'https://pawchive.pw');
   return baseUrl.trim().replace(/\/+$/, '');
 }
 
 export function creatorAvatarUrl(service?: string, creatorId?: string, _thumbhash?: string | null, explicitProviderId?: string): string {
   if (!service || !creatorId) return '';
-  const base = getProviderBaseUrl(service, explicitProviderId, true);
+  const base = getProviderBaseUrl(service, explicitProviderId);
   return `${base}/icons/${encodeURIComponent(service.toLowerCase())}/${encodeURIComponent(creatorId)}`;
 }
 
@@ -234,7 +232,7 @@ export function onAvatarError(event: Event) {
 
 export function creatorBannerUrl(service?: string, creatorId?: string, _thumbhash?: string | null, explicitProviderId?: string): string {
   if (!service || !creatorId) return '';
-  const base = getProviderBaseUrl(service, explicitProviderId, true);
+  const base = getProviderBaseUrl(service, explicitProviderId);
   return `${base}/banners/${encodeURIComponent(service.toLowerCase())}/${encodeURIComponent(creatorId)}`;
 }
 
@@ -267,7 +265,7 @@ export function creatorBannerPlaceholderUrl(creator?: Creator | CreatorProfile |
 
 export function creatorPageUrl(service?: string, creatorId?: string, explicitProviderId?: string): string {
   if (!service || !creatorId) return '';
-  const base = getProviderBaseUrl(service, explicitProviderId, false);
+  const base = getProviderBaseUrl(service, explicitProviderId);
   return `${base}/${encodeURIComponent(service.toLowerCase())}/user/${encodeURIComponent(creatorId)}`;
 }
 
