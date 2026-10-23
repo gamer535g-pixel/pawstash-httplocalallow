@@ -82,7 +82,7 @@
     position: fixed;
     bottom: max(var(--safe-bottom), var(--dock-margin));
     left: 50%;
-    z-index: 999;
+    z-index: var(--z-dock);
     width: min(calc(100vw - var(--dock-margin) * 2), var(--dock-max-width));
     transform: translateX(-50%);
     transition: transform var(--duration-normal) var(--ease-standard),

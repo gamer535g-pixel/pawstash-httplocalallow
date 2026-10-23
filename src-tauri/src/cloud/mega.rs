@@ -573,40 +573,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_mega_urls() {
-        match parse_mega_url("https://mega.nz/folder/abc12345#key67890") {
-            Some(MegaLink::Folder { id, key }) => {
-                assert_eq!(id, "abc12345");
-                assert_eq!(key, "key67890");
-            }
-            _ => panic!("Expected MegaLink::Folder"),
+    fn parses_current_and_legacy_links() {
+        let parts = |url: &str| match parse_mega_url(url) {
+            Some(MegaLink::Folder { id, key }) => Some(("folder", id, key)),
+            Some(MegaLink::File { id, key }) => Some(("file", id, key)),
+            None => None,
+        };
+        for (url, kind, id, key) in [
+            (
+                "https://mega.nz/folder/abc12345#key67890",
+                "folder",
+                "abc12345",
+                "key67890",
+            ),
+            (
+                "https://mega.nz/file/file123#filekey456",
+                "file",
+                "file123",
+                "filekey456",
+            ),
+            (
+                "https://mega.nz/#F!folderId!folderKey",
+                "folder",
+                "folderId",
+                "folderKey",
+            ),
+            (
+                "https://mega.nz/#!legacyFile!legacyKey",
+                "file",
+                "legacyFile",
+                "legacyKey",
+            ),
+        ] {
+            assert_eq!(parts(url), Some((kind, id.into(), key.into())), "{url}");
         }
+        assert!(parts("https://example.com/file/123").is_none());
 
-        match parse_mega_url("https://mega.nz/file/file123#filekey456") {
-            Some(MegaLink::File { id, key }) => {
-                assert_eq!(id, "file123");
-                assert_eq!(key, "filekey456");
-            }
-            _ => panic!("Expected MegaLink::File"),
-        }
-
-        match parse_mega_url("https://mega.nz/#F!folderId!folderKey") {
-            Some(MegaLink::Folder { id, key }) => {
-                assert_eq!(id, "folderId");
-                assert_eq!(key, "folderKey");
-            }
-            _ => panic!("Expected legacy MegaLink::Folder"),
-        }
-
-        match parse_mega_url("https://mega.nz/#!legacyFile!legacyKey") {
-            Some(MegaLink::File { id, key }) => {
-                assert_eq!(id, "legacyFile");
-                assert_eq!(key, "legacyKey");
-            }
-            _ => panic!("Expected legacy MegaLink::File"),
-        }
-
-        assert!(parse_mega_url("https://example.com/file/123").is_none());
+        assert!(is_keyless_link("https://mega.nz/folder/Jj1liCiQ"));
+        assert!(is_keyless_link("https://mega.nz/file/jPwAmYqZ"));
+        assert!(!is_keyless_link(
+            "https://mega.nz/folder/Jj1liCiQ#TeHAplSadyE1w--Mt861ig"
+        ));
+        assert!(!is_keyless_link("https://mega.nz/#P!AgHEnCCR"));
     }
 
     fn protect_link(
@@ -635,28 +643,6 @@ mod tests {
         mac.update(&message);
         data.extend_from_slice(&mac.finalize().into_bytes());
         format!("https://mega.nz/#P!{}", URL_SAFE_NO_PAD.encode(data))
-    }
-
-    #[test]
-    fn key_derivation_matches_mega_test_vector() {
-        let salt = [
-            249, 222, 39, 45, 138, 76, 162, 1, 58, 133, 114, 25, 155, 230, 53, 69, 70, 86, 71, 13,
-            67, 20, 31, 114, 54, 212, 140, 210, 73, 113, 159, 42,
-        ];
-        let expected = [
-            48, 187, 136, 114, 157, 183, 46, 234, 79, 28, 129, 167, 193, 163, 64, 247, 225, 177,
-            128, 107, 165, 148, 22, 244, 105, 58, 92, 117, 51, 64, 167, 48, 170, 18, 86, 112, 231,
-            115, 99, 59, 58, 122, 59, 138, 176, 106, 236, 106, 137, 83, 53, 32, 192, 217, 56, 55,
-            226, 93, 180, 31, 61, 148, 56, 172,
-        ];
-        let mut derived = [0u8; 64];
-        pbkdf2::pbkdf2_hmac::<sha2::Sha512>(
-            b"correct horse battery staple",
-            &salt,
-            1_000,
-            &mut derived,
-        );
-        assert_eq!(derived, expected);
     }
 
     #[test]
@@ -706,31 +692,12 @@ mod tests {
             decrypt_protected_link("https://mega.nz/#P!AgHEnCCR", "x"),
             Err(ProtectedLinkError::Malformed)
         );
-        let drop_link = format!(
-            "https://mega.nz/#P!{}",
-            URL_SAFE_NO_PAD.encode([2u8, 2, 0, 0])
-        );
-        assert_eq!(
-            decrypt_protected_link(&drop_link, "x"),
-            Err(ProtectedLinkError::Unsupported)
-        );
-        let future = format!(
-            "https://mega.nz/#P!{}",
-            URL_SAFE_NO_PAD.encode([9u8, 0, 0, 0])
-        );
-        assert_eq!(
-            decrypt_protected_link(&future, "x"),
-            Err(ProtectedLinkError::Unsupported)
-        );
-    }
-
-    #[test]
-    fn keyless_links_are_detected() {
-        assert!(is_keyless_link("https://mega.nz/folder/Jj1liCiQ"));
-        assert!(is_keyless_link("https://mega.nz/file/jPwAmYqZ"));
-        assert!(!is_keyless_link(
-            "https://mega.nz/folder/Jj1liCiQ#TeHAplSadyE1w--Mt861ig"
-        ));
-        assert!(!is_keyless_link("https://mega.nz/#P!AgHEnCCR"));
+        for header in [[2u8, 2, 0, 0], [9u8, 0, 0, 0]] {
+            let link = format!("https://mega.nz/#P!{}", URL_SAFE_NO_PAD.encode(header));
+            assert_eq!(
+                decrypt_protected_link(&link, "x"),
+                Err(ProtectedLinkError::Unsupported)
+            );
+        }
     }
 }

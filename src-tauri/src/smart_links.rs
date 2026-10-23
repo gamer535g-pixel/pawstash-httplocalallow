@@ -719,243 +719,212 @@ pub fn parse_deep_link(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::providers::traits::ProviderConfig;
+    use crate::api::providers::{CoomerProvider, OnlyHavenProvider, PawchiveProvider};
+
+    fn post(provider_id: &str, service: &str, creator_id: &str, post_id: &str) -> DeepLinkTarget {
+        DeepLinkTarget::Post {
+            provider_id: provider_id.into(),
+            service: service.into(),
+            creator_id: creator_id.into(),
+            post_id: post_id.into(),
+        }
+    }
+
+    fn creator(provider_id: &str, service: &str, creator_id: &str) -> DeepLinkTarget {
+        DeepLinkTarget::Creator {
+            provider_id: provider_id.into(),
+            service: service.into(),
+            creator_id: creator_id.into(),
+        }
+    }
+
+    fn enabled(mut config: ProviderConfig, priority: u32) -> ProviderConfig {
+        config.enabled = true;
+        config.priority = priority;
+        config
+    }
 
     #[test]
     fn parses_supported_external_post_urls() {
-        let patreon = parse_external_post_link(
-            "https://www.patreon.com/posts/my-update-130382350?utm_source=x",
-        )
-        .unwrap();
-        assert_eq!(patreon.service, "patreon");
-        assert_eq!(patreon.post_id, "130382350");
-
-        let fanbox =
-            parse_external_post_link("https://artist-name.fanbox.cc/posts/12035562").unwrap();
-        assert_eq!(fanbox.service, "fanbox");
-        assert_eq!(fanbox.post_id, "12035562");
-        assert_eq!(fanbox.creator_hint.as_deref(), Some("artist-name"));
-
-        let boosty = parse_external_post_link("https://boosty.to/creator/posts/abc_123").unwrap();
-        assert_eq!(boosty.creator_hint.as_deref(), Some("creator"));
-        assert_eq!(boosty.post_id, "abc_123");
+        let coomer = CoomerProvider::default_config().api_url;
+        for (url, service, post_id, hint) in [
+            (
+                "https://www.patreon.com/posts/my-update-130382350?utm_source=x".to_string(),
+                "patreon",
+                "130382350",
+                None,
+            ),
+            (
+                "https://artist-name.fanbox.cc/posts/12035562".to_string(),
+                "fanbox",
+                "12035562",
+                Some("artist-name"),
+            ),
+            (
+                "https://boosty.to/creator/posts/abc_123".to_string(),
+                "boosty",
+                "abc_123",
+                Some("creator"),
+            ),
+            (
+                format!("{coomer}/onlyfans/user/hotcurvyjasmine/post/2037748208"),
+                "onlyfans",
+                "2037748208",
+                Some("hotcurvyjasmine"),
+            ),
+        ] {
+            assert_eq!(
+                parse_external_post_link(&url),
+                Some(ExternalPostLink {
+                    service: service.into(),
+                    post_id: post_id.into(),
+                    creator_hint: hint.map(Into::into),
+                }),
+                "{url}"
+            );
+        }
+        for rejected in [
+            "javascript:alert(1)",
+            "https://patreon.com/some-creator",
+            "https://example.com/posts/123",
+        ] {
+            assert!(parse_external_post_link(rejected).is_none(), "{rejected}");
+        }
     }
 
     #[test]
     fn parses_supported_external_creator_urls() {
-        let patreon_user =
-            parse_external_creator_link("https://www.patreon.com/dakkokujiro").unwrap();
-        assert_eq!(patreon_user.service, "patreon");
-        assert_eq!(patreon_user.creator_hint, "dakkokujiro");
-
-        let patreon_id =
-            parse_external_creator_link("https://patreon.com/user?u=58552278").unwrap();
-        assert_eq!(patreon_id.service, "patreon");
-        assert_eq!(patreon_id.creator_hint, "58552278");
-
-        let fanbox_sub = parse_external_creator_link("https://dakkokujiro.fanbox.cc").unwrap();
-        assert_eq!(fanbox_sub.service, "fanbox");
-        assert_eq!(fanbox_sub.creator_hint, "dakkokujiro");
-
-        let fanbox_at = parse_external_creator_link("https://fanbox.cc/@dakkokujiro").unwrap();
-        assert_eq!(fanbox_at.service, "fanbox");
-        assert_eq!(fanbox_at.creator_hint, "dakkokujiro");
-
-        let archive_url = format!(
-            "{}/fanbox/user/58552278",
-            crate::api::providers::PawchiveProvider::default_config().api_url
-        );
-        let pawchive_creator = parse_external_creator_link(&archive_url).unwrap();
-        assert_eq!(pawchive_creator.service, "fanbox");
-        assert_eq!(pawchive_creator.creator_hint, "58552278");
-    }
-
-    #[test]
-    fn rejects_non_post_and_unsafe_urls() {
-        assert!(parse_external_post_link("javascript:alert(1)").is_none());
-        assert!(parse_external_post_link("https://patreon.com/some-creator").is_none());
-        assert!(parse_external_post_link("https://example.com/posts/123").is_none());
+        let pawchive = PawchiveProvider::default_config().api_url;
+        let coomer = CoomerProvider::default_config().api_url;
+        for (url, service, hint) in [
+            (
+                "https://www.patreon.com/dakkokujiro".to_string(),
+                "patreon",
+                "dakkokujiro",
+            ),
+            (
+                "https://patreon.com/user?u=58552278".to_string(),
+                "patreon",
+                "58552278",
+            ),
+            (
+                "https://dakkokujiro.fanbox.cc".to_string(),
+                "fanbox",
+                "dakkokujiro",
+            ),
+            (
+                "https://fanbox.cc/@dakkokujiro".to_string(),
+                "fanbox",
+                "dakkokujiro",
+            ),
+            (
+                format!("{pawchive}/fanbox/user/58552278"),
+                "fanbox",
+                "58552278",
+            ),
+            (
+                format!("{coomer}/fansly/user/800702847065796609"),
+                "fansly",
+                "800702847065796609",
+            ),
+        ] {
+            assert_eq!(
+                parse_external_creator_link(&url),
+                Some(ExternalCreatorLink {
+                    service: service.into(),
+                    creator_hint: hint.into(),
+                }),
+                "{url}"
+            );
+        }
     }
 
     #[test]
     fn recognizes_only_explicit_shortener_hosts() {
-        assert!(is_known_shortener_url(
-            &Url::parse("https://bit.ly/example").unwrap()
-        ));
-        assert!(is_known_shortener_url(
-            &Url::parse("https://t.co/example").unwrap()
-        ));
-        assert!(is_known_shortener_url(
-            &Url::parse("https://x.gd/QESov").unwrap()
-        ));
-        assert!(!is_known_shortener_url(
-            &Url::parse("https://bit.ly.attacker.test/example").unwrap()
-        ));
-        assert!(!is_known_shortener_url(
-            &Url::parse("http://127.0.0.1/example").unwrap()
-        ));
+        for (url, known) in [
+            ("https://bit.ly/example", true),
+            ("https://t.co/example", true),
+            ("https://x.gd/QESov", true),
+            ("https://bit.ly.attacker.test/example", false),
+            ("http://127.0.0.1/example", false),
+        ] {
+            assert_eq!(
+                is_known_shortener_url(&Url::parse(url).unwrap()),
+                known,
+                "{url}"
+            );
+        }
     }
 
     #[test]
-    fn test_parse_deep_link_custom_scheme() {
-        let mut pawchive = crate::api::providers::PawchiveProvider::default_config();
-        pawchive.enabled = true;
-        pawchive.priority = 0;
-        let pawchive_id = pawchive.id.clone();
-        let pawchive_api_url = pawchive.api_url.clone();
-        let mut onlyhaven = crate::api::providers::OnlyHavenProvider::default_config();
-        onlyhaven.enabled = true;
-        onlyhaven.priority = 1;
-        let providers = vec![pawchive, onlyhaven];
+    fn parses_custom_scheme_deep_links() {
+        let pawchive = enabled(PawchiveProvider::default_config(), 0);
+        let id = pawchive.id.clone();
+        let archive_url = format!("{}/fanbox/user/51803217/post/12531297", pawchive.api_url);
+        let providers = vec![pawchive, enabled(OnlyHavenProvider::default_config(), 1)];
 
-        let res =
-            parse_deep_link("pawstash://post/patreon/12516244/168022069", &providers).unwrap();
-        assert_eq!(
-            res,
-            DeepLinkTarget::Post {
-                provider_id: pawchive_id.clone(),
-                service: "patreon".into(),
-                creator_id: "12516244".into(),
-                post_id: "168022069".into()
-            }
-        );
-
-        let res = parse_deep_link("pawstash://creator/fanbox/51803217", &providers).unwrap();
-        assert_eq!(
-            res,
-            DeepLinkTarget::Creator {
-                provider_id: pawchive_id.clone(),
-                service: "fanbox".into(),
-                creator_id: "51803217".into()
-            }
-        );
-
-        let res = parse_deep_link("pawstash://search?q=art", &providers).unwrap();
-        assert_eq!(
-            res,
-            DeepLinkTarget::Search {
-                provider_id: None,
-                query: "art".into()
-            }
-        );
-
-        let archive_url = format!("{pawchive_api_url}/fanbox/user/51803217/post/12531297");
-        let deep_link = format!("pawstash://open?url={}", urlencoding::encode(&archive_url));
-        let res = parse_deep_link(&deep_link, &providers).unwrap();
-        assert_eq!(
-            res,
-            DeepLinkTarget::Post {
-                provider_id: pawchive_id,
-                service: "fanbox".into(),
-                creator_id: "51803217".into(),
-                post_id: "12531297".into()
-            }
-        );
+        for (link, expected) in [
+            (
+                "pawstash://post/patreon/12516244/168022069".to_string(),
+                post(&id, "patreon", "12516244", "168022069"),
+            ),
+            (
+                "pawstash://creator/fanbox/51803217".to_string(),
+                creator(&id, "fanbox", "51803217"),
+            ),
+            (
+                "pawstash://search?q=art".to_string(),
+                DeepLinkTarget::Search {
+                    provider_id: None,
+                    query: "art".into(),
+                },
+            ),
+            (
+                format!("pawstash://open?url={}", urlencoding::encode(&archive_url)),
+                post(&id, "fanbox", "51803217", "12531297"),
+            ),
+        ] {
+            assert_eq!(parse_deep_link(&link, &providers), Ok(expected), "{link}");
+        }
     }
 
     #[test]
-    fn test_parse_deep_link_dynamic_provider_domains() {
-        let providers = vec![
-            crate::api::providers::traits::ProviderConfig {
-                id: "custom_pawchive".into(),
-                name: "Custom Pawchive Mirror".into(),
-                enabled: true,
-                api_url: "https://mirror.pw".into(),
-                fallback_urls: vec!["https://backup-mirror.net".into()],
-                file_url: None,
-                image_url: None,
-                file_prefix: None,
-                image_prefix: None,
-                session_cookie: "".into(),
-                username: "".into(),
-                services: vec!["patreon".into(), "fanbox".into()],
-                is_custom: true,
-                priority: 0,
-                ..Default::default()
-            },
-            {
-                let mut config = crate::api::providers::OnlyHavenProvider::default_config();
-                config.enabled = true;
-                config.priority = 1;
-                config
-            },
-        ];
-        let onlyhaven_id = providers[1].id.clone();
-        let onlyhaven_api_url = providers[1].api_url.clone();
+    fn deep_links_follow_configured_provider_domains() {
+        let mirror = ProviderConfig {
+            id: "custom_pawchive".into(),
+            name: "Custom Pawchive Mirror".into(),
+            enabled: true,
+            api_url: "https://mirror.pw".into(),
+            fallback_urls: vec!["https://backup-mirror.net".into()],
+            services: vec!["patreon".into(), "fanbox".into()],
+            is_custom: true,
+            priority: 0,
+            ..Default::default()
+        };
+        let onlyhaven = enabled(OnlyHavenProvider::default_config(), 1);
+        let (oh_id, oh_url) = (onlyhaven.id.clone(), onlyhaven.api_url.clone());
+        let providers = vec![mirror, onlyhaven];
 
-        let res = parse_deep_link(
-            "https://backup-mirror.net/patreon/user/123/post/456",
-            &providers,
-        )
-        .unwrap();
-        assert_eq!(
-            res,
-            DeepLinkTarget::Post {
-                provider_id: "custom_pawchive".into(),
-                service: "patreon".into(),
-                creator_id: "123".into(),
-                post_id: "456".into()
-            }
-        );
-
-        let onlyhaven_post_url = format!("{onlyhaven_api_url}/posts/onlyfans/14644822/2702157105");
-        let res = parse_deep_link(&onlyhaven_post_url, &providers).unwrap();
-        assert_eq!(
-            res,
-            DeepLinkTarget::Post {
-                provider_id: onlyhaven_id.clone(),
-                service: "onlyfans".into(),
-                creator_id: "14644822".into(),
-                post_id: "2702157105".into()
-            }
-        );
-
-        let onlyhaven_creator_url = format!("{onlyhaven_api_url}/creators/onlyfans/14644822");
-        let res = parse_deep_link(&onlyhaven_creator_url, &providers).unwrap();
-        assert_eq!(
-            res,
-            DeepLinkTarget::Creator {
-                provider_id: onlyhaven_id,
-                service: "onlyfans".into(),
-                creator_id: "14644822".into()
-            }
-        );
-
-        let res = parse_deep_link(
-            "https://www.patreon.com/posts/my-post-130382350",
-            &providers,
-        )
-        .unwrap();
-        assert_eq!(
-            res,
-            DeepLinkTarget::Post {
-                provider_id: "custom_pawchive".into(),
-                service: "patreon".into(),
-                creator_id: "".into(),
-                post_id: "130382350".into()
-            }
-        );
-
-        let coomer_api_url = crate::api::providers::CoomerProvider::default_config().api_url;
-        let coomer_post_url =
-            format!("{coomer_api_url}/onlyfans/user/hotcurvyjasmine/post/2037748208");
-        let coomer_post_link = parse_external_post_link(&coomer_post_url);
-        assert_eq!(
-            coomer_post_link,
-            Some(ExternalPostLink {
-                service: "onlyfans".into(),
-                post_id: "2037748208".into(),
-                creator_hint: Some("hotcurvyjasmine".into()),
-            })
-        );
-
-        let coomer_creator_url = format!("{coomer_api_url}/fansly/user/800702847065796609");
-        let coomer_creator_link = parse_external_creator_link(&coomer_creator_url);
-        assert_eq!(
-            coomer_creator_link,
-            Some(ExternalCreatorLink {
-                service: "fansly".into(),
-                creator_hint: "800702847065796609".into(),
-            })
-        );
+        for (link, expected) in [
+            (
+                "https://backup-mirror.net/patreon/user/123/post/456".to_string(),
+                post("custom_pawchive", "patreon", "123", "456"),
+            ),
+            (
+                format!("{oh_url}/posts/onlyfans/14644822/2702157105"),
+                post(&oh_id, "onlyfans", "14644822", "2702157105"),
+            ),
+            (
+                format!("{oh_url}/creators/onlyfans/14644822"),
+                creator(&oh_id, "onlyfans", "14644822"),
+            ),
+            (
+                "https://www.patreon.com/posts/my-post-130382350".to_string(),
+                post("custom_pawchive", "patreon", "", "130382350"),
+            ),
+        ] {
+            assert_eq!(parse_deep_link(&link, &providers), Ok(expected), "{link}");
+        }
     }
 }

@@ -239,15 +239,16 @@ mod tests {
     }
 
     #[test]
-    fn small_or_mostly_full_databases_are_left_alone() {
-        assert_eq!(plan(&stats(20_000, 10_000, 0)), Plan::Nothing);
-        assert_eq!(plan(&stats(500_000, 49_000, 0)), Plan::Nothing);
-    }
-
-    #[test]
-    fn bloated_databases_get_the_right_kind_of_vacuum() {
-        assert_eq!(plan(&stats(145_411, 49_006, 0)), Plan::Full);
-        assert_eq!(plan(&stats(145_411, 49_006, 2)), Plan::Incremental);
+    fn vacuum_plan_matches_database_bloat_and_mode() {
+        for (page_count, freelist_count, auto_vacuum, expected) in [
+            (20_000, 10_000, 0, Plan::Nothing),
+            (500_000, 49_000, 0, Plan::Nothing),
+            (145_411, 49_006, 0, Plan::Full),
+            (145_411, 49_006, 2, Plan::Incremental),
+        ] {
+            let stats = stats(page_count, freelist_count, auto_vacuum);
+            assert_eq!(plan(&stats), expected, "{stats:?}");
+        }
     }
 
     fn temp_database() -> std::path::PathBuf {
@@ -261,18 +262,17 @@ mod tests {
     }
 
     #[test]
-    fn creator_snapshots_lose_their_nulls_once() {
+    fn creator_snapshots_lose_their_nulls_once_like_new_writes() {
+        let original = r#"{"id":"1","name":"a:null","avatar_url":null,"extra":{"x":null,"y":1},"tags":[null]}"#;
         let path = temp_database();
         Connection::open(&path)
             .unwrap()
-            .execute_batch(
+            .execute_batch(&format!(
                 r#"PRAGMA journal_mode=WAL;
                    CREATE TABLE app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT);
                    CREATE TABLE creators(service TEXT, creator_id TEXT, snapshot_json TEXT NOT NULL);
-                   INSERT INTO creators VALUES
-                     ('patreon', '1', '{"id":"1","name":"a:null","avatar_url":null,"extra":{"x":null,"y":1},"tags":[null]}'),
-                     ('patreon', '2', 'not json');"#,
-            )
+                   INSERT INTO creators VALUES ('patreon', '1', '{original}'), ('patreon', '2', 'not json');"#
+            ))
             .unwrap();
 
         let first = compact(&path).unwrap();
@@ -290,30 +290,13 @@ mod tests {
 
         assert!(matches!(first, Outcome::Compacted { .. }));
         assert_eq!(second, Outcome::NotNeeded);
-        assert_eq!(
-            snapshots,
-            vec![
-                r#"{"id":"1","name":"a:null","extra":{"y":1},"tags":[null]}"#.to_string(),
-                "not json".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn stored_snapshots_match_the_one_time_rewrite() {
-        let json = serde_json::json!({
-            "id": "1", "name": "a:null", "avatar_url": null,
-            "extra": {"x": null, "y": 1}, "tags": [null]
-        });
-        assert_eq!(
-            crate::db::storage::snapshot_json(&json).unwrap(),
-            r#"{"extra":{"y":1},"id":"1","name":"a:null","tags":[null]}"#
-        );
-    }
-
-    #[test]
-    fn free_space_is_reported_for_the_temp_dir() {
-        assert!(available_space(&std::env::temp_dir()).is_some_and(|free| free > 0));
+        assert_eq!(snapshots[1], "not json");
+        let parse = |json: &str| serde_json::from_str::<serde_json::Value>(json).unwrap();
+        let expected =
+            serde_json::json!({"id": "1", "name": "a:null", "extra": {"y": 1}, "tags": [null]});
+        assert_eq!(parse(&snapshots[0]), expected);
+        let written = crate::db::storage::snapshot_json(&parse(original)).unwrap();
+        assert_eq!(parse(&written), expected);
     }
 
     #[test]

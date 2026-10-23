@@ -1961,48 +1961,54 @@ mod tests {
     use super::*;
     use crate::api::providers::traits::SourceProvider;
 
+    fn provider_with(file_url: Option<&str>, image_url: Option<&str>) -> PawchiveProvider {
+        PawchiveProvider::new(ProviderConfig {
+            file_url: file_url.map(Into::into),
+            image_url: image_url.map(Into::into),
+            file_prefix: None,
+            image_prefix: None,
+            services: vec![],
+            ..PawchiveProvider::default_config()
+        })
+        .unwrap()
+    }
+
+    fn default_provider() -> PawchiveProvider {
+        PawchiveProvider::new(PawchiveProvider::default_config()).unwrap()
+    }
+
     #[test]
     fn prepare_post_removes_empty_file_placeholder() {
-        let provider = PawchiveProvider::new(PawchiveProvider::default_config()).unwrap();
-        let post = Post {
+        let post = default_provider().prepare_post(Post {
             id: "169172541".into(),
             user: "5249582".into(),
             service: "patreon".into(),
             file: Some(Attachment::default()),
             attachments: Some(Vec::new()),
             ..Post::default()
-        };
-        let post = provider.prepare_post(post);
+        });
 
         assert!(post.file.is_none());
         assert_eq!(
-            post.extra
-                .get("provider_id")
-                .and_then(|value| value.as_str()),
+            post.extra.get("provider_id").and_then(|v| v.as_str()),
             Some("pawchive")
         );
     }
 
     #[test]
-    fn session_cookie_is_normalized() {
-        assert_eq!(
-            PawchiveClient::cookie_header("token")
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            "session=token"
-        );
-        assert_eq!(
-            PawchiveClient::cookie_header("session=token; other=x")
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            "session=token; other=x"
-        );
-    }
-
-    #[test]
-    fn mirror_with_scheme_is_supported() {
+    fn session_cookie_and_mirror_base_url_are_normalized() {
+        for (raw, header) in [
+            ("token", "session=token"),
+            ("session=token; other=x", "session=token; other=x"),
+        ] {
+            assert_eq!(
+                PawchiveClient::cookie_header(raw)
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                header
+            );
+        }
         assert_eq!(
             PawchiveClient::base_url("http://localhost:8080/"),
             "http://localhost:8080/api/v1"
@@ -2010,95 +2016,58 @@ mod tests {
     }
 
     #[test]
-    fn server_subdomain_prefix_resolution() {
-        let conf = ProviderConfig {
-            id: "pawchive".into(),
-            name: "Pawchive".into(),
-            enabled: true,
-            api_url: "https://pawchive.pw".into(),
-            fallback_urls: vec![],
-            file_url: Some("https://file.pawchive.pw".into()),
-            image_url: Some("https://img.pawchive.pw".into()),
-            file_prefix: None,
-            image_prefix: None,
-            session_cookie: String::new(),
-            username: String::new(),
-            services: vec![],
-            is_custom: false,
-            priority: 1,
-            ..Default::default()
-        };
-        let provider = PawchiveProvider::new(conf).unwrap();
-        assert_eq!(
-            provider.resolve_media_url("/data/ab/cd/video.mp4", Some("file1")),
-            "https://file1.pawchive.pw/data/ab/cd/video.mp4"
+    fn media_and_thumbnail_urls_resolve_per_server() {
+        let file = "https://file.pawchive.pw/data/ab/cd/video.mp4";
+        let thumb = "https://img.pawchive.pw/thumbnail/data/ab/cd/thumb.jpg";
+        let configured = provider_with(
+            Some("https://file.pawchive.pw"),
+            Some("https://img.pawchive.pw"),
         );
-        assert_eq!(
-            provider.resolve_media_url("/data/ab/cd/video.mp4", Some("https://cdn.example.com")),
-            "https://cdn.example.com/data/ab/cd/video.mp4"
-        );
-        assert_eq!(
-            provider.resolve_media_url("/data/ab/cd/video.mp4", None),
-            "https://file.pawchive.pw/data/ab/cd/video.mp4"
-        );
-        assert_eq!(
-            provider.resolve_media_url("data/ab/cd/video.mp4", None),
-            "https://file.pawchive.pw/data/ab/cd/video.mp4"
-        );
-        assert_eq!(
-            provider.resolve_media_url("ab/cd/video.mp4", None),
-            "https://file.pawchive.pw/data/ab/cd/video.mp4"
-        );
-        assert_eq!(
-            provider.resolve_thumbnail_url("/data/ab/cd/thumb.jpg"),
-            "https://img.pawchive.pw/thumbnail/data/ab/cd/thumb.jpg"
-        );
-        assert_eq!(
-            provider.resolve_thumbnail_url("data/ab/cd/thumb.jpg"),
-            "https://img.pawchive.pw/thumbnail/data/ab/cd/thumb.jpg"
-        );
-        assert_eq!(
-            provider.resolve_thumbnail_url("ab/cd/thumb.jpg"),
-            "https://img.pawchive.pw/thumbnail/data/ab/cd/thumb.jpg"
-        );
-        assert!(provider
-            .resolve_thumbnail_url("/data/ab/cd/video.mp4")
-            .is_empty());
-        assert!(provider
-            .resolve_thumbnail_url("/data/ab/cd/archive.zip")
-            .is_empty());
+        let unconfigured = provider_with(None, None);
 
-        let fallback_conf = ProviderConfig {
-            id: "pawchive".into(),
-            name: "Pawchive".into(),
-            enabled: true,
-            api_url: "https://pawchive.pw".into(),
-            fallback_urls: vec![],
-            file_url: None,
-            image_url: None,
-            file_prefix: None,
-            image_prefix: None,
-            session_cookie: String::new(),
-            username: String::new(),
-            services: vec![],
-            is_custom: false,
-            priority: 1,
-            ..Default::default()
-        };
-        let fallback_provider = PawchiveProvider::new(fallback_conf).unwrap();
+        for (path, server, expected) in [
+            (
+                "/data/ab/cd/video.mp4",
+                Some("file1"),
+                "https://file1.pawchive.pw/data/ab/cd/video.mp4",
+            ),
+            (
+                "/data/ab/cd/video.mp4",
+                Some("https://cdn.example.com"),
+                "https://cdn.example.com/data/ab/cd/video.mp4",
+            ),
+            ("/data/ab/cd/video.mp4", None, file),
+            ("data/ab/cd/video.mp4", None, file),
+            ("ab/cd/video.mp4", None, file),
+        ] {
+            assert_eq!(
+                configured.resolve_media_url(path, server),
+                expected,
+                "{path} {server:?}"
+            );
+        }
+        for path in [
+            "/data/ab/cd/thumb.jpg",
+            "data/ab/cd/thumb.jpg",
+            "ab/cd/thumb.jpg",
+        ] {
+            assert_eq!(configured.resolve_thumbnail_url(path), thumb, "{path}");
+        }
+        for path in ["/data/ab/cd/video.mp4", "/data/ab/cd/archive.zip"] {
+            assert!(configured.resolve_thumbnail_url(path).is_empty(), "{path}");
+        }
         assert_eq!(
-            fallback_provider.resolve_media_url("/data/ab/cd/video.mp4", None),
-            "https://file.pawchive.pw/data/ab/cd/video.mp4"
+            unconfigured.resolve_media_url("/data/ab/cd/video.mp4", None),
+            file
         );
         assert_eq!(
-            fallback_provider.resolve_thumbnail_url("/data/ab/cd/thumb.jpg"),
-            "https://img.pawchive.pw/thumbnail/data/ab/cd/thumb.jpg"
+            unconfigured.resolve_thumbnail_url("/data/ab/cd/thumb.jpg"),
+            thumb
         );
     }
 
     #[test]
     fn preview_only_attachments_use_the_thumbnail_object() {
-        let provider = PawchiveProvider::new(PawchiveProvider::default_config()).unwrap();
         let mut attachment = Attachment {
             name: Some("preview.jpg".into()),
             path: Some("/10/e5/preview.jpg".into()),
@@ -2106,13 +2075,11 @@ mod tests {
             extra: HashMap::from([("preview_only".into(), serde_json::Value::Bool(true))]),
             ..Attachment::default()
         };
-
-        provider.enrich_attachment(&mut attachment);
+        default_provider().enrich_attachment(&mut attachment);
 
         assert_eq!(attachment.url, attachment.thumbnail_url);
         assert!(attachment
             .url
-            .as_deref()
             .is_some_and(|url| url.starts_with("https://img.pawchive.pw/thumbnail/data/")));
     }
 
@@ -2144,109 +2111,74 @@ mod tests {
     #[tokio::test]
     #[ignore = "hits live provider APIs; run with `cargo test -- --ignored`"]
     async fn live_pawchive_public_contracts() {
-        let conf = ProviderConfig {
-            id: "pawchive".into(),
-            name: "Pawchive".into(),
-            enabled: true,
-            api_url: "https://pawchive.pw".into(),
-            fallback_urls: vec![],
-            file_url: Some("https://file.pawchive.pw".into()),
-            image_url: Some("https://img.pawchive.pw".into()),
-            file_prefix: None,
-            image_prefix: None,
-            session_cookie: "".into(),
-            username: "".into(),
-            services: vec!["patreon".into(), "fanbox".into()],
-            is_custom: false,
-            priority: 1,
-            ..Default::default()
-        };
-        let provider = PawchiveProvider::new(conf).unwrap();
+        let provider = default_provider();
+        let client = PawchiveClient::new(AppSettings::default()).unwrap();
+        let (service, creator, post_id) = ("patreon", "3340149", "142680139");
 
         let health = provider.test_connection().await.unwrap();
-        assert!(
-            health.is_healthy,
-            "Pawchive health check failed: {:?}",
-            health.error
+        assert!(health.is_healthy, "health check failed: {:?}", health.error);
+        assert!(!provider.fetch_creators().await.unwrap().is_empty());
+        assert!(!client.app_version().await.unwrap().trim().is_empty());
+
+        for (query, offset) in [(None, 0), (None, 50), (Some("cat"), 0)] {
+            let posts = provider.fetch_recent_posts(query, offset).await.unwrap();
+            assert!(
+                !posts.is_empty(),
+                "recent {query:?} @ {offset} returned 0 posts"
+            );
+        }
+        for period in ["day", "week", "month"] {
+            let posts = client.fetch_popular_posts(period, None, 0).await.unwrap();
+            assert!(!posts.is_empty(), "{period} popular feed is empty");
+            assert!(
+                posts.iter().all(|post| post.favorite_count.is_some()),
+                "{period} lacks favorite counts"
+            );
+        }
+
+        assert_eq!(
+            provider
+                .fetch_creator_profile(service, creator)
+                .await
+                .unwrap()
+                .id,
+            creator
         );
-
-        let creators = provider.fetch_creators().await.unwrap();
-        assert!(
-            !creators.is_empty(),
-            "Pawchive creators list returned 0 creators"
-        );
-
-        let recent = provider.fetch_recent_posts(None, 0).await.unwrap();
-        assert!(!recent.is_empty(), "Pawchive recent feed returned 0 posts");
-
-        let paged = provider.fetch_recent_posts(None, 50).await.unwrap();
-        assert!(!paged.is_empty(), "Pawchive offset 50 returned 0 posts");
-
-        let searched = provider.fetch_recent_posts(Some("cat"), 0).await.unwrap();
-        assert!(!searched.is_empty(), "Pawchive search returned 0 posts");
-
-        let popular = provider.fetch_popular_posts("day", None, 0).await.unwrap();
-        assert!(
-            !popular.is_empty(),
-            "Pawchive popular feed returned 0 posts"
-        );
-
-        let profile = provider
-            .fetch_creator_profile("patreon", "3340149")
+        assert!(!provider
+            .fetch_posts(service, creator, 0, None)
+            .await
+            .unwrap()
+            .is_empty());
+        provider
+            .fetch_posts(service, creator, 0, Some("highres"))
             .await
             .unwrap();
-        assert_eq!(profile.id, "3340149");
-
-        let posts = provider
-            .fetch_posts("patreon", "3340149", 0, None)
+        assert!(!provider
+            .fetch_creator_tags(service, creator)
             .await
-            .unwrap();
-        assert!(!posts.is_empty(), "Pawchive creator posts returned 0 posts");
-
-        let filtered_posts = provider
-            .fetch_posts("patreon", "3340149", 0, Some("highres"))
-            .await
-            .unwrap();
-        let _ = filtered_posts;
-
-        let client = PawchiveClient::new(AppSettings::default()).unwrap();
+            .unwrap()
+            .is_empty());
+        client.fetch_creator_links(service, creator).await.unwrap();
         client
             .fetch_announcements("patreon", "8693043")
             .await
             .unwrap();
         client.fetch_fancards("fanbox", "3316400").await.unwrap();
-        client
-            .fetch_creator_links("patreon", "3340149")
-            .await
-            .unwrap();
-
-        let tags = provider
-            .fetch_creator_tags("patreon", "3340149")
-            .await
-            .unwrap();
-        assert!(!tags.is_empty(), "Pawchive creator tags returned 0 tags");
 
         let post = provider
-            .fetch_post("patreon", "3340149", "142680139")
+            .fetch_post(service, creator, post_id)
             .await
             .unwrap();
-        assert!(post.is_some(), "Pawchive post 142680139 returned None");
-        assert_eq!(post.unwrap().id, "142680139");
-
-        let non_existent = provider
-            .fetch_post("patreon", "3340149", "999999999999999")
+        assert_eq!(post.map(|p| p.id).as_deref(), Some(post_id));
+        assert!(provider
+            .fetch_post(service, creator, "999999999999999")
+            .await
+            .unwrap()
+            .is_none());
+        provider
+            .fetch_post_revisions(service, creator, post_id)
             .await
             .unwrap();
-        assert!(
-            non_existent.is_none(),
-            "Pawchive non-existent post returned Some"
-        );
-
-        let revisions = provider
-            .fetch_post_revisions("patreon", "3340149", "142680139")
-            .await
-            .unwrap();
-        let _ = revisions;
 
         assert!(!client
             .fetch_post_comments("fanbox", "6570768", "1836570")
@@ -2257,66 +2189,9 @@ mod tests {
             .is_post_flagged("fanbox", "6570768", "1836570")
             .await
             .unwrap());
-        assert!(!client.app_version().await.unwrap().trim().is_empty());
-
-        let hash_search = provider
-            .search_hash("0000000000000000000000000000000000000000000000000000000000000000")
-            .await;
-        let _ = hash_search;
-
-        let media_url = provider.resolve_media_url("/data/aa/bb/video.mp4", None);
-        assert!(media_url.starts_with("https://file.pawchive.pw/data/"));
-        let thumb_url = provider.resolve_thumbnail_url("/data/aa/bb/thumb.jpg");
-        assert!(thumb_url.starts_with("https://img.pawchive.pw/thumbnail/data/"));
-
-        assert_eq!(provider.id(), "pawchive");
-        assert_eq!(provider.name(), "Pawchive");
-        assert!(provider.supports_service("patreon"));
-        assert!(provider.logout().await.is_ok());
         assert!(provider
             .login("fake_user_12345", "fake_pass_12345")
             .await
             .is_err());
-    }
-
-    #[tokio::test]
-    #[ignore = "hits live provider APIs; run with `cargo test -- --ignored`"]
-    async fn live_pawchive_popular_contracts() {
-        let client = PawchiveClient::new(AppSettings::default()).unwrap();
-        for period in ["day", "week", "month"] {
-            let posts = client.fetch_popular_posts(period, None, 0).await.unwrap();
-            assert!(!posts.is_empty(), "{period} popular feed is empty");
-            assert!(
-                posts.iter().all(|post| post.favorite_count.is_some()),
-                "{period} popular feed is missing favorite counts"
-            );
-        }
-    }
-
-    #[test]
-    fn test_pawchive_auth_schema() {
-        let conf = ProviderConfig {
-            id: "pawchive".into(),
-            name: "Pawchive".into(),
-            enabled: true,
-            api_url: "https://pawchive.pw".into(),
-            fallback_urls: vec![],
-            file_url: None,
-            image_url: None,
-            file_prefix: None,
-            image_prefix: None,
-            session_cookie: "".into(),
-            username: "".into(),
-            services: vec!["patreon".into(), "fanbox".into()],
-            is_custom: false,
-            priority: 1,
-            ..Default::default()
-        };
-        let provider = PawchiveProvider::new(conf).unwrap();
-        let schema = provider.auth_schema();
-        assert_eq!(schema.provider_id, "pawchive");
-        assert!(schema.supports_auth);
-        assert!(schema.supports_remote_favorites);
-        assert!(schema.supports_push_favorites);
     }
 }

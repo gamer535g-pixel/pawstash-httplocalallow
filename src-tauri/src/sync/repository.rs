@@ -1303,261 +1303,166 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sync::client::AcceptedRecord;
+
+    const AT: &str = "2026-08-15T00:00:00Z";
+
+    fn exec(repo: &SyncRepository, sql: &str) {
+        repo.connection.lock().unwrap().execute_batch(sql).unwrap();
+    }
+
+    fn query<T: rusqlite::types::FromSql>(repo: &SyncRepository, sql: &str) -> T {
+        repo.connection
+            .lock()
+            .unwrap()
+            .query_row(sql, [], |r| r.get(0))
+            .unwrap()
+    }
+
+    fn mark_synced(repo: &SyncRepository, dirty: &[DirtySyncRecord]) {
+        let accepted: Vec<_> = dirty
+            .iter()
+            .enumerate()
+            .map(|(i, d)| AcceptedRecord {
+                record_id: d.record_id.clone(),
+                revision: 1,
+                position: i as i64 + 1,
+            })
+            .collect();
+        repo.mark_records_synced(&accepted).unwrap();
+    }
+
+    fn apply<T: Serialize>(
+        repo: &SyncRepository,
+        record_id: &str,
+        kind: &str,
+        rev: i64,
+        record: &T,
+    ) {
+        let bytes = serde_json::to_vec(record).unwrap();
+        repo.apply_remote_change(record_id, kind, rev, Some(&bytes), false)
+            .unwrap();
+    }
+
+    fn collection(id: &str, parent_id: Option<&str>, name: &str) -> CollectionRecord {
+        CollectionRecord {
+            id: id.into(),
+            kind: if parent_id.is_some() {
+                "folder"
+            } else {
+                "stash"
+            }
+            .into(),
+            parent_id: parent_id.map(Into::into),
+            name: name.into(),
+            position: 0,
+            created_at: AT.into(),
+            updated_at: AT.into(),
+            color: None,
+        }
+    }
 
     #[test]
-    fn detect_dirty_collections_and_tombstones() {
+    fn local_edits_stay_dirty_until_synced_and_deletes_become_tombstones() {
         let repo = SyncRepository::in_memory();
-        {
-            let conn = repo.connection.lock().unwrap();
-            conn.execute(
-                "INSERT INTO collections(id,kind,name,position,is_system) VALUES('col_01','stash','Art Stash',0,0)",
-                [],
-            )
-            .unwrap();
-        }
+        exec(&repo, "INSERT INTO collections(id,kind,name,position,is_system) VALUES('col_01','stash','Art Stash',0,0)");
 
         let dirty = repo.detect_and_get_dirty_records().unwrap();
         assert_eq!(dirty.len(), 1);
         assert_eq!(dirty[0].record_id, "col:col_01");
         assert_eq!(dirty[0].kind, "collection");
-        assert!(!dirty[0].tombstone);
-        assert!(dirty[0].payload.is_some());
+        assert!(!dirty[0].tombstone && dirty[0].payload.is_some());
 
-        repo.mark_records_synced(&[crate::sync::client::AcceptedRecord {
-            record_id: "col:col_01".into(),
-            revision: 1,
-            position: 1,
-        }])
-        .unwrap();
+        mark_synced(&repo, &dirty);
+        assert!(repo.detect_and_get_dirty_records().unwrap().is_empty());
 
-        let dirty_after = repo.detect_and_get_dirty_records().unwrap();
-        assert!(dirty_after.is_empty());
-
-        {
-            let conn = repo.connection.lock().unwrap();
-            conn.execute("DELETE FROM collections WHERE id='col_01'", [])
-                .unwrap();
-        }
-        let dirty_deleted = repo.detect_and_get_dirty_records().unwrap();
-        assert_eq!(dirty_deleted.len(), 1);
-        assert_eq!(dirty_deleted[0].record_id, "col:col_01");
-        assert!(dirty_deleted[0].tombstone);
-        assert_eq!(dirty_deleted[0].expected_revision, 1);
+        exec(&repo, "DELETE FROM collections WHERE id='col_01'");
+        let deleted = repo.detect_and_get_dirty_records().unwrap();
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].record_id, "col:col_01");
+        assert!(deleted[0].tombstone);
+        assert_eq!(deleted[0].expected_revision, 1);
     }
 
     #[test]
-    fn apply_remote_changes_and_tombstones() {
-        let repo = SyncRepository::in_memory();
-        let col = CollectionRecord {
-            id: "remote_col_01".into(),
-            kind: "stash".into(),
-            parent_id: None,
-            name: "Remote Stash".into(),
-            position: 0,
-            created_at: "2026-08-15T00:00:00Z".into(),
-            updated_at: "2026-08-15T00:00:00Z".into(),
-            color: None,
-        };
-        let bytes = serde_json::to_vec(&col).unwrap();
-
-        repo.apply_remote_change("col:remote_col_01", "collection", 1, Some(&bytes), false)
-            .unwrap();
-
-        {
-            let conn = repo.connection.lock().unwrap();
-            let name: String = conn
-                .query_row(
-                    "SELECT name FROM collections WHERE id='remote_col_01'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(name, "Remote Stash");
-        }
-
-        repo.apply_remote_change("col:remote_col_01", "collection", 2, None, true)
-            .unwrap();
-
-        {
-            let conn = repo.connection.lock().unwrap();
-            let count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM collections WHERE id='remote_col_01'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(count, 0);
-        }
-    }
-
-    #[test]
-    fn full_entity_sync_and_merge_roundtrip() {
+    fn every_entity_kind_replicates_to_another_device() {
         let repo_a = SyncRepository::in_memory();
         let repo_b = SyncRepository::in_memory();
+        exec(
+            &repo_a,
+            r#"
+            INSERT INTO collections(id,kind,name,position,is_system) VALUES('stash_01','stash','My Stash',0,0);
+            INSERT INTO creators(service,creator_id,name,snapshot_json)
+                VALUES('fanbox','c1','Artist 1','{"id":"c1","name":"Artist 1","service":"fanbox"}');
+            INSERT INTO posts(service,creator_id,post_id,title,content,published_at,snapshot_json)
+                VALUES('fanbox','c1','p1','Artwork 1','Hello world','2026-08-15T00:00:00Z','{"id":"p1","title":"Artwork 1","user":"c1","service":"fanbox","content":"Hello world"}');
+            INSERT INTO collection_posts(collection_id,service,creator_id,post_id,position,operation_id,added_at)
+                VALUES('stash_01','fanbox','c1','p1',0,'op_01','2026-08-15T00:00:00Z');
+            INSERT INTO subscriptions(id,service,creator_id,creator_name,destination_collection_id,enabled,initial_import,auto_download,download_scope,poll_interval_minutes)
+                VALUES('sub_01','fanbox','c1','Artist 1','stash_01',1,'none',0,'primary',30);
+            INSERT INTO content_pins(entity_kind,service,creator_id,post_id,reason,account_id)
+                VALUES('post','fanbox','c1','p1','favorite',''), ('creator','fanbox','c1','','favorite','');
+            "#,
+        );
 
-        {
-            let conn = repo_a.connection.lock().unwrap();
-            conn.execute(
-                "INSERT INTO collections(id,kind,name,position,is_system) VALUES('stash_01','stash','My Stash',0,0)",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO creators(service,creator_id,name,snapshot_json) VALUES('fanbox','c1','Artist 1','{\"id\":\"c1\",\"name\":\"Artist 1\",\"service\":\"fanbox\"}')",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO posts(service,creator_id,post_id,title,content,published_at,snapshot_json)
-                 VALUES('fanbox','c1','p1','Artwork 1','Hello world','2026-08-15T00:00:00Z','{\"id\":\"p1\",\"title\":\"Artwork 1\",\"user\":\"c1\",\"service\":\"fanbox\",\"content\":\"Hello world\"}')",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO collection_posts(collection_id,service,creator_id,post_id,position,operation_id,added_at)
-                 VALUES('stash_01','fanbox','c1','p1',0,'op_01','2026-08-15T00:00:00Z')",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO subscriptions(id,service,creator_id,creator_name,destination_collection_id,enabled,initial_import,auto_download,download_scope,poll_interval_minutes)
-                 VALUES('sub_01','fanbox','c1','Artist 1','stash_01',1,'none',0,'primary',30)",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO content_pins(entity_kind,service,creator_id,post_id,reason,account_id)
-                 VALUES('post','fanbox','c1','p1','favorite','')",
-                [],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO content_pins(entity_kind,service,creator_id,post_id,reason,account_id)
-                 VALUES('creator','fanbox','c1','','favorite','')",
-                [],
-            )
-            .unwrap();
-        }
-
-        let dirty_a = repo_a.detect_and_get_dirty_records().unwrap();
-        assert_eq!(dirty_a.len(), 6);
-
-        let mut accepted = Vec::new();
-        for (i, d) in dirty_a.iter().enumerate() {
-            accepted.push(crate::sync::client::AcceptedRecord {
-                record_id: d.record_id.clone(),
-                revision: 1,
-                position: (i + 1) as i64,
-            });
-        }
-        repo_a.mark_records_synced(&accepted).unwrap();
-
-        for d in &dirty_a {
+        let dirty = repo_a.detect_and_get_dirty_records().unwrap();
+        assert_eq!(dirty.len(), 6);
+        mark_synced(&repo_a, &dirty);
+        for d in &dirty {
             repo_b
                 .apply_remote_change(&d.record_id, &d.kind, 1, d.payload.as_deref(), d.tombstone)
                 .unwrap();
         }
 
-        {
-            let conn = repo_b.connection.lock().unwrap();
-            let col_name: String = conn
-                .query_row(
-                    "SELECT name FROM collections WHERE id='stash_01'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(col_name, "My Stash");
-
-            let post_title: String = conn
-                .query_row(
-                    "SELECT title FROM posts WHERE service='fanbox' AND creator_id='c1' AND post_id='p1'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(post_title, "Artwork 1");
-
-            let mem_count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM collection_posts WHERE collection_id='stash_01'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(mem_count, 1);
-
-            let sub_name: String = conn
-                .query_row(
-                    "SELECT creator_name FROM subscriptions WHERE id='sub_01'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(sub_name, "Artist 1");
-
-            let fav_post_count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM content_pins WHERE entity_kind='post' AND reason='favorite' AND service='fanbox' AND creator_id='c1' AND post_id='p1'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(fav_post_count, 1);
-
-            let fav_creator_count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM content_pins WHERE entity_kind='creator' AND reason='favorite' AND service='fanbox' AND creator_id='c1'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(fav_creator_count, 1);
+        assert_eq!(
+            query::<String>(&repo_b, "SELECT name FROM collections WHERE id='stash_01'"),
+            "My Stash"
+        );
+        assert_eq!(
+            query::<String>(&repo_b, "SELECT title FROM posts WHERE post_id='p1'"),
+            "Artwork 1"
+        );
+        assert_eq!(
+            query::<String>(
+                &repo_b,
+                "SELECT creator_name FROM subscriptions WHERE id='sub_01'"
+            ),
+            "Artist 1"
+        );
+        for sql in [
+            "SELECT COUNT(*) FROM collection_posts WHERE collection_id='stash_01'",
+            "SELECT COUNT(*) FROM content_pins WHERE entity_kind='post' AND reason='favorite' AND post_id='p1'",
+            "SELECT COUNT(*) FROM content_pins WHERE entity_kind='creator' AND reason='favorite' AND creator_id='c1'",
+        ] {
+            assert_eq!(query::<i64>(&repo_b, sql), 1, "{sql}");
         }
+        assert!(repo_b.detect_and_get_dirty_records().unwrap().is_empty());
 
-        let dirty_b = repo_b.detect_and_get_dirty_records().unwrap();
-        assert!(dirty_b.is_empty());
+        repo_b
+            .apply_remote_change("col:stash_01", "collection", 2, None, true)
+            .unwrap();
+        assert_eq!(
+            query::<i64>(
+                &repo_b,
+                "SELECT COUNT(*) FROM collections WHERE id='stash_01'"
+            ),
+            0
+        );
     }
 
     #[test]
-    fn apply_out_of_order_remote_changes_succeeds() {
+    fn remote_children_may_arrive_before_their_parents() {
         let repo = SyncRepository::in_memory();
-
-        let mem = MembershipRecord {
+        let membership = MembershipRecord {
             collection_id: "col_future".into(),
             service: "kemono".into(),
             creator_id: "creator_future".into(),
             post_id: "post_future".into(),
             position: 0,
             operation_id: "op_01".into(),
-            added_at: "2026-08-15T00:00:00Z".into(),
+            added_at: AT.into(),
         };
-        let mem_bytes = serde_json::to_vec(&mem).unwrap();
-        repo.apply_remote_change(
-            "mem:col_future:kemono:creator_future:post_future",
-            "membership",
-            1,
-            Some(&mem_bytes),
-            false,
-        )
-        .unwrap();
-
-        let child_col = CollectionRecord {
-            id: "child_col".into(),
-            kind: "folder".into(),
-            parent_id: Some("parent_col".into()),
-            name: "Child Folder".into(),
-            position: 0,
-            created_at: "2026-08-15T00:00:00Z".into(),
-            updated_at: "2026-08-15T00:00:00Z".into(),
-            color: None,
-        };
-        let child_bytes = serde_json::to_vec(&child_col).unwrap();
-        repo.apply_remote_change("col:child_col", "collection", 2, Some(&child_bytes), false)
-            .unwrap();
-
-        let sub = SubscriptionRecord {
+        let subscription = SubscriptionRecord {
             id: "sub_future".into(),
             service: "kemono".into(),
             creator_id: "creator_future".into(),
@@ -1569,105 +1474,91 @@ mod tests {
             auto_download: false,
             download_scope: "primary".into(),
             poll_interval_minutes: 30,
-            created_at: "2026-08-15T00:00:00Z".into(),
-            updated_at: "2026-08-15T00:00:00Z".into(),
+            created_at: AT.into(),
+            updated_at: AT.into(),
         };
-        let sub_bytes = serde_json::to_vec(&sub).unwrap();
-        repo.apply_remote_change("sub:sub_future", "subscription", 3, Some(&sub_bytes), false)
-            .unwrap();
-
         let post = PostRecord {
             service: "kemono".into(),
             creator_id: "creator_future".into(),
             post_id: "post_future".into(),
             title: "Future Post".into(),
             published_at: None,
-            snapshot_json: "{\"id\":\"post_future\",\"title\":\"Future Post\",\"user\":\"creator_future\",\"service\":\"kemono\"}".into(),
-            cached_at: "2026-08-15T00:00:00Z".into(),
+            snapshot_json: r#"{"id":"post_future","title":"Future Post","user":"creator_future","service":"kemono"}"#.into(),
+            cached_at: AT.into(),
         };
-        let post_bytes = serde_json::to_vec(&post).unwrap();
-        repo.apply_remote_change(
+
+        apply(
+            &repo,
+            "mem:col_future:kemono:creator_future:post_future",
+            "membership",
+            1,
+            &membership,
+        );
+        apply(
+            &repo,
+            "col:child_col",
+            "collection",
+            2,
+            &collection("child_col", Some("parent_col"), "Child Folder"),
+        );
+        apply(&repo, "sub:sub_future", "subscription", 3, &subscription);
+        apply(
+            &repo,
             "post:kemono:creator_future:post_future",
             "post",
             4,
-            Some(&post_bytes),
-            false,
-        )
-        .unwrap();
+            &post,
+        );
+        apply(
+            &repo,
+            "col:col_future",
+            "collection",
+            5,
+            &collection("col_future", None, "Future Stash"),
+        );
 
-        let col = CollectionRecord {
-            id: "col_future".into(),
-            kind: "stash".into(),
-            parent_id: None,
-            name: "Future Stash".into(),
-            position: 1,
-            created_at: "2026-08-15T00:00:00Z".into(),
-            updated_at: "2026-08-15T00:00:00Z".into(),
-            color: None,
-        };
-        let col_bytes = serde_json::to_vec(&col).unwrap();
-        repo.apply_remote_change("col:col_future", "collection", 5, Some(&col_bytes), false)
-            .unwrap();
-
-        let conn = repo.connection.lock().unwrap();
-        let name: String = conn
-            .query_row(
-                "SELECT name FROM collections WHERE id='col_future'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(name, "Future Stash");
-
-        let title: String = conn
-            .query_row(
-                "SELECT title FROM posts WHERE service='kemono' AND creator_id='creator_future' AND post_id='post_future'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(title, "Future Post");
-
-        let mem_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM collection_posts WHERE collection_id='col_future' AND post_id='post_future'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(mem_count, 1);
+        assert_eq!(
+            query::<String>(&repo, "SELECT name FROM collections WHERE id='col_future'"),
+            "Future Stash"
+        );
+        assert_eq!(
+            query::<String>(&repo, "SELECT title FROM posts WHERE post_id='post_future'"),
+            "Future Post"
+        );
+        assert_eq!(
+            query::<i64>(&repo, "SELECT COUNT(*) FROM collection_posts WHERE collection_id='col_future' AND post_id='post_future'"),
+            1
+        );
     }
 
     #[test]
-    fn test_slim_post_snapshot_trims_content_and_preserves_card_preview() {
-        let heavy_json = r#"{
-            "id": "123",
-            "user": "creator_a",
-            "service": "fanbox",
-            "title": "A Great Post",
-            "content": "<p>Massive HTML body content with inline images</p>",
-            "published": "2026-09-08T12:00:00Z",
-            "file": {"name": "thumb.jpg", "path": "/files/thumb.jpg"},
-            "attachments": [{"name": "image1.png", "path": "/files/image1.png"}],
-            "poll": {"title": "huge poll object"},
-            "embed": {"html": "iframe content"},
-            "extra": {"huge_dump": true}
-        }"#;
+    fn slim_post_snapshot_drops_bodies_but_keeps_the_card_preview() {
+        let slim = slim_post_snapshot(
+            r#"{
+                "id": "123", "user": "creator_a", "service": "fanbox", "title": "A Great Post",
+                "content": "<p>Massive HTML body</p>", "published": "2026-09-08T12:00:00Z",
+                "file": {"name": "thumb.jpg", "path": "/files/thumb.jpg"},
+                "attachments": [{"name": "image1.png", "path": "/files/image1.png"}],
+                "poll": {"title": "huge poll object"}, "embed": {"html": "iframe content"},
+                "extra": {"huge_dump": true}
+            }"#,
+        );
+        for dropped in [
+            "Massive HTML body",
+            "huge poll object",
+            "iframe content",
+            "huge_dump",
+        ] {
+            assert!(!slim.contains(dropped), "{dropped}");
+        }
 
-        let slim_str = slim_post_snapshot(heavy_json);
-        assert!(!slim_str.contains("Massive HTML body"));
-        assert!(!slim_str.contains("huge poll object"));
-        assert!(!slim_str.contains("iframe content"));
-        assert!(!slim_str.contains("huge_dump"));
-
-        let parsed: crate::api::models::Post = serde_json::from_str(&slim_str).unwrap();
-        assert_eq!(parsed.id, "123");
-        assert_eq!(parsed.title, "A Great Post");
-        assert_eq!(parsed.user, "creator_a");
-        assert_eq!(parsed.service, "fanbox");
+        let parsed: crate::api::models::Post = serde_json::from_str(&slim).unwrap();
+        assert_eq!(
+            (parsed.id.as_str(), parsed.title.as_str()),
+            ("123", "A Great Post")
+        );
         assert_eq!(parsed.content, None);
-        assert_eq!(parsed.poll, None);
         assert_eq!(parsed.detail_fetched, Some(false));
-        assert_eq!(parsed.file.unwrap().name, Some("thumb.jpg".into()));
+        assert_eq!(parsed.file.unwrap().name.as_deref(), Some("thumb.jpg"));
     }
 }

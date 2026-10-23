@@ -746,6 +746,7 @@ async fn reply_error(client: &mut TcpStream, message: &str) {
 mod tests {
     use super::*;
     use crate::net::{HostRoute, ProxySettings};
+    use tokio::task::JoinHandle;
 
     fn net_with(proxy: ProxySettings, host_routes: Vec<HostRoute>) -> NetworkDefaults {
         NetworkDefaults {
@@ -777,12 +778,8 @@ mod tests {
         assert_eq!((https.kind, https.port), (ProxyKind::Https, 443));
 
         let socks = Upstream::parse("socks5h://u%40x:p%3Ass@10.0.0.1:9050", None).unwrap();
-        assert_eq!(socks.kind, ProxyKind::Socks5);
-        assert_eq!(socks.port, 9050);
-        assert_eq!(
-            socks.credentials,
-            Some(("u@x".to_string(), "p:ss".to_string()))
-        );
+        assert_eq!((socks.kind, socks.port), (ProxyKind::Socks5, 9050));
+        assert_eq!(socks.credentials, Some(("u@x".into(), "p:ss".into())));
 
         let separate = Upstream::parse(
             "http://proxy.test:3128",
@@ -791,9 +788,10 @@ mod tests {
         .unwrap();
         assert_eq!(separate.credentials, Some(("user".into(), "pass".into())));
 
-        let ipv6 = Upstream::parse("http://[::1]:8080", None).unwrap();
-        assert_eq!(ipv6.host, "::1");
-
+        assert_eq!(
+            Upstream::parse("http://[::1]:8080", None).unwrap().host,
+            "::1"
+        );
         assert!(Upstream::parse("socks4://proxy.test", None).is_err());
         assert!(Upstream::parse("not a url", None).is_err());
     }
@@ -808,40 +806,44 @@ mod tests {
 
     #[test]
     fn host_overrides_beat_the_global_proxy_and_the_most_specific_wins() {
+        let route = |domain: &str, proxy_url: &str| HostRoute {
+            domain: domain.into(),
+            proxy_url: proxy_url.into(),
+        };
         let net = net_with(
             custom_proxy("http://global.test:3128", "", ""),
             vec![
-                HostRoute {
-                    domain: "coomer.st".into(),
-                    proxy_url: "socks5://provider.test:1080".into(),
-                },
-                HostRoute {
-                    domain: "img.coomer.st".into(),
-                    proxy_url: "http://images.test:8080".into(),
-                },
+                route("coomer.st", "socks5://provider.test:1080"),
+                route("img.coomer.st", "http://images.test:8080"),
             ],
         );
-        let host_of = |host: &str| route_for(host, true, &net).unwrap().unwrap().host;
-        assert_eq!(host_of("c3.coomer.st"), "provider.test");
-        assert_eq!(host_of("coomer.st"), "provider.test");
-        assert_eq!(host_of("img.coomer.st"), "images.test");
-        assert_eq!(host_of("notcoomer.st"), "global.test");
-        assert_eq!(host_of("example.com"), "global.test");
+        for (host, proxy) in [
+            ("c3.coomer.st", "provider.test"),
+            ("coomer.st", "provider.test"),
+            ("img.coomer.st", "images.test"),
+            ("notcoomer.st", "global.test"),
+            ("example.com", "global.test"),
+        ] {
+            assert_eq!(
+                route_for(host, true, &net).unwrap().unwrap().host,
+                proxy,
+                "{host}"
+            );
+        }
     }
 
     #[test]
     fn global_modes_route_as_the_app_clients_do() {
-        let direct = net_with(
-            ProxySettings {
-                mode: ProxyMode::None,
-                ..ProxySettings::default()
-            },
-            Vec::new(),
-        );
-        assert_eq!(route_for("example.com", true, &direct).unwrap(), None);
-
-        let empty_custom = net_with(custom_proxy("  ", "", ""), Vec::new());
-        assert_eq!(route_for("example.com", true, &empty_custom).unwrap(), None);
+        let direct = ProxySettings {
+            mode: ProxyMode::None,
+            ..ProxySettings::default()
+        };
+        for settings in [direct, custom_proxy("  ", "", "")] {
+            assert_eq!(
+                route_for("example.com", true, &net_with(settings, Vec::new())).unwrap(),
+                None
+            );
+        }
 
         let custom = net_with(
             custom_proxy("http://proxy.test:3128", "user", "pw"),
@@ -854,11 +856,15 @@ mod tests {
 
     #[test]
     fn no_proxy_matches_hosts_and_subdomains_only() {
-        assert!(matches_no_proxy("anything.test", "*"));
-        assert!(matches_no_proxy("example.com", "foo.test, example.com"));
-        assert!(matches_no_proxy("cdn.example.com", ".example.com"));
-        assert!(!matches_no_proxy("badexample.com", "example.com"));
-        assert!(!matches_no_proxy("example.com", ""));
+        for (host, list, matches) in [
+            ("anything.test", "*", true),
+            ("example.com", "foo.test, example.com", true),
+            ("cdn.example.com", ".example.com", true),
+            ("badexample.com", "example.com", false),
+            ("example.com", "", false),
+        ] {
+            assert_eq!(matches_no_proxy(host, list), matches, "{host} in {list:?}");
+        }
     }
 
     #[test]
@@ -871,8 +877,10 @@ mod tests {
 
         let split = "http=web.corp:80;https=secure.corp:443;socks=sock.corp:1080";
         let for_https = parse_windows_proxy_server(split, true).unwrap();
-        assert_eq!(for_https.host, "secure.corp");
-        assert_eq!(for_https.kind, ProxyKind::Http);
+        assert_eq!(
+            (for_https.kind, for_https.host.as_str()),
+            (ProxyKind::Http, "secure.corp")
+        );
         assert_eq!(
             parse_windows_proxy_server(split, false).unwrap().host,
             "web.corp"
@@ -885,10 +893,14 @@ mod tests {
     #[test]
     fn windows_overrides_support_local_and_wildcards() {
         let overrides = "<local>;*.corp.test;10.*";
-        assert!(matches_windows_override("intranet", overrides));
-        assert!(matches_windows_override("wiki.corp.test", overrides));
-        assert!(matches_windows_override("10.1.2.3", overrides));
-        assert!(!matches_windows_override("example.com", overrides));
+        for (host, matches) in [
+            ("intranet", true),
+            ("wiki.corp.test", true),
+            ("10.1.2.3", true),
+            ("example.com", false),
+        ] {
+            assert_eq!(matches_windows_override(host, overrides), matches, "{host}");
+        }
         assert!(wildcard_match("a*b*c", "axxbyyc"));
         assert!(!wildcard_match("a*b*c", "axxc"));
     }
@@ -903,27 +915,6 @@ mod tests {
         assert!(split_authority("example.com").is_err());
     }
 
-    async fn echo_server() -> u16 {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let (mut reader, mut writer) = socket.split();
-            let _ = tokio::io::copy(&mut reader, &mut writer).await;
-        });
-        port
-    }
-
-    async fn proxy_under_test() -> u16 {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            let (client, _) = listener.accept().await.unwrap();
-            let _ = handle(client).await;
-        });
-        port
-    }
-
     async fn read_until_blank_line(stream: &mut TcpStream) -> String {
         let mut head = Vec::new();
         let mut byte = [0u8; 1];
@@ -934,15 +925,48 @@ mod tests {
         String::from_utf8(head).unwrap()
     }
 
+    async fn scripted_server(reply: &'static [u8], echo: bool) -> (u16, JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let head = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let head = read_until_blank_line(&mut socket).await;
+            let _ = socket.write_all(reply).await;
+            if echo {
+                let (mut reader, mut writer) = socket.split();
+                let _ = tokio::io::copy(&mut reader, &mut writer).await;
+            }
+            head
+        });
+        (port, head)
+    }
+
+    async fn send_through_proxy(request: &str) -> TcpStream {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (client, _) = listener.accept().await.unwrap();
+            let _ = handle(client).await;
+        });
+        let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        client.write_all(request.as_bytes()).await.unwrap();
+        client
+    }
+
     #[tokio::test]
     async fn connect_tunnel_carries_bytes_both_ways() {
-        let echo = echo_server().await;
-        let proxy = proxy_under_test().await;
+        let echo = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let echo_port = echo.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut socket, _) = echo.accept().await.unwrap();
+            let (mut reader, mut writer) = socket.split();
+            let _ = tokio::io::copy(&mut reader, &mut writer).await;
+        });
 
-        let mut client = TcpStream::connect(("127.0.0.1", proxy)).await.unwrap();
-        let request =
-            format!("CONNECT 127.0.0.1:{echo} HTTP/1.1\r\nHost: 127.0.0.1:{echo}\r\n\r\n");
-        client.write_all(request.as_bytes()).await.unwrap();
+        let mut client = send_through_proxy(&format!(
+            "CONNECT 127.0.0.1:{echo_port} HTTP/1.1\r\nHost: 127.0.0.1:{echo_port}\r\n\r\n"
+        ))
+        .await;
         let reply = read_until_blank_line(&mut client).await;
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
 
@@ -960,39 +984,27 @@ mod tests {
             .local_addr()
             .unwrap()
             .port();
-        let proxy = proxy_under_test().await;
-
-        let mut client = TcpStream::connect(("127.0.0.1", proxy)).await.unwrap();
-        let request = format!("CONNECT 127.0.0.1:{closed} HTTP/1.1\r\n\r\n");
-        client.write_all(request.as_bytes()).await.unwrap();
+        let mut client =
+            send_through_proxy(&format!("CONNECT 127.0.0.1:{closed} HTTP/1.1\r\n\r\n")).await;
         let reply = read_until_blank_line(&mut client).await;
         assert!(reply.starts_with("HTTP/1.1 502"), "{reply}");
     }
 
     #[tokio::test]
     async fn plain_http_is_rewritten_to_origin_form_with_connection_close() {
-        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin_port = origin.local_addr().unwrap().port();
-        let received = tokio::spawn(async move {
-            let (mut socket, _) = origin.accept().await.unwrap();
-            let head = read_until_blank_line(&mut socket).await;
-            socket
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
-                .await
-                .unwrap();
-            head
-        });
-        let proxy = proxy_under_test().await;
-
-        let mut client = TcpStream::connect(("127.0.0.1", proxy)).await.unwrap();
-        let request = format!(
-            "GET http://127.0.0.1:{origin_port}/media/a.jpg?w=1 HTTP/1.1\r\n\
-             Host: 127.0.0.1:{origin_port}\r\n\
+        let (port, received) = scripted_server(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+            false,
+        )
+        .await;
+        let mut client = send_through_proxy(&format!(
+            "GET http://127.0.0.1:{port}/media/a.jpg?w=1 HTTP/1.1\r\n\
+             Host: 127.0.0.1:{port}\r\n\
              Proxy-Connection: keep-alive\r\n\
              Connection: keep-alive\r\n\
              Accept: image/*\r\n\r\n"
-        );
-        client.write_all(request.as_bytes()).await.unwrap();
+        ))
+        .await;
         let mut response = String::new();
         client.read_to_string(&mut response).await.unwrap();
         assert!(response.ends_with("ok"), "{response}");
@@ -1004,60 +1016,43 @@ mod tests {
         );
         assert!(head.contains("accept: image/*"), "{head}");
         assert!(head.contains("connection: close"), "{head}");
-        assert!(!head.contains("keep-alive"), "{head}");
-        assert!(!head.contains("proxy-connection"), "{head}");
+        assert!(
+            !head.contains("keep-alive") && !head.contains("proxy-connection"),
+            "{head}"
+        );
     }
 
     #[tokio::test]
     async fn websocket_upgrade_keeps_its_connection_headers() {
-        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin_port = origin.local_addr().unwrap().port();
-        let received = tokio::spawn(async move {
-            let (mut socket, _) = origin.accept().await.unwrap();
-            let head = read_until_blank_line(&mut socket).await;
-            socket
-                .write_all(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
-                .await
-                .unwrap();
-            head
-        });
-        let proxy = proxy_under_test().await;
-
-        let mut client = TcpStream::connect(("127.0.0.1", proxy)).await.unwrap();
-        let request = format!(
-            "GET http://localhost:{origin_port}/hmr HTTP/1.1\r\n\
-             Host: localhost:{origin_port}\r\n\
+        let (port, received) = scripted_server(
+            b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+            false,
+        )
+        .await;
+        let mut client = send_through_proxy(&format!(
+            "GET http://localhost:{port}/hmr HTTP/1.1\r\n\
+             Host: localhost:{port}\r\n\
              Connection: Upgrade\r\n\
              Upgrade: websocket\r\n\r\n"
-        );
-        client.write_all(request.as_bytes()).await.unwrap();
+        ))
+        .await;
         let reply = read_until_blank_line(&mut client).await;
         assert!(reply.starts_with("HTTP/1.1 101"), "{reply}");
 
         let head = received.await.unwrap().to_ascii_lowercase();
-        assert!(head.contains("connection: upgrade"), "{head}");
-        assert!(head.contains("upgrade: websocket"), "{head}");
+        assert!(
+            head.contains("connection: upgrade") && head.contains("upgrade: websocket"),
+            "{head}"
+        );
         assert!(!head.contains("connection: close"), "{head}");
     }
 
     #[tokio::test]
     async fn http_upstream_gets_connect_with_basic_auth() {
-        let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let upstream_port = upstream.local_addr().unwrap().port();
-        let seen = tokio::spawn(async move {
-            let (mut socket, _) = upstream.accept().await.unwrap();
-            let head = read_until_blank_line(&mut socket).await;
-            socket
-                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-                .await
-                .unwrap();
-            let (mut reader, mut writer) = socket.split();
-            let _ = tokio::io::copy(&mut reader, &mut writer).await;
-            head
-        });
-
+        let (port, seen) =
+            scripted_server(b"HTTP/1.1 200 Connection Established\r\n\r\n", true).await;
         let proxy = Upstream::parse(
-            &format!("http://127.0.0.1:{upstream_port}"),
+            &format!("http://127.0.0.1:{port}"),
             Some(("user".into(), "secret".into())),
         )
         .unwrap();
@@ -1089,21 +1084,14 @@ mod tests {
 
     #[tokio::test]
     async fn http_upstream_auth_failure_is_reported() {
-        let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let upstream_port = upstream.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            let (mut socket, _) = upstream.accept().await.unwrap();
-            read_until_blank_line(&mut socket).await;
-            let _ = socket
-                .write_all(b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n")
-                .await;
-        });
-        let proxy = Upstream::parse(&format!("http://127.0.0.1:{upstream_port}"), None).unwrap();
-        let error =
-            match open_tunnel(Some(&proxy), "example.test", 443, Duration::from_secs(2)).await {
-                Ok(_) => panic!("a 407 must fail the tunnel"),
-                Err(error) => error,
-            };
+        let (port, _) =
+            scripted_server(b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n", false).await;
+        let proxy = Upstream::parse(&format!("http://127.0.0.1:{port}"), None).unwrap();
+        let Err(error) =
+            open_tunnel(Some(&proxy), "example.test", 443, Duration::from_secs(2)).await
+        else {
+            panic!("a 407 must fail the tunnel");
+        };
         assert!(error.contains("407"), "{error}");
     }
 

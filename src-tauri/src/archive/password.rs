@@ -286,56 +286,53 @@ mod tests {
 
     #[test]
     fn finds_labelled_passwords() {
-        assert_eq!(extract("Password: lewdk@t77"), vec!["lewdk@t77"]);
-        assert_eq!(extract("pass : 9adn2"), vec!["9adn2"]);
-        assert_eq!(
-            extract("Password  44d2cc8d5fa0fa325942d1180471f11e"),
-            vec!["44d2cc8d5fa0fa325942d1180471f11e"]
-        );
-        assert_eq!(extract("PW=abc123."), vec!["abc123"]);
-        assert_eq!(extract("pwd - hunter"), vec!["hunter"]);
-        assert_eq!(
-            extract("The password is \"open sesame\""),
-            vec!["open sesame"]
-        );
-        assert_eq!(extract("Password for zip: q1w2"), vec!["q1w2"]);
-    }
-
-    #[test]
-    fn strips_html_before_matching() {
-        assert_eq!(
-            extract("<p>Hi!</p><p>PW: <strong>abc123</strong></p><p>Enjoy</p>"),
-            vec!["abc123"]
-        );
-        assert_eq!(extract("Pass&nbsp;:&nbsp;k9&amp;z"), vec!["k9&z"]);
-    }
-
-    #[test]
-    fn finds_non_latin_labels() {
-        assert_eq!(extract("Пароль: котик2024"), vec!["котик2024"]);
-        assert_eq!(extract("密码：1234，解压码：5678"), vec!["1234", "5678"]);
-        assert_eq!(extract("パスワード：hoge123"), vec!["hoge123"]);
-        assert_eq!(extract("비밀번호: qwer1234"), vec!["qwer1234"]);
+        for (text, expected) in [
+            ("Password: lewdk@t77", vec!["lewdk@t77"]),
+            ("pass : 9adn2", vec!["9adn2"]),
+            (
+                "Password  44d2cc8d5fa0fa325942d1180471f11e",
+                vec!["44d2cc8d5fa0fa325942d1180471f11e"],
+            ),
+            ("PW=abc123.", vec!["abc123"]),
+            ("pwd - hunter", vec!["hunter"]),
+            ("The password is \"open sesame\"", vec!["open sesame"]),
+            ("Password for zip: q1w2", vec!["q1w2"]),
+            ("Password: pass123", vec!["pass123"]),
+            (
+                "<p>Hi!</p><p>PW: <strong>abc123</strong></p><p>Enjoy</p>",
+                vec!["abc123"],
+            ),
+            ("Pass&nbsp;:&nbsp;k9&amp;z", vec!["k9&z"]),
+            ("Пароль: котик2024", vec!["котик2024"]),
+            ("密码：1234，解压码：5678", vec!["1234", "5678"]),
+            ("パスワード：hoge123", vec!["hoge123"]),
+            ("비밀번호: qwer1234", vec!["qwer1234"]),
+            (
+                "pass: abc1 then password: zz9 and again pw: abc1",
+                vec!["abc1", "zz9"],
+            ),
+        ] {
+            assert_eq!(extract(text), expected, "{text}");
+        }
     }
 
     #[test]
     fn rejects_prose() {
-        assert!(extract("my passion for art").is_empty());
-        assert!(extract("I passed the exam").is_empty());
-        assert!(extract("Password on your Fan-box account").is_empty());
-        assert!(extract("a password which refers to the old post").is_empty());
-        assert!(extract("the password is required").is_empty());
-        assert!(extract("pass-through cable").is_empty());
-        assert!(extract("compass: north").is_empty());
+        for text in [
+            "my passion for art",
+            "I passed the exam",
+            "Password on your Fan-box account",
+            "a password which refers to the old post",
+            "the password is required",
+            "pass-through cable",
+            "compass: north",
+        ] {
+            assert!(extract(text).is_empty(), "{text}");
+        }
     }
 
     #[test]
-    fn keeps_order_dedupes_and_caps() {
-        assert_eq!(
-            extract("pass: abc1 then password: zz9 and again pw: abc1"),
-            vec!["abc1", "zz9"]
-        );
-        assert_eq!(extract("Password: pass123"), vec!["pass123"]);
+    fn caps_candidates() {
         let many = (0..20)
             .map(|i| format!("pw: key{i}"))
             .collect::<Vec<_>>()

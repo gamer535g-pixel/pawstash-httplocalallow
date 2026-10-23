@@ -463,23 +463,22 @@ mod tests {
     #[test]
     fn reorder_stashes_persists_order() {
         let r = LibraryRepository::in_memory();
-        let s1 = r.create_stash("First", None).unwrap();
-        let s2 = r.create_stash("Second", Some("#3b82f6")).unwrap();
-        let s3 = r.create_stash("Third", None).unwrap();
+        let ids: Vec<String> = ["First", "Second", "Third"]
+            .into_iter()
+            .map(|name| r.create_stash(name, None).unwrap().id)
+            .collect();
+        let stash_ids = || -> Vec<String> {
+            r.list_collections()
+                .unwrap()
+                .into_iter()
+                .filter(|c| c.kind == "stash")
+                .map(|c| c.id)
+                .collect()
+        };
+        assert_eq!(stash_ids(), ids);
 
-        let initial = r.list_collections().unwrap();
-        let initial_stashes: Vec<_> = initial.iter().filter(|c| c.kind == "stash").collect();
-        assert_eq!(initial_stashes[0].id, s1.id);
-        assert_eq!(initial_stashes[1].id, s2.id);
-        assert_eq!(initial_stashes[2].id, s3.id);
-
-        r.reorder_stashes(&[s3.id.clone(), s1.id.clone(), s2.id.clone()])
-            .unwrap();
-
-        let reordered = r.list_collections().unwrap();
-        let reordered_stashes: Vec<_> = reordered.iter().filter(|c| c.kind == "stash").collect();
-        assert_eq!(reordered_stashes[0].id, s3.id);
-        assert_eq!(reordered_stashes[1].id, s1.id);
-        assert_eq!(reordered_stashes[2].id, s2.id);
+        let reordered = [ids[2].clone(), ids[0].clone(), ids[1].clone()];
+        r.reorder_stashes(&reordered).unwrap();
+        assert_eq!(stash_ids(), reordered);
     }
 }

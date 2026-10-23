@@ -930,113 +930,66 @@ mod tests {
     }
 
     #[test]
-    fn test_version_comparison() {
-        assert!(is_version_newer("0.2.0", "0.1.0"));
-        assert!(is_version_newer("0.1.1", "0.1.0"));
-        assert!(is_version_newer("1.0.0", "0.9.9"));
-        assert!(is_version_newer("0.1.0", "0.1.0-beta.1"));
-        assert!(is_version_newer("26.8.1", "26.8.1-pre1"));
-        assert!(is_version_newer("26.8.2", "26.8.1-pre1"));
-        assert!(is_version_newer("v26.8.2", "26.8.1"));
-        assert!(is_version_newer("26.8.1-pre2", "26.8.1-pre1"));
-        assert!(is_version_newer("26.8.1-pre10", "26.8.1-pre2"));
-        assert!(is_version_newer("26.8.1-beta.2", "26.8.1-beta.1"));
-        assert!(is_version_newer("26.8.1-beta.10", "26.8.1-beta.2"));
-        assert!(is_version_newer("26.8.2-5", "26.8.2-1"));
-        assert!(is_version_newer("26.8.2", "26.8.2-5"));
-        assert!(is_version_newer("26.8.3-1", "26.8.2"));
-        assert!(!is_version_newer("0.1.0", "0.1.0"));
-        assert!(!is_version_newer("26.8.1-pre1", "26.8.1-pre1"));
-        assert!(!is_version_newer("26.8.1-pre1", "26.8.1"));
-        assert!(!is_version_newer("26.8.1-pre2", "26.8.1-pre10"));
-        assert!(!is_version_newer("26.8.2-1", "26.8.2-5"));
-        assert!(!is_version_newer("26.8.2-5", "26.8.2"));
-        assert!(!is_version_newer("0.1.0", "0.2.0"));
-        assert!(!is_version_newer("0.0.9", "0.1.0"));
+    fn version_comparison_orders_releases_and_prereleases() {
+        for (newer, older) in [
+            ("0.2.0", "0.1.0"),
+            ("0.1.1", "0.1.0"),
+            ("1.0.0", "0.9.9"),
+            ("0.1.0", "0.0.9"),
+            ("0.1.0", "0.1.0-beta.1"),
+            ("26.8.1", "26.8.1-pre1"),
+            ("26.8.2", "26.8.1-pre1"),
+            ("v26.8.2", "26.8.1"),
+            ("26.8.1-pre2", "26.8.1-pre1"),
+            ("26.8.1-pre10", "26.8.1-pre2"),
+            ("26.8.1-beta.2", "26.8.1-beta.1"),
+            ("26.8.1-beta.10", "26.8.1-beta.2"),
+            ("26.8.2-5", "26.8.2-1"),
+            ("26.8.2", "26.8.2-5"),
+            ("26.8.3-1", "26.8.2"),
+        ] {
+            assert!(is_version_newer(newer, older), "{newer} > {older}");
+            assert!(!is_version_newer(older, newer), "{older} < {newer}");
+        }
+        for same in ["0.1.0", "26.8.1-pre1"] {
+            assert!(!is_version_newer(same, same), "{same}");
+        }
     }
 
     #[test]
-    fn test_platform_asset_resolution() {
-        let assets = vec![
-            ReleaseAsset {
-                name: "Pawstash_26.8.1_x64-setup.exe".to_string(),
-                browser_download_url: "https://github.com/pawstash/pawstash/releases/download/v26.8.1/Pawstash_26.8.1_x64-setup.exe".to_string(),
-                size: 15_000_000,
-                content_type: None,
-                digest: None,
-            },
-            ReleaseAsset {
-                name: "pawstash_26.8.1_universal.apk".to_string(),
-                browser_download_url: "https://github.com/pawstash/pawstash/releases/download/v26.8.1/pawstash_26.8.1_universal.apk".to_string(),
-                size: 20_000_000,
-                content_type: None,
-                digest: None,
-            },
-            ReleaseAsset {
-                name: "Pawstash_26.8.1_universal.dmg".to_string(),
-                browser_download_url: "https://github.com/pawstash/pawstash/releases/download/v26.8.1/Pawstash_26.8.1_universal.dmg".to_string(),
-                size: 18_000_000,
-                content_type: None,
-                digest: None,
-            },
-            ReleaseAsset {
-                name: "pawstash_26.8.1_amd64.AppImage".to_string(),
-                browser_download_url: "https://github.com/pawstash/pawstash/releases/download/v26.8.1/pawstash_26.8.1_amd64.AppImage".to_string(),
-                size: 22_000_000,
-                content_type: None,
-                digest: None,
-            },
-        ];
+    fn picks_the_installer_for_this_platform() {
+        let assets: Vec<ReleaseAsset> = [
+            "Pawstash_26.8.1_x64-setup.exe",
+            "pawstash_26.8.1_universal.apk",
+            "Pawstash_26.8.1_universal.dmg",
+            "pawstash_26.8.1_amd64.AppImage",
+            "pawstash_26.8.1_amd64.deb",
+        ]
+        .into_iter()
+        .map(|name| ReleaseAsset {
+            name: name.to_string(),
+            browser_download_url: format!(
+                "https://github.com/pawstash/pawstash/releases/download/v26.8.1/{name}"
+            ),
+            size: 1,
+            content_type: None,
+            digest: None,
+        })
+        .collect();
 
         let (url, name, size) = find_platform_asset(&assets);
-        assert!(url.is_some());
-        assert!(name.is_some());
-        assert!(size.is_some());
-
-        #[cfg(target_os = "windows")]
-        assert!(name.unwrap().ends_with(".exe"));
-
-        #[cfg(target_os = "android")]
-        assert!(name.unwrap().ends_with(".apk"));
-
-        #[cfg(target_os = "macos")]
-        assert!(name.unwrap().ends_with(".dmg"));
-
-        #[cfg(all(target_os = "linux", not(target_os = "android")))]
-        assert!(name.unwrap().ends_with(".AppImage"));
-    }
-
-    #[test]
-    #[cfg(all(target_os = "linux", not(target_os = "android")))]
-    fn test_platform_asset_resolution_deb() {
-        let assets = vec![
-            ReleaseAsset {
-                name: "pawstash_26.8.1_amd64.AppImage".to_string(),
-                browser_download_url: "https://github.com/pawstash/pawstash/releases/download/v26.8.1/pawstash_26.8.1_amd64.AppImage".to_string(),
-                size: 22_000_000,
-                content_type: None,
-                digest: None,
-            },
-            ReleaseAsset {
-                name: "pawstash_26.8.1_amd64.deb".to_string(),
-                browser_download_url: "https://github.com/pawstash/pawstash/releases/download/v26.8.1/pawstash_26.8.1_amd64.deb".to_string(),
-                size: 12_000_000,
-                content_type: None,
-                digest: None,
-            },
-        ];
-
-        let (_, name, _) = find_platform_asset(&assets);
-        assert!(name.is_some());
-        if std::path::Path::new("/etc/debian_version").exists()
-            && (std::path::Path::new("/usr/bin/dpkg").exists()
-                || std::path::Path::new("/usr/bin/apt-get").exists())
-            && std::env::var_os("APPIMAGE").is_none()
-            && std::env::var_os("APPDIR").is_none()
-            && !std::path::Path::new("/.flatpak-info").exists()
-            && std::env::var_os("SNAP").is_none()
-        {
-            assert!(name.unwrap().ends_with(".deb"));
-        }
+        let name = name.expect("an asset for this platform");
+        assert!(url.unwrap().ends_with(&name));
+        assert_eq!(size, Some(1));
+        let expected: &[&str] = if cfg!(target_os = "windows") {
+            &[".exe"]
+        } else if cfg!(target_os = "android") {
+            &[".apk"]
+        } else if cfg!(target_os = "macos") {
+            &[".dmg"]
+        } else {
+            &[".AppImage", ".deb"]
+        };
+        assert!(expected.iter().any(|ext| name.ends_with(ext)), "{name}");
     }
 }

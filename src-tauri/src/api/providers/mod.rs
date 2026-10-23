@@ -105,21 +105,17 @@ mod tests {
 
     #[test]
     fn ai_directive_is_split_from_the_search_text() {
-        assert_eq!(
-            split_ai_directive("hide=ai"),
-            (String::new(), AiDirective::Hide)
-        );
-        assert_eq!(
-            split_ai_directive("cat hide=ai"),
-            ("cat".to_string(), AiDirective::Hide)
-        );
-        assert_eq!(
-            split_ai_directive("dog ?only=(ai)"),
-            ("dog".to_string(), AiDirective::Only)
-        );
-        assert_eq!(
-            split_ai_directive("cat"),
-            ("cat".to_string(), AiDirective::None)
-        );
+        for (query, text, directive) in [
+            ("hide=ai", "", AiDirective::Hide),
+            ("cat hide=ai", "cat", AiDirective::Hide),
+            ("dog ?only=(ai)", "dog", AiDirective::Only),
+            ("cat", "cat", AiDirective::None),
+        ] {
+            assert_eq!(
+                split_ai_directive(query),
+                (text.to_string(), directive),
+                "{query}"
+            );
+        }
     }
 }

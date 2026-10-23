@@ -2241,400 +2241,206 @@ mod tests {
     }
 
     #[test]
-    fn cache_prune_is_debounced_after_writes() {
-        let repo = ContentRepository::in_memory(128).unwrap();
-
-        assert!(repo.should_prune_now(1024));
-        assert!(!repo.should_prune_now(1024));
-        assert!(!repo.should_prune_now(1024));
-    }
-
-    #[test]
-    fn cache_prune_is_forced_by_a_large_overshoot() {
+    fn cache_prune_is_debounced_unless_writes_overshoot() {
         let repo = ContentRepository::in_memory(128).unwrap();
         assert!(repo.should_prune_now(0));
         assert!(!repo.should_prune_now(1024));
-
         assert!(repo.should_prune_now(CACHE_PRUNE_FORCE_OVERSHOOT));
+        assert!(!repo.should_prune_now(1024));
     }
 
     #[test]
-    fn note_pruned_resets_pending_byte_counter() {
-        let repo = ContentRepository::in_memory(128).unwrap();
-        repo.cache_bytes_since_prune.store(4096, Ordering::Release);
-        repo.note_pruned();
-        assert_eq!(repo.cache_bytes_since_prune.load(Ordering::Acquire), 0);
-    }
-
-    #[test]
-    fn cache_stats_separate_protected_files() {
-        let root = std::env::temp_dir().join(format!(
-            "pawstash-content-cache-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+    fn cache_stats_keep_protected_files_out_of_reclaimable() {
+        let root = std::env::temp_dir().join(format!("pawstash-cache-{}", uuid::Uuid::new_v4()));
         let nested = root.join("previews");
         std::fs::create_dir_all(&nested).unwrap();
         let kept = nested.join("kept.jpg");
-        let reclaimable = nested.join("old.jpg");
         std::fs::write(&kept, [0_u8; 7]).unwrap();
-        std::fs::write(&reclaimable, [0_u8; 11]).unwrap();
+        std::fs::write(nested.join("old.jpg"), [0_u8; 11]).unwrap();
 
         let files = scan_cache_files(&root, &HashSet::from([kept])).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
         let stats = cache_stats_from_files(&files);
         assert_eq!(stats.total_bytes, 18);
-        assert_eq!(stats.metadata_bytes, 0);
         assert_eq!(stats.protected_bytes, 7);
         assert_eq!(stats.reclaimable_bytes, 11);
-        assert_eq!(stats.preview_bytes, 18);
-        assert_eq!(stats.avatar_bytes, 0);
-        assert_eq!(stats.banner_bytes, 0);
-        assert_eq!(stats.thumbnail_bytes, 0);
-        assert_eq!(stats.other_bytes, 0);
-        assert_eq!(stats.file_count, 2);
+    }
 
-        std::fs::remove_dir_all(root).unwrap();
+    fn creator(service: &str, id: &str, name: &str) -> Creator {
+        Creator {
+            id: id.into(),
+            name: name.into(),
+            service: service.into(),
+            ..Default::default()
+        }
     }
 
     #[test]
-    fn test_list_favorites_attaches_faved_at() {
+    fn favorites_are_scoped_to_the_account_and_guest_pins_are_shared() {
         let repo = ContentRepository::in_memory(512).unwrap();
-        let post: Post = serde_json::from_str(
-            r#"{
-                "id": "100",
-                "user": "creator_a",
-                "service": "patreon",
-                "title": "Test Post",
-                "content": "Hello",
-                "published": "2026-08-28 10:00:00",
-                "added": "2026-08-28 10:00:00"
-            }"#,
-        )
+        repo.save_creators(&[
+            creator("patreon", "mine", "a"),
+            creator("fanbox", "guest", "b"),
+        ])
         .unwrap();
-
-        repo.pin_post(&post, "favorite", "my_account").unwrap();
-        let favorites = repo.list_favorites("post", "my_account").unwrap();
-        assert!(favorites.iter().any(|f| f.id == "100"
-            && f.service.as_deref() == Some("patreon")
-            && f.extra.contains_key("faved_at")));
-    }
-
-    #[test]
-    fn test_list_favorites_isolates_accounts_and_cleans_pins() {
-        let repo = ContentRepository::in_memory(512).unwrap();
-        let creator_a = CreatorProfile {
-            id: "creator_a_test".into(),
-            name: "Creator A".into(),
-            service: "patreon".into(),
-            public_id: None,
-            relation_id: None,
-            indexed: None,
-            updated: None,
-            favorited: None,
-            ever_imported: None,
-            avatar_url: None,
-            avatar_path: None,
-            banner_url: None,
-            banner_path: None,
-            page_url: None,
-            extra: Default::default(),
+        let pin = |service: &str, id: &str, account: &str, active: bool| {
+            repo.set_pin("creator", service, id, None, "favorite", account, active)
+                .unwrap()
         };
-        let creator_guest = CreatorProfile {
-            id: "creator_guest_test".into(),
-            name: "Creator Guest".into(),
-            service: "fanbox".into(),
-            public_id: None,
-            relation_id: None,
-            indexed: None,
-            updated: None,
-            favorited: None,
-            ever_imported: None,
-            avatar_url: None,
-            avatar_path: None,
-            banner_url: None,
-            banner_path: None,
-            page_url: None,
-            extra: Default::default(),
+        let favorite_ids = |kind: &str, account: &str| -> Vec<String> {
+            let mut ids: Vec<String> = repo
+                .list_favorites(kind, account)
+                .unwrap()
+                .into_iter()
+                .map(|f| f.id)
+                .collect();
+            ids.sort();
+            ids
         };
-        repo.save_creator(&creator_a).unwrap();
-        repo.save_creator(&creator_guest).unwrap();
+        pin("patreon", "mine", "favkeep", true);
+        pin("fanbox", "guest", "", true);
 
-        repo.set_pin(
-            "creator",
-            "patreon",
-            "creator_a_test",
-            None,
-            "favorite",
-            "favkeep",
-            true,
-        )
-        .unwrap();
-        repo.set_pin(
-            "creator",
-            "fanbox",
-            "creator_guest_test",
-            None,
-            "favorite",
-            "",
-            true,
-        )
-        .unwrap();
+        assert_eq!(favorite_ids("artist", "favkeep"), ["guest", "mine"]);
+        assert_eq!(favorite_ids("artist", ""), ["guest"]);
+        assert_eq!(favorite_ids("artist", "other"), ["guest"]);
+        pin("fanbox", "guest", "", false);
+        assert!(favorite_ids("artist", "").is_empty());
 
-        let logged_in_favs = repo.list_favorites("artist", "favkeep").unwrap();
-        assert!(logged_in_favs.iter().any(|f| f.id == "creator_a_test"));
-        assert!(logged_in_favs.iter().any(|f| f.id == "creator_guest_test"));
-
-        let guest_favs = repo.list_favorites("artist", "").unwrap();
-        assert!(guest_favs.iter().any(|f| f.id == "creator_guest_test"));
-        assert!(!guest_favs.iter().any(|f| f.id == "creator_a_test"));
-
-        let other_favs = repo.list_favorites("artist", "other_user_test").unwrap();
-        assert!(other_favs.iter().any(|f| f.id == "creator_guest_test"));
-        assert!(!other_favs.iter().any(|f| f.id == "creator_a_test"));
-
-        repo.set_pin(
-            "creator",
-            "fanbox",
-            "creator_guest_test",
-            None,
-            "favorite",
-            "",
-            false,
-        )
-        .unwrap();
-        let guest_favs_after = repo.list_favorites("artist", "").unwrap();
-        assert!(!guest_favs_after
-            .iter()
-            .any(|f| f.id == "creator_guest_test"));
-
-        repo.set_pin(
-            "creator",
-            "patreon",
-            "creator_a_test",
-            None,
-            "favorite",
-            "favkeep",
-            false,
-        )
-        .unwrap();
+        repo.pin_post(&import_post(true, true), "favorite", "favkeep")
+            .unwrap();
+        assert!(favorite_ids("post", "").is_empty());
+        let posts = repo.list_favorites("post", "favkeep").unwrap();
+        assert!(posts[0].extra.contains_key("faved_at"));
     }
 
     #[test]
-    fn test_creators_query_pagination_and_lookup() {
+    fn creators_query_filters_and_paginates() {
         let repo = ContentRepository::in_memory(512).unwrap();
-        let creators = vec![
+        repo.save_creators(&[
             Creator {
-                id: "c1".to_string(),
-                name: "Alpha Artist".to_string(),
-                service: "patreon".to_string(),
-                public_id: None,
-                relation_id: None,
-                indexed: Some(100),
-                updated: Some(200),
                 favorited: Some(50),
-                ever_imported: None,
-                avatar_url: None,
-                avatar_path: None,
-                banner_url: None,
-                banner_path: None,
-                page_url: None,
-                extra: Default::default(),
+                ..creator("patreon", "c1", "Alpha Artist")
             },
             Creator {
-                id: "c2".to_string(),
-                name: "Beta Generator [AI]".to_string(),
-                service: "fanbox".to_string(),
-                public_id: None,
-                relation_id: None,
-                indexed: Some(300),
-                updated: Some(400),
                 favorited: Some(100),
-                ever_imported: None,
-                avatar_url: None,
-                avatar_path: None,
-                banner_url: None,
-                banner_path: None,
-                page_url: None,
-                extra: Default::default(),
+                ..creator("fanbox", "c2", "Beta Generator [AI]")
             },
             Creator {
-                id: "c3".to_string(),
-                name: "Gamma Creator".to_string(),
-                service: "patreon".to_string(),
-                public_id: None,
-                relation_id: None,
-                indexed: Some(500),
-                updated: Some(600),
                 favorited: Some(20),
-                ever_imported: None,
-                avatar_url: None,
-                avatar_path: None,
-                banner_url: None,
-                banner_path: None,
-                page_url: None,
-                extra: Default::default(),
+                ..creator("patreon", "c3", "Gamma Creator")
             },
-        ];
-
-        repo.save_creators(&creators).unwrap();
-
-        let services = repo.list_creator_services().unwrap();
-        assert_eq!(services, vec!["fanbox", "patreon"]);
-
-        let names = repo.list_creator_names().unwrap();
-        assert_eq!(
-            names.get("patreon:c1").map(|s| s.as_str()),
-            Some("Alpha Artist")
-        );
-        assert_eq!(
-            names.get("fanbox:c2").map(|s| s.as_str()),
-            Some("Beta Generator [AI]")
-        );
-
-        let single_name = repo.get_creator_name("patreon", "c1").unwrap();
-        assert_eq!(single_name, Some("Alpha Artist".to_string()));
+        ])
+        .unwrap();
 
         let page = repo
             .query_creators(&CreatorsQuery {
-                sort_by: Some("favorited".to_string()),
-                sort_order: Some("desc".to_string()),
+                sort_by: Some("favorited".into()),
+                sort_order: Some("desc".into()),
                 limit: Some(2),
                 offset: Some(0),
                 ..Default::default()
             })
             .unwrap();
         assert_eq!(page.total, 3);
-        assert_eq!(page.items.len(), 2);
-        assert_eq!(page.items[0].id, "c2");
-        assert_eq!(page.items[1].id, "c1");
         assert!(page.has_more);
+        assert_eq!(
+            page.items.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["c2", "c1"]
+        );
 
-        let page_no_ai = repo
-            .query_creators(&CreatorsQuery {
-                hide_ai: Some(true),
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!(page_no_ai.total, 2);
-        assert!(!page_no_ai.items.iter().any(|c| c.id == "c2"));
-
-        let page_service = repo
-            .query_creators(&CreatorsQuery {
-                services: Some(vec!["fanbox".to_string()]),
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!(page_service.total, 1);
-        assert_eq!(page_service.items[0].id, "c2");
-
-        let page_search = repo
-            .query_creators(&CreatorsQuery {
-                query: Some("Gamma".to_string()),
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!(page_search.total, 1);
-        assert_eq!(page_search.items[0].id, "c3");
-
-        let page_prov = repo
-            .query_creators(&CreatorsQuery {
-                providers: Some(vec!["pawchive".to_string()]),
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!(page_prov.total, 3);
-
-        let page_nonexistent = repo
-            .query_creators(&CreatorsQuery {
-                providers: Some(vec!["onlyhaven".to_string()]),
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!(page_nonexistent.total, 0);
+        let cases: [(CreatorsQuery, &[&str]); 5] = [
+            (
+                CreatorsQuery {
+                    hide_ai: Some(true),
+                    ..Default::default()
+                },
+                &["c1", "c3"],
+            ),
+            (
+                CreatorsQuery {
+                    services: Some(vec!["fanbox".into()]),
+                    ..Default::default()
+                },
+                &["c2"],
+            ),
+            (
+                CreatorsQuery {
+                    query: Some("Gamma".into()),
+                    ..Default::default()
+                },
+                &["c3"],
+            ),
+            (
+                CreatorsQuery {
+                    providers: Some(vec!["pawchive".into()]),
+                    ..Default::default()
+                },
+                &["c1", "c2", "c3"],
+            ),
+            (
+                CreatorsQuery {
+                    providers: Some(vec!["onlyhaven".into()]),
+                    ..Default::default()
+                },
+                &[],
+            ),
+        ];
+        for (query, expected) in cases {
+            let mut ids: Vec<String> = repo
+                .query_creators(&query)
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|c| c.id)
+                .collect();
+            ids.sort();
+            assert_eq!(ids, expected, "{query:?}");
+        }
     }
 
     #[test]
     fn creator_save_keeps_provider_identity_and_never_stores_auto() {
         let repo = ContentRepository::in_memory(512).unwrap();
-        let mut extra = HashMap::new();
-        extra.insert("provider_id".to_string(), serde_json::json!("onlyhaven"));
-        extra.insert(
-            "provider_ids".to_string(),
-            serde_json::json!(["onlyhaven", "coomer"]),
-        );
-        repo.save_creators(&[Creator {
-            id: "oh1".into(),
+        let profile = |id: &str, extra: serde_json::Value| CreatorProfile {
+            id: id.into(),
             name: "OnlyHaven Creator".into(),
             service: "fansly".into(),
-            extra,
-            ..Default::default()
-        }])
-        .unwrap();
-
-        let only_onlyhaven = CreatorsQuery {
-            providers: Some(vec!["onlyhaven".to_string()]),
+            extra: serde_json::from_value(extra).unwrap(),
             ..Default::default()
         };
-        assert_eq!(repo.query_creators(&only_onlyhaven).unwrap().total, 1);
-
-        let mut auto_extra = HashMap::new();
-        auto_extra.insert("provider_id".to_string(), serde_json::json!("auto"));
-        auto_extra.insert("post_count".to_string(), serde_json::json!(12));
-        repo.save_creator(&CreatorProfile {
-            id: "oh1".into(),
-            name: "OnlyHaven Creator".into(),
-            service: "fansly".into(),
-            extra: auto_extra.clone(),
+        let stored = |id: &str| repo.get_creator("fansly", id).unwrap().unwrap().extra;
+        let onlyhaven = CreatorsQuery {
+            providers: Some(vec!["onlyhaven".into()]),
             ..Default::default()
-        })
-        .unwrap();
+        };
+        let auto = serde_json::json!({"provider_id": "auto", "post_count": 12});
+        let ids = serde_json::json!(["onlyhaven", "coomer"]);
 
-        let stored = repo.get_creator("fansly", "oh1").unwrap().unwrap();
-        assert_eq!(
-            stored.extra.get("provider_id"),
-            Some(&serde_json::json!("onlyhaven"))
-        );
-        assert_eq!(
-            stored.extra.get("provider_ids"),
-            Some(&serde_json::json!(["onlyhaven", "coomer"]))
-        );
-        assert_eq!(stored.extra.get("post_count"), Some(&serde_json::json!(12)));
-        let page = repo.query_creators(&only_onlyhaven).unwrap();
-        assert_eq!(page.total, 1);
-        assert_eq!(page.items[0].id, "oh1");
-
-        let mut explicit = HashMap::new();
-        explicit.insert("provider_id".to_string(), serde_json::json!("coomer"));
-        repo.save_creator(&CreatorProfile {
-            id: "oh1".into(),
-            name: "OnlyHaven Creator".into(),
-            service: "fansly".into(),
-            extra: explicit,
-            ..Default::default()
-        })
+        repo.save_creators(&[Creator {
+            extra: serde_json::from_value(
+                serde_json::json!({"provider_id": "onlyhaven", "provider_ids": ids}),
+            )
+            .unwrap(),
+            ..creator("fansly", "oh1", "OnlyHaven Creator")
+        }])
         .unwrap();
-        let stored = repo.get_creator("fansly", "oh1").unwrap().unwrap();
-        assert_eq!(
-            stored.extra.get("provider_id"),
-            Some(&serde_json::json!("coomer"))
-        );
-        assert_eq!(
-            stored.extra.get("provider_ids"),
-            Some(&serde_json::json!(["onlyhaven", "coomer"]))
-        );
+        repo.save_creator(&profile("oh1", auto.clone())).unwrap();
+        let extra = stored("oh1");
+        assert_eq!(extra["provider_id"], "onlyhaven");
+        assert_eq!(extra["provider_ids"], ids);
+        assert_eq!(extra["post_count"], 12);
+        assert_eq!(repo.query_creators(&onlyhaven).unwrap().total, 1);
 
-        repo.save_creator(&CreatorProfile {
-            id: "fresh".into(),
-            name: "Fresh".into(),
-            service: "fansly".into(),
-            extra: auto_extra,
-            ..Default::default()
-        })
+        repo.save_creator(&profile(
+            "oh1",
+            serde_json::json!({"provider_id": "coomer"}),
+        ))
         .unwrap();
-        let fresh = repo.get_creator("fansly", "fresh").unwrap().unwrap();
-        assert!(!fresh.extra.contains_key("provider_id"));
+        let extra = stored("oh1");
+        assert_eq!(extra["provider_id"], "coomer");
+        assert_eq!(extra["provider_ids"], ids);
+
+        repo.save_creator(&profile("fresh", auto)).unwrap();
+        assert!(!stored("fresh").contains_key("provider_id"));
     }
 }

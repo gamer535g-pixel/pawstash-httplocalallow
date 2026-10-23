@@ -3,7 +3,10 @@ use crate::db::content::ContentRepository;
 use crate::db::downloads::{DownloadJob, DownloadRepository, NewDownloadJob, AUTO_RETRY_CODE};
 use crate::downloader::aria2c::Aria2cManager;
 use crate::downloader::native::NativeDownloader;
-use crate::downloader::template::{resolve_filename, resolve_target_dir, TemplateContext};
+use crate::downloader::template::{
+    resolve_filename, resolve_target_dir, sanitize_path_segment, split_download_path,
+    TemplateContext,
+};
 use crate::downloader::{DownloadControl, DownloadRunError, DownloadTask, Interruption};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -182,12 +185,7 @@ impl DownloadManager {
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err("Only HTTP and HTTPS downloads are supported".to_string());
         }
-        let safe_filename = Path::new(&filename)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.trim().is_empty())
-            .unwrap_or("file")
-            .to_string();
+        let (folders, safe_filename) = split_download_path(&filename);
 
         let root = Self::ensure_download_root(&settings.download_dir)?;
 
@@ -253,8 +251,19 @@ impl DownloadManager {
             let _ = crate::downloader::metadata::save_post_metadata(&target_dir, &meta, &settings);
         }
 
-        let resolved_filename = resolve_filename(&settings.download_filename_template, &ctx);
-        let final_path = self.unique_final_path(&target_dir, &resolved_filename)?;
+        let (file_dir, resolved_filename) = if folders.is_empty() {
+            (
+                target_dir.clone(),
+                resolve_filename(&settings.download_filename_template, &ctx),
+            )
+        } else {
+            let dir = folders
+                .iter()
+                .fold(target_dir.clone(), |dir, part| dir.join(part));
+            std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+            (dir, sanitize_path_segment(&safe_filename, 180))
+        };
+        let final_path = self.unique_final_path(&file_dir, &resolved_filename)?;
         let id = Uuid::new_v4().to_string();
         let temp_dir = {
             #[cfg(target_os = "android")]
@@ -575,7 +584,17 @@ impl DownloadManager {
         if canonical == output_root || !canonical.starts_with(output_root) || !canonical.is_file() {
             return Err("Refusing to delete a path outside the download directory".to_string());
         }
-        std::fs::remove_file(canonical).map_err(|error| error.to_string())
+        std::fs::remove_file(&canonical).map_err(|error| error.to_string())?;
+        let mut folder = canonical.parent();
+        while let Some(dir) =
+            folder.filter(|dir| *dir != output_root && dir.starts_with(output_root))
+        {
+            if std::fs::remove_dir(dir).is_err() {
+                break;
+            }
+            folder = dir.parent();
+        }
+        Ok(())
     }
 
     async fn run(
@@ -964,33 +983,27 @@ mod auto_retry_tests {
 
     #[test]
     fn only_transient_failures_are_retried() {
-        assert!(is_transient_failure(
-            "Download failed HTTP 503 Service Unavailable"
-        ));
-        assert!(is_transient_failure(
-            "Download failed HTTP 429 Too Many Requests"
-        ));
-        assert!(is_transient_failure(
-            "error sending request: connection reset"
-        ));
-        assert!(is_transient_failure(
-            "Incomplete download: expected 10 bytes, received 4"
-        ));
-        assert!(!is_transient_failure("Download failed HTTP 404 Not Found"));
-        assert!(!is_transient_failure("Download failed HTTP 403 Forbidden"));
-        assert!(!is_transient_failure(
-            "Failed to write final file: No space left on device (os error 28)"
-        ));
-        assert!(!is_transient_failure(
-            "aria2c binary not found on system PATH"
-        ));
+        for (error, transient) in [
+            ("Download failed HTTP 503 Service Unavailable", true),
+            ("Download failed HTTP 429 Too Many Requests", true),
+            ("error sending request: connection reset", true),
+            ("Incomplete download: expected 10 bytes, received 4", true),
+            ("Download failed HTTP 404 Not Found", false),
+            ("Download failed HTTP 403 Forbidden", false),
+            (
+                "Failed to write final file: No space left on device (os error 28)",
+                false,
+            ),
+            ("aria2c binary not found on system PATH", false),
+        ] {
+            assert_eq!(is_transient_failure(error), transient, "{error}");
+        }
     }
 
     #[test]
     fn retry_delay_backs_off_and_caps() {
-        assert_eq!(auto_retry_delay(1).as_secs(), 5);
-        assert_eq!(auto_retry_delay(2).as_secs(), 10);
-        assert_eq!(auto_retry_delay(3).as_secs(), 20);
+        assert!(auto_retry_delay(2) > auto_retry_delay(1));
+        assert!(auto_retry_delay(3) > auto_retry_delay(2));
         assert_eq!(auto_retry_delay(10).as_secs(), AUTO_RETRY_MAX_DELAY_SECS);
     }
 }

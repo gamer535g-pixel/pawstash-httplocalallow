@@ -556,6 +556,7 @@
     "search_media": "Поиск по медиа…",
     "source": "Источник",
     "source_auto": "Объединено",
+    "source_failed": "Не загрузился",
     "switch_to_merged": "Переключиться на «Объединено»",
     "tab_all": "Все",
     "tab_cloud": "Облачные файлы",

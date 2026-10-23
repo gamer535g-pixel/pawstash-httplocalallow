@@ -866,31 +866,26 @@ mod tests {
     }
 
     #[test]
-    fn mark_completed_supports_optional_blob() {
+    fn a_blob_is_orphaned_only_after_its_last_job_is_removed() {
         let repository = DownloadRepository::in_memory();
-        repository.create_or_get(input()).unwrap();
-        let completed = repository
-            .mark_completed("job-1", "hash123", 1024, None)
-            .unwrap();
-        assert_eq!(completed.status, "completed");
-        assert_eq!(completed.downloaded_bytes, 1024);
-        assert_eq!(repository.take_orphan_blob("hash123").unwrap(), None);
-
-        repository
-            .create_or_get(NewDownloadJob {
-                id: "job-2",
-                logical_key: "key-2",
-                ..input()
-            })
-            .unwrap();
-        let completed2 = repository
-            .mark_completed("job-2", "hash456", 2048, Some(".media/45/hash456"))
-            .unwrap();
-        assert_eq!(completed2.status, "completed");
+        for (id, logical_key) in [("job-1", "key-1"), ("job-2", "key-2")] {
+            repository
+                .create_or_get(NewDownloadJob {
+                    id,
+                    logical_key,
+                    ..input()
+                })
+                .unwrap();
+            repository
+                .mark_completed(id, "hash", 1024, Some(".media/ha/hash"))
+                .unwrap();
+        }
+        repository.remove("job-1").unwrap();
+        assert_eq!(repository.take_orphan_blob("hash").unwrap(), None);
         repository.remove("job-2").unwrap();
         assert_eq!(
-            repository.take_orphan_blob("hash456").unwrap(),
-            Some(".media/45/hash456".to_string())
+            repository.take_orphan_blob("hash").unwrap().as_deref(),
+            Some(".media/ha/hash")
         );
     }
 }

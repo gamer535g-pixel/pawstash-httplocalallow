@@ -444,6 +444,7 @@
     --z-sticky: 10;
     --z-overlay: 100;
     --z-modal: 200;
+    --z-dock: 999;
     --z-bottom-sheet: 2100;
     --z-viewer: 2147483000;
     --z-tooltip: 2147483647;
@@ -766,11 +767,31 @@ html[data-platform="touch"][data-layout="desktop"] {
 
 [data-layout="mobile"] [data-sonner-toaster][data-y-position="bottom"] {
   bottom: var(--dock-space);
-  clip-path: inset(-100vh -32px calc(var(--dock-margin) * -1) -32px);
+  z-index: calc(var(--z-dock) - 1);
+  clip-path: inset(-100vh -32px calc((var(--mobile-nav-height) + var(--dock-margin)) * -1) -32px);
+}
+
+[data-layout="mobile"]:has(.bottom-sheet) [data-sonner-toaster][data-y-position="bottom"] {
+  z-index: var(--z-toast);
 }
 
 [data-layout="mobile"]:has(.mobile-bottom-dock.hidden-dock) [data-sonner-toaster][data-y-position="bottom"] {
   bottom: max(var(--safe-bottom), var(--dock-margin));
+}
+
+.edge-fade {
+  --edge-fade-start: 0px;
+  --edge-fade-end: 0px;
+  -webkit-mask-image: linear-gradient(to right, transparent, black var(--edge-fade-start), black calc(100% - var(--edge-fade-end)), transparent);
+  mask-image: linear-gradient(to right, transparent, black var(--edge-fade-start), black calc(100% - var(--edge-fade-end)), transparent);
+}
+
+.edge-fade[data-fade-start] {
+  --edge-fade-start: 24px;
+}
+
+.edge-fade[data-fade-end] {
+  --edge-fade-end: 24px;
 }
 
 .grid-tile {

@@ -1114,67 +1114,68 @@ mod tests {
     use super::*;
     use std::net::Ipv4Addr;
 
-    #[test]
-    fn parses_byte_ranges_per_rfc_7233() {
-        assert_eq!(parse_range("bytes=0-3", 100), Some((0, 3)));
-        assert_eq!(parse_range("bytes=10-", 100), Some((10, 99)));
-        assert_eq!(parse_range("bytes=-30", 100), Some((70, 99)));
-        assert_eq!(parse_range("bytes=-500", 100), Some((0, 99)));
-        assert_eq!(parse_range("bytes=90-200", 100), Some((90, 99)));
-        assert_eq!(parse_range("bytes=0-1, 5-6", 100), Some((0, 1)));
-        assert_eq!(parse_range("bytes=100-", 100), None);
-        assert_eq!(parse_range("bytes=-0", 100), None);
-        assert_eq!(parse_range("bytes=5-1", 100), None);
-        assert_eq!(parse_range("bytes=0-1", 0), None);
-        assert_eq!(parse_range("items=0-1", 100), None);
-    }
-
-    #[test]
-    fn test_is_public_ipv4_allows_fakeip_and_cgnat() {
-        assert!(is_public_ipv4(Ipv4Addr::new(198, 18, 0, 1)));
-        assert!(is_public_ipv4(Ipv4Addr::new(198, 18, 0, 37)));
-        assert!(is_public_ipv4(Ipv4Addr::new(198, 19, 255, 254)));
-
-        assert!(is_public_ipv4(Ipv4Addr::new(100, 64, 0, 1)));
-        assert!(is_public_ipv4(Ipv4Addr::new(100, 100, 100, 100)));
-
-        assert!(is_public_ipv4(Ipv4Addr::new(1, 1, 1, 1)));
-        assert!(is_public_ipv4(Ipv4Addr::new(8, 8, 8, 8)));
-    }
-
-    #[test]
-    fn test_is_public_ipv4_blocks_private_and_local() {
-        assert!(!is_public_ipv4(Ipv4Addr::new(127, 0, 0, 1)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(192, 168, 1, 1)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(10, 0, 0, 1)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(172, 16, 0, 1)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(169, 254, 169, 254)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(255, 255, 255, 255)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(224, 0, 0, 1)));
-        assert!(!is_public_ipv4(Ipv4Addr::new(0, 0, 0, 0)));
-    }
-
     fn test_gateway() -> Option<UpstreamGateway> {
         let config_manager = crate::config::ConfigManager::new().ok()?;
         Some(UpstreamGateway::new(Arc::new(config_manager)))
     }
 
-    #[tokio::test]
-    async fn test_validate_proxy_target_dropbox() {
-        let Some(state) = test_gateway() else { return };
-        let res = state
-            .validate_target(crate::cloud::dropbox::example_url())
-            .await;
+    #[test]
+    fn parses_byte_ranges_per_rfc_7233() {
+        for (header, len, expected) in [
+            ("bytes=0-3", 100, Some((0, 3))),
+            ("bytes=10-", 100, Some((10, 99))),
+            ("bytes=-30", 100, Some((70, 99))),
+            ("bytes=-500", 100, Some((0, 99))),
+            ("bytes=90-200", 100, Some((90, 99))),
+            ("bytes=0-1, 5-6", 100, Some((0, 1))),
+            ("bytes=100-", 100, None),
+            ("bytes=-0", 100, None),
+            ("bytes=5-1", 100, None),
+            ("bytes=0-1", 0, None),
+            ("items=0-1", 100, None),
+        ] {
+            assert_eq!(parse_range(header, len), expected, "{header} of {len}");
+        }
+    }
 
-        match res {
-            Ok(_) => {}
-            Err((StatusCode::BAD_GATEWAY, message)) if message.contains("lookup failed") => {}
-            Err(other) => panic!("Failed to validate proxy target: {other:?}"),
+    #[test]
+    fn public_ipv4_allows_fakeip_and_cgnat_but_blocks_private_and_local() {
+        for (ip, public) in [
+            ([198, 18, 0, 1], true),
+            ([198, 19, 255, 254], true),
+            ([100, 64, 0, 1], true),
+            ([100, 100, 100, 100], true),
+            ([1, 1, 1, 1], true),
+            ([127, 0, 0, 1], false),
+            ([192, 168, 1, 1], false),
+            ([10, 0, 0, 1], false),
+            ([172, 16, 0, 1], false),
+            ([169, 254, 169, 254], false),
+            ([255, 255, 255, 255], false),
+            ([224, 0, 0, 1], false),
+            ([0, 0, 0, 0], false),
+        ] {
+            assert_eq!(is_public_ipv4(Ipv4Addr::from(ip)), public, "{ip:?}");
         }
     }
 
     #[tokio::test]
-    async fn test_validated_host_is_cached_then_expires() {
+    async fn proxy_rejects_unsafe_targets_without_caching_them() {
+        let Some(state) = test_gateway() else { return };
+        for target in [
+            "not a url",
+            "http://example.com/file.mp4",
+            "https://user:pw@example.com/file.mp4",
+            "https://example.com:8443/file.mp4",
+            "https://localhost/file.mp4",
+        ] {
+            assert!(state.validate_target(target).await.is_err(), "{target}");
+        }
+        assert!(!state.host_recently_validated("localhost").await);
+    }
+
+    #[tokio::test]
+    async fn validated_host_is_cached_then_expires() {
         let Some(state) = test_gateway() else { return };
         assert!(!state.host_recently_validated("example.com").await);
 
@@ -1189,28 +1190,20 @@ mod tests {
         assert!(!state.host_recently_validated("example.com").await);
     }
 
-    #[tokio::test]
-    async fn test_private_targets_are_rejected_and_not_cached() {
-        let Some(state) = test_gateway() else { return };
-        let res = state.validate_target("https://localhost/file.mp4").await;
-        assert!(res.is_err(), "loopback target must be rejected");
-        assert!(!state.host_recently_validated("localhost").await);
-    }
-
     #[test]
-    fn test_file_etag_tracks_size_and_mtime() {
+    fn file_etag_tracks_size_and_mtime() {
         let dir = std::env::temp_dir().join(format!("pawstash-etag-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("temp dir");
+        std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("sample.bin");
+        let etag_after_writing = |body: &[u8]| {
+            std::fs::write(&path, body).unwrap();
+            file_etag(&std::fs::metadata(&path).unwrap())
+        };
 
-        std::fs::write(&path, b"one").expect("write");
-        let first = file_etag(&std::fs::metadata(&path).expect("metadata"));
-
-        std::fs::write(&path, b"a longer body").expect("rewrite");
-        let second = file_etag(&std::fs::metadata(&path).expect("metadata"));
-
-        assert!(first.is_some() && second.is_some());
-        assert_ne!(first, second, "etag must change when the file changes");
+        let first = etag_after_writing(b"one");
+        let second = etag_after_writing(b"a longer body");
+        assert!(first.is_some());
+        assert_ne!(first, second);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

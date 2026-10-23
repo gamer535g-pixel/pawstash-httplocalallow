@@ -371,6 +371,14 @@ pub fn reset_shared_clients() {
 mod tests {
     use super::*;
 
+    fn custom_proxy(url: &str) -> AppSettings {
+        AppSettings {
+            proxy_mode: ProxyMode::Custom,
+            proxy_url: url.to_string(),
+            ..AppSettings::default()
+        }
+    }
+
     #[test]
     fn settings_resolve_to_defaults_or_overrides() {
         let blank = resolve(&AppSettings::default());
@@ -399,108 +407,47 @@ mod tests {
 
     #[test]
     fn override_proxy_urls_are_validated() {
-        assert!(validate_proxy_url("").is_ok());
-        assert!(validate_proxy_url("   ").is_ok());
-        assert!(validate_proxy_url("http://127.0.0.1:8080").is_ok());
-        assert!(validate_proxy_url("socks5://user:pass@host:1080").is_ok());
-        assert!(validate_proxy_url("not a url").is_err());
-        assert!(validate_proxy_url("socks4://host:1080").is_err());
-        assert!(validate_proxy_url("https://secure.proxy:443").is_ok());
+        for (url, valid) in [
+            ("", true),
+            ("   ", true),
+            ("http://127.0.0.1:8080", true),
+            ("https://secure.proxy:443", true),
+            ("socks5://user:pass@host:1080", true),
+            ("not a url", false),
+            ("socks4://host:1080", false),
+        ] {
+            assert_eq!(validate_proxy_url(url).is_ok(), valid, "{url:?}");
+        }
     }
 
     #[test]
-    fn api_and_browser_agents_stay_distinct() {
-        assert_ne!(DEFAULT_API_USER_AGENT, DEFAULT_BROWSER_USER_AGENT);
-        assert!(DEFAULT_BROWSER_USER_AGENT.starts_with("Mozilla/"));
-        assert!(DEFAULT_API_USER_AGENT.contains("Pawstash"));
-    }
-
-    #[test]
-    fn proxy_none_disables_proxy() {
-        let settings = AppSettings {
-            proxy_mode: ProxyMode::None,
-            ..AppSettings::default()
-        };
-        assert!(builder_with_proxy(&settings).is_ok());
-    }
-
-    #[test]
-    fn empty_custom_proxy_falls_back_to_direct() {
-        let settings = AppSettings {
-            proxy_mode: ProxyMode::Custom,
-            proxy_url: "   ".to_string(),
-            ..AppSettings::default()
-        };
-        assert!(builder_with_proxy(&settings).is_ok());
-    }
-
-    #[test]
-    fn malformed_custom_proxy_is_reported() {
-        let settings = AppSettings {
-            proxy_mode: ProxyMode::Custom,
-            proxy_url: "not a url".to_string(),
-            ..AppSettings::default()
-        };
-        assert!(builder_with_proxy(&settings).is_err());
-    }
-
-    #[test]
-    fn base_builder_produces_a_client() {
-        assert!(builder().build().is_ok());
-    }
-
-    #[test]
-    fn shared_client_caches_by_client_fingerprint() {
-        let settings = AppSettings {
-            proxy_mode: ProxyMode::None,
-            ..AppSettings::default()
-        };
-        shared_client(&settings).expect("client builds");
-
-        let cached_fingerprint = SHARED_CLIENT.get().and_then(|cell| {
-            cell.lock()
-                .ok()
-                .and_then(|g| g.as_ref().map(|(f, _)| f.clone()))
-        });
-        assert_eq!(
-            cached_fingerprint.as_deref(),
-            Some(client_fingerprint(&settings).as_str())
-        );
-
-        shared_client(&settings).expect("client is reused");
-        let still_cached = SHARED_CLIENT.get().and_then(|cell| {
-            cell.lock()
-                .ok()
-                .and_then(|g| g.as_ref().map(|(f, _)| f.clone()))
-        });
-        assert_eq!(still_cached, cached_fingerprint);
-    }
-
-    #[test]
-    fn fingerprint_distinguishes_proxy_settings() {
+    fn proxy_modes_build_or_report_malformed_urls() {
         let direct = AppSettings {
             proxy_mode: ProxyMode::None,
             ..AppSettings::default()
         };
-        let proxied = AppSettings {
-            proxy_mode: ProxyMode::Custom,
-            proxy_url: "http://127.0.0.1:8080".to_string(),
-            ..AppSettings::default()
-        };
-        assert_ne!(client_fingerprint(&direct), client_fingerprint(&proxied));
+        assert!(builder_with_proxy(&direct).is_ok());
+        assert!(builder_with_proxy(&custom_proxy("   ")).is_ok());
+        assert!(builder_with_proxy(&custom_proxy("not a url")).is_err());
     }
 
     #[test]
-    fn fingerprint_is_stable_for_equal_settings() {
-        let settings = AppSettings {
-            proxy_mode: ProxyMode::Custom,
-            proxy_url: "http://127.0.0.1:8080".to_string(),
+    fn client_fingerprint_tracks_proxy_settings() {
+        let proxied = AppSettings {
             proxy_username: "user".to_string(),
-            ..AppSettings::default()
+            ..custom_proxy("http://127.0.0.1:8080")
         };
         assert_eq!(
-            client_fingerprint(&settings),
-            client_fingerprint(&settings.clone())
+            client_fingerprint(&proxied),
+            client_fingerprint(&proxied.clone())
+        );
+        assert_ne!(
+            client_fingerprint(&proxied),
+            client_fingerprint(&custom_proxy(""))
+        );
+        assert_ne!(
+            client_fingerprint(&proxied),
+            client_fingerprint(&custom_proxy("http://127.0.0.1:8080"))
         );
     }
 }

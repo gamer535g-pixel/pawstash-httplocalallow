@@ -9,7 +9,7 @@
 </script>
 
 <script lang="ts">
-  import { untrack, type Component } from 'svelte';
+  import { untrack } from 'svelte';
   import type {
     ArchiveAttachment,
     ArchiveOpenResult,
@@ -22,14 +22,8 @@
     type MediaViewerItem,
     type MediaViewerKind
   } from '$lib/components/content/MediaViewer.svelte';
-  import {
-    isAudioUrl,
-    isCompressedUrl,
-    isDocumentUrl,
-    isImageUrl,
-    isVideoUrl,
-    resolveLocalMediaUrl
-  } from '$lib/utils/media';
+  import { resolveLocalMediaUrl, cloudProviderName } from '$lib/utils/media';
+  import { NODE_KIND_ICONS, archiveFolderName, cloudNodePath, nodeKindOf, type NodeKind } from '$lib/utils/cloudNodes';
   import { apiShowInFolder, apiUnlockArchive, openDownloadedFile } from '$lib/utils/ipc';
   import { notify } from '$lib/utils/toast';
   import { logger } from '$lib/utils/logger';
@@ -45,15 +39,9 @@
   import Checkbox from '$lib/components/ui/Checkbox.svelte';
   import ProgressRing from '$lib/components/ui/ProgressRing.svelte';
   import SecretUnlockPanel from './SecretUnlockPanel.svelte';
-  import IconFolder from '~icons/fluent/folder-24-filled';
   import IconFolderOpen from '~icons/fluent/folder-open-24-regular';
   import IconZip from '~icons/fluent/folder-zip-24-regular';
   import IconCloud from '~icons/fluent/cloud-24-regular';
-  import IconImage from '~icons/fluent/image-24-regular';
-  import IconVideo from '~icons/fluent/video-clip-24-regular';
-  import IconMusic from '~icons/fluent/music-note-2-24-regular';
-  import IconDocument from '~icons/fluent/document-24-regular';
-  import IconDocumentText from '~icons/fluent/document-text-24-regular';
   import IconDownload from '~icons/fluent/arrow-download-24-regular';
   import IconCheck from '~icons/fluent/checkmark-circle-24-regular';
   import IconRetry from '~icons/fluent/arrow-clockwise-24-regular';
@@ -85,7 +73,6 @@
     archiveFile = null
   }: Props = $props();
 
-  type NodeKind = 'folder' | 'image' | 'video' | 'audio' | 'archive' | 'document' | 'file';
   type RowStatus = 'idle' | 'queued' | 'active' | 'paused' | 'done' | 'failed';
   type ViewMode = 'list' | 'grid';
 
@@ -110,24 +97,6 @@
   const THUMBNAIL_CONCURRENCY = 3;
   const TALL_SHEET_ENTRIES = 12;
   const VIEW_STORAGE_KEY = 'pawstash_cloud_view';
-
-  const PROVIDER_NAMES: Record<string, string> = {
-    mega: 'Mega',
-    dropbox: 'Dropbox',
-    pixeldrain: 'Pixeldrain',
-    googledrive: 'Google Drive',
-    filen: 'Filen'
-  };
-
-  const KIND_ICONS: Record<NodeKind, Component> = {
-    folder: IconFolder,
-    image: IconImage,
-    video: IconVideo,
-    audio: IconMusic,
-    archive: IconZip,
-    document: IconDocumentText,
-    file: IconDocument
-  };
 
   const PASSWORD_SOURCE_KEYS: Record<NonNullable<ArchiveOpenResult['password_source']>, string> = {
     post: 'cloud.password_source_post',
@@ -154,17 +123,6 @@
   let queueing = $state(false);
   let viewPrefs = $state<Record<string, ViewMode>>(readViewPrefs());
 
-  function kindOf(node: CloudNode): NodeKind {
-    if (node.is_folder) return 'folder';
-    const mime = (node.mime_type || '').toLowerCase();
-    if (mime.startsWith('image/') || isImageUrl(node.name)) return 'image';
-    if (mime.startsWith('video/') || isVideoUrl(node.name)) return 'video';
-    if (mime.startsWith('audio/') || isAudioUrl(node.name)) return 'audio';
-    if (isCompressedUrl(node.name) || /zip|rar|7z|compressed/.test(mime)) return 'archive';
-    if (isDocumentUrl(node.name) || mime === 'application/pdf') return 'document';
-    return 'file';
-  }
-
   function compareNodes(a: CloudNode, b: CloudNode): number {
     if (a.is_folder !== b.is_folder) return a.is_folder ? -1 : 1;
     return collator.compare(a.name, b.name);
@@ -179,7 +137,7 @@
       const siblings = children.get(parent);
       if (siblings) siblings.push(node);
       else children.set(parent, [node]);
-      kinds.set(node.id, kindOf(node));
+      kinds.set(node.id, nodeKindOf(node));
     }
     for (const list of children.values()) list.sort(compareNodes);
 
@@ -213,7 +171,7 @@
   }
 
   function nodeKind(node: CloudNode): NodeKind {
-    return tree.kinds.get(node.id) ?? kindOf(node);
+    return tree.kinds.get(node.id) ?? nodeKindOf(node);
   }
 
   function filesUnder(id: string | null): CloudNode[] {
@@ -227,18 +185,12 @@
     return files;
   }
 
-  function entryPath(node: CloudNode): string {
-    const parts = [node.name];
-    const seen = new Set([node.id]);
-    let parent = parentOf(node);
-    while (parent && !seen.has(parent)) {
-      seen.add(parent);
-      const ancestor = tree.byId.get(parent);
-      if (!ancestor) break;
-      parts.unshift(ancestor.name);
-      parent = parentOf(ancestor);
-    }
-    return parts.join('/');
+  function downloadName(file: CloudNode): string {
+    if (file === archiveNode || source?.is_single_file) return file.name;
+    const path = cloudNodePath(tree.byId, file);
+    const container = source?.title || archiveFile?.name || '';
+    if (isArchive) return `${archiveFolderName(container)}/${path}`;
+    return path.includes('/') || !container ? path : `${container}/${path}`;
   }
 
   function startFolder(index: TreeIndex, target: string | null): string | null {
@@ -599,8 +551,7 @@
         try {
           const url = downloadUrl(file);
           if (!url) throw new Error(i18n.t('post.cloud_file_unavailable'));
-          const name = isArchive && file !== archiveNode ? entryPath(file) : file.name;
-          await downloadState.start(target, file.id, url, name);
+          await downloadState.start(target, file.id, url, downloadName(file));
           started++;
         } catch (error) {
           logger.warn(`Failed to queue "${file.name}"`, error);
@@ -656,7 +607,7 @@
       ? formatName
         ? i18n.t('cloud.archive_format', { format: formatName })
         : i18n.t('cloud.type_archive')
-      : PROVIDER_NAMES[source?.provider ?? ''] ?? (source?.provider || i18n.t('post.cloud_generic'))
+      : cloudProviderName(source?.provider) ?? (source?.provider || i18n.t('post.cloud_generic'))
   );
   let ProviderIcon = $derived(isArchive ? IconZip : IconCloud);
   let title = $derived(source?.title || archiveFile?.name || providerLabel);
@@ -682,7 +633,7 @@
 </script>
 
 {#snippet thumb(node: CloudNode, grid: boolean)}
-  {@const Icon = KIND_ICONS[nodeKind(node)]}
+  {@const Icon = NODE_KIND_ICONS[nodeKind(node)]}
   {@const src = thumbnailUrl(node, grid)}
   <span class="cf-thumb" class:is-folder={node.is_folder} aria-hidden="true">
     <Icon class="cf-thumb-icon" />

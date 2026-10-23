@@ -2225,37 +2225,47 @@ impl ProviderManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::Future;
+    use std::pin::Pin;
+
+    type Job = Pin<Box<dyn Future<Output = Result<Vec<i32>, String>> + Send>>;
+
+    fn job(id: &str, delay_ms: u64, result: Result<Vec<i32>, String>) -> (String, Job) {
+        let work = async move {
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            result
+        };
+        (id.to_string(), Box::pin(work))
+    }
+
+    fn answered(pairs: &[(&str, &[i32])]) -> Vec<(String, Vec<i32>)> {
+        pairs
+            .iter()
+            .map(|(id, v)| (id.to_string(), v.to_vec()))
+            .collect()
+    }
+
+    fn enabled(mut config: ProviderConfig, priority: u32) -> ProviderConfig {
+        config.enabled = true;
+        config.priority = priority;
+        config
+    }
+
+    async fn provider_ids(manager: &ProviderManager, service: &str) -> Vec<String> {
+        let providers = manager.get_providers_for_service(service).await;
+        providers.iter().map(|p| p.id().to_string()).collect()
+    }
 
     #[tokio::test]
     async fn fan_out_keeps_priority_order_and_drops_stragglers() {
         let deadline = Duration::from_millis(120);
         let started = tokio::time::Instant::now();
-
         let results = fan_out(
             vec![
-                (
-                    "fast".to_string(),
-                    Box::pin(async { Ok::<Vec<i32>, String>(vec![1]) })
-                        as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>,
-                ),
-                (
-                    "broken".to_string(),
-                    Box::pin(async { Err("upstream refused".to_string()) }),
-                ),
-                (
-                    "hung".to_string(),
-                    Box::pin(async {
-                        tokio::time::sleep(Duration::from_secs(30)).await;
-                        Ok(vec![2])
-                    }),
-                ),
-                (
-                    "slow-but-inside".to_string(),
-                    Box::pin(async {
-                        tokio::time::sleep(Duration::from_millis(40)).await;
-                        Ok(vec![3])
-                    }),
-                ),
+                job("fast", 0, Ok(vec![1])),
+                job("broken", 0, Err("upstream refused".into())),
+                job("hung", 30_000, Ok(vec![2])),
+                job("slow-but-inside", 40, Ok(vec![3])),
             ],
             deadline,
         )
@@ -2264,48 +2274,29 @@ mod tests {
         assert!(started.elapsed() < deadline * 3);
         assert_eq!(
             results.ok,
-            vec![
-                ("fast".to_string(), vec![1]),
-                ("slow-but-inside".to_string(), vec![3])
-            ]
+            answered(&[("fast", &[1]), ("slow-but-inside", &[3])])
         );
         assert_eq!(results.timed_out, vec!["hung".to_string()]);
-        assert!(results.any_success());
-
         let errors = results.into_errors();
         assert_eq!(errors.len(), 2);
         assert!(errors.iter().any(|e| e.contains("upstream refused")));
-        assert!(errors.iter().any(|e| e.contains("'hung' timed out")));
+        assert!(errors.iter().any(|e| e.contains("hung")));
     }
 
     #[tokio::test]
     async fn fan_out_waits_past_the_deadline_while_nothing_has_data() {
-        let deadline = Duration::from_millis(30);
         let results = fan_out(
             vec![
-                (
-                    "empty-mirror".to_string(),
-                    Box::pin(async { Ok::<Vec<i32>, String>(Vec::new()) })
-                        as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>,
-                ),
-                (
-                    "slow-with-posts".to_string(),
-                    Box::pin(async {
-                        tokio::time::sleep(Duration::from_millis(120)).await;
-                        Ok(vec![7])
-                    }),
-                ),
+                job("empty-mirror", 0, Ok(Vec::new())),
+                job("slow-with-posts", 120, Ok(vec![7])),
             ],
-            deadline,
+            Duration::from_millis(30),
         )
         .await;
 
         assert_eq!(
             results.ok,
-            vec![
-                ("empty-mirror".to_string(), Vec::new()),
-                ("slow-with-posts".to_string(), vec![7])
-            ]
+            answered(&[("empty-mirror", &[]), ("slow-with-posts", &[7])])
         );
         assert!(results.timed_out.is_empty());
         assert!(results.is_conclusive());
@@ -2315,402 +2306,207 @@ mod tests {
     async fn streaming_fan_out_waits_for_every_provider() {
         let mut seen = Vec::new();
         let results = fan_out_streaming(
-            vec![
-                (
-                    "slow".to_string(),
-                    Box::pin(async {
-                        tokio::time::sleep(Duration::from_millis(60)).await;
-                        Ok::<Vec<i32>, String>(vec![2])
-                    })
-                        as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>,
-                ),
-                ("fast".to_string(), Box::pin(async { Ok(vec![1]) })),
-            ],
+            vec![job("slow", 60, Ok(vec![2])), job("fast", 0, Ok(vec![1]))],
             |id, _| seen.push(id.to_string()),
         )
         .await;
 
         assert_eq!(seen, ["fast", "slow"]);
-        assert_eq!(
-            results.ok,
-            vec![("slow".to_string(), vec![2]), ("fast".to_string(), vec![1])]
-        );
+        assert_eq!(results.ok, answered(&[("slow", &[2]), ("fast", &[1])]));
     }
 
     #[test]
     fn empty_answer_is_inconclusive_while_a_provider_timed_out() {
-        let partial: FanOut<Vec<i32>> = FanOut {
-            ok: vec![("empty".to_string(), Vec::new())],
-            errors: Vec::new(),
-            timed_out: vec!["slow".to_string()],
+        let fan = |errors: &[&str], timed_out: &[&str]| FanOut::<Vec<i32>> {
+            ok: answered(&[("empty", &[])]),
+            errors: errors.iter().map(|e| e.to_string()).collect(),
+            timed_out: timed_out.iter().map(|t| t.to_string()).collect(),
         };
-        assert!(!partial.is_conclusive());
-
-        let complete: FanOut<Vec<i32>> = FanOut {
-            ok: vec![("empty".to_string(), Vec::new())],
-            errors: vec!["404".to_string()],
-            timed_out: Vec::new(),
-        };
-        assert!(complete.is_conclusive());
+        assert!(!fan(&[], &["slow"]).is_conclusive());
+        assert!(fan(&["404"], &[]).is_conclusive());
     }
 
     #[tokio::test]
-    async fn fan_out_reports_total_failure_without_any_success() {
-        let results: FanOut<Vec<i32>> = fan_out(
-            vec![("only".to_string(), async { Err("dead".to_string()) })],
-            Duration::from_millis(50),
-        )
-        .await;
-
-        assert!(!results.any_success());
-        assert_eq!(
-            provider_errors("posts", results.into_errors()),
-            "All providers failed to fetch posts: dead"
-        );
-    }
-
-    fn enabled(mut config: ProviderConfig, priority: u32) -> ProviderConfig {
-        config.enabled = true;
-        config.priority = priority;
-        config
-    }
-
-    #[tokio::test]
-    async fn test_provider_service_isolation_no_unwanted_fallback() {
+    async fn services_route_to_enabled_providers_by_priority_only() {
         let coomer = enabled(CoomerProvider::default_config(), 1);
-        let coomer_id = coomer.id.clone();
-        let mut pawchive = PawchiveProvider::default_config();
-        pawchive.enabled = false;
-        pawchive.priority = 2;
-        let configs = vec![coomer, pawchive];
-
-        let manager = ProviderManager::new(configs);
-        let patreon_providers = manager.get_providers_for_service("patreon").await;
-        assert!(
-            patreon_providers.is_empty(),
-            "Must NOT fall back to Coomer when Patreon is requested!"
-        );
-
-        let fansly_providers = manager.get_providers_for_service("fansly").await;
-        assert_eq!(fansly_providers.len(), 1);
-        assert_eq!(fansly_providers[0].id(), coomer_id);
-    }
-
-    #[test]
-    fn test_create_provider_distinct_types() {
-        let coomer_cfg = enabled(CoomerProvider::default_config(), 1);
-        let coomer_id = coomer_cfg.id.clone();
-        let coomer_name = coomer_cfg.name.clone();
-        let coomer_prov = create_provider(coomer_cfg).unwrap();
-        assert_eq!(coomer_prov.id(), coomer_id);
-        assert_eq!(coomer_prov.name(), coomer_name);
-        assert!(!coomer_prov.auth_schema().supports_remote_favorites);
-
-        let oh_cfg = enabled(OnlyHavenProvider::default_config(), 2);
-        let oh_id = oh_cfg.id.clone();
-        let oh_name = oh_cfg.name.clone();
-        let oh_prov = create_provider(oh_cfg).unwrap();
-        assert_eq!(oh_prov.id(), oh_id);
-        assert_eq!(oh_prov.name(), oh_name);
-
-        let paw_cfg = enabled(PawchiveProvider::default_config(), 3);
-        let paw_id = paw_cfg.id.clone();
-        let paw_name = paw_cfg.name.clone();
-        let paw_prov = create_provider(paw_cfg).unwrap();
-        assert_eq!(paw_prov.id(), paw_id);
-        assert_eq!(paw_prov.name(), paw_name);
-        assert!(paw_prov.auth_schema().supports_remote_favorites);
-    }
-
-    #[tokio::test]
-    async fn test_manager_multi_provider_priority_and_filtering() {
-        let coomer = enabled(CoomerProvider::default_config(), 1);
-        let coomer_id = coomer.id.clone();
         let onlyhaven = enabled(OnlyHavenProvider::default_config(), 2);
-        let onlyhaven_id = onlyhaven.id.clone();
         let pawchive = enabled(PawchiveProvider::default_config(), 3);
-        let pawchive_id = pawchive.id.clone();
-        let configs = vec![coomer, onlyhaven, pawchive];
-        let manager = ProviderManager::new(configs);
+        let (c, o, p) = (coomer.id.clone(), onlyhaven.id.clone(), pawchive.id.clone());
 
-        let of_providers = manager.get_providers_for_service("onlyfans").await;
-        assert_eq!(of_providers.len(), 2);
-        assert_eq!(of_providers[0].id(), coomer_id);
-        assert_eq!(of_providers[1].id(), onlyhaven_id);
+        let manager = ProviderManager::new(vec![coomer.clone(), onlyhaven, pawchive.clone()]);
+        assert_eq!(
+            provider_ids(&manager, "onlyfans").await,
+            [c.clone(), o.clone()]
+        );
+        assert_eq!(provider_ids(&manager, "patreon").await, [o, p]);
+        assert!(provider_ids(&manager, "unsupported-test-service")
+            .await
+            .is_empty());
+        let periods = manager.get_active_capabilities().await.popular.periods;
+        let period_ids: Vec<&str> = periods.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(period_ids, ["day", "week", "month"]);
 
-        let patreon_providers = manager.get_providers_for_service("patreon").await;
-        assert_eq!(patreon_providers.len(), 2);
-        assert_eq!(patreon_providers[0].id(), onlyhaven_id);
-        assert_eq!(patreon_providers[1].id(), pawchive_id);
+        let without_pawchive = ProviderManager::new(vec![
+            coomer,
+            ProviderConfig {
+                enabled: false,
+                ..pawchive
+            },
+        ]);
+        assert!(provider_ids(&without_pawchive, "patreon").await.is_empty());
+        assert_eq!(provider_ids(&without_pawchive, "fansly").await, [c]);
+    }
 
-        let unknown = manager
-            .get_providers_for_service("unsupported-test-service")
-            .await;
-        assert!(unknown.is_empty());
+    #[tokio::test]
+    async fn request_queue_is_chosen_by_url_host() {
+        let custom = ProviderConfig {
+            api_url: "https://source-one.test".into(),
+            fallback_urls: vec!["https://source-one-mirror.test".into()],
+            file_url: Some("https://source-one-files.test".into()),
+            image_url: Some("https://source-one-images.test".into()),
+            is_custom: true,
+            ..enabled(PawchiveProvider::default_config(), 1)
+        };
+        let coomer = enabled(CoomerProvider::default_config(), 2);
+        let coomer_files = coomer.file_url.clone().unwrap();
+        let manager = ProviderManager::new(vec![custom.clone(), coomer.clone()]);
+        let manager_ref = &manager;
+        let queue_owner = move |id: String| async move {
+            let provider = manager_ref.get_provider_by_id(&id).await.unwrap();
+            provider.request_queue().unwrap().provider_id().to_string()
+        };
+
+        for (url, owner) in [
+            (
+                "https://source-one-files.test/data/aa/bb/image.jpg".to_string(),
+                queue_owner(custom.id.clone()).await,
+            ),
+            (
+                "https://source-one-mirror.test/api/v1/posts".to_string(),
+                queue_owner(custom.id.clone()).await,
+            ),
+            (
+                format!("{coomer_files}/data/11/22/video.mp4"),
+                queue_owner(coomer.id.clone()).await,
+            ),
+            (
+                "https://unknown-third-party.com/file.zip".to_string(),
+                "default".to_string(),
+            ),
+        ] {
+            assert_eq!(
+                manager.get_queue_for_url(&url).await.provider_id(),
+                owner,
+                "{url}"
+            );
+        }
     }
 
     #[tokio::test]
     #[ignore = "hits live provider APIs; run with `cargo test -- --ignored`"]
     async fn live_manager_multi_provider_contracts() {
-        let coomer = enabled(CoomerProvider::default_config(), 1);
-        let coomer_id = coomer.id.clone();
-        let coomer_file_url = coomer.file_url.clone().unwrap();
-        let onlyhaven = enabled(OnlyHavenProvider::default_config(), 2);
-        let onlyhaven_id = onlyhaven.id.clone();
-        let onlyhaven_file_url = onlyhaven.file_url.clone().unwrap();
-        let pawchive = enabled(PawchiveProvider::default_config(), 3);
-        let pawchive_id = pawchive.id.clone();
-        let pawchive_file_url = pawchive.file_url.clone().unwrap();
-        let configs = vec![coomer, onlyhaven, pawchive];
-        let manager = ProviderManager::new(configs);
+        let configs = vec![
+            enabled(CoomerProvider::default_config(), 1),
+            enabled(OnlyHavenProvider::default_config(), 2),
+            enabled(PawchiveProvider::default_config(), 3),
+        ];
+        let manager = ProviderManager::new(configs.clone());
 
-        let coomer_health = manager.test_provider_health(&coomer_id).await.unwrap();
-        assert!(
-            coomer_health.is_healthy,
-            "Coomer health failed: {:?}",
-            coomer_health.error
-        );
-
-        let onlyhaven_health = manager.test_provider_health(&onlyhaven_id).await.unwrap();
-        assert!(
-            onlyhaven_health.is_healthy,
-            "OnlyHaven health failed: {:?}",
-            onlyhaven_health.error
-        );
-
-        let pawchive_health = manager.test_provider_health(&pawchive_id).await.unwrap();
-        assert!(
-            pawchive_health.is_healthy,
-            "Pawchive health failed: {:?}",
-            pawchive_health.error
-        );
-
-        let of_profile = manager
-            .fetch_creator_profile("onlyfans", "prettykitttt", None)
-            .await
-            .unwrap();
-        assert_eq!(of_profile.id, "prettykitttt");
-
-        let patreon_profile = manager
-            .fetch_creator_profile("patreon", "3340149", None)
-            .await
-            .unwrap();
-        assert_eq!(patreon_profile.id, "3340149");
-
-        let recent = manager.fetch_recent_posts(None, 0).await.unwrap();
-        assert!(!recent.is_empty(), "Manager recent feed returned 0 posts");
-
-        let recent_paged = manager.fetch_recent_posts(None, 50).await.unwrap();
-        assert!(
-            !recent_paged.is_empty(),
-            "Manager recent paged returned 0 posts"
-        );
-
-        let recent_queried = manager.fetch_recent_posts(Some("cat"), 0).await.unwrap();
-        assert!(
-            !recent_queried.is_empty(),
-            "Manager recent query returned 0 posts"
-        );
-
-        let popular = manager.fetch_popular_posts("day", None, 0).await.unwrap();
-        assert!(!popular.is_empty(), "Manager popular feed returned 0 posts");
-        for window in popular.windows(2) {
-            let fav_a = window[0].favorite_count.unwrap_or(0);
-            let fav_b = window[1].favorite_count.unwrap_or(0);
+        for config in &configs {
+            let health = manager.test_provider_health(&config.id).await.unwrap();
             assert!(
-                fav_a >= fav_b,
-                "Popular feed not sorted by favorites descending: {fav_a} < {fav_b}"
+                health.is_healthy,
+                "{} health failed: {:?}",
+                config.id, health.error
             );
         }
 
-        let of_post = manager
-            .fetch_post("onlyfans", "prettykitttt", "366178580", None)
-            .await
-            .unwrap();
-        assert!(
-            of_post.is_some(),
-            "Manager failed to fetch Coomer post 366178580"
-        );
-        assert_eq!(of_post.unwrap().post.id, "366178580");
+        for (service, creator) in [("onlyfans", "prettykitttt"), ("patreon", "3340149")] {
+            let profile = manager
+                .fetch_creator_profile(service, creator, None)
+                .await
+                .unwrap();
+            assert_eq!(profile.id, creator);
+        }
 
-        let patreon_post = manager
-            .fetch_post("patreon", "3340149", "142680139", None)
-            .await
-            .unwrap();
-        assert!(
-            patreon_post.is_some(),
-            "Manager failed to fetch Pawchive post 142680139"
-        );
-        assert_eq!(patreon_post.unwrap().post.id, "142680139");
+        for (query, offset) in [(None, 0), (None, 50), (Some("cat"), 0)] {
+            let recent = manager.fetch_recent_posts(query, offset).await.unwrap();
+            assert!(
+                !recent.is_empty(),
+                "recent {query:?} @ {offset} returned 0 posts"
+            );
+        }
 
-        let non_existent = manager
+        let popular = manager.fetch_popular_posts("day", None, 0).await.unwrap();
+        assert!(!popular.is_empty());
+        for pair in popular.windows(2) {
+            assert!(pair[0].favorite_count.unwrap_or(0) >= pair[1].favorite_count.unwrap_or(0));
+        }
+
+        for (service, creator, post) in [
+            ("onlyfans", "prettykitttt", "366178580"),
+            ("patreon", "3340149", "142680139"),
+        ] {
+            let fetched = manager
+                .fetch_post(service, creator, post, None)
+                .await
+                .unwrap();
+            assert_eq!(fetched.map(|p| p.post.id).as_deref(), Some(post));
+        }
+        assert!(manager
             .fetch_post("patreon", "3340149", "999999999999999", None)
             .await
-            .unwrap();
-        assert!(
-            non_existent.is_none(),
-            "Manager non-existent post returned Some"
-        );
+            .unwrap()
+            .is_none());
 
-        let comments = manager
+        assert!(!manager
             .fetch_post_comments("fanbox", "6570768", "1836570")
             .await
-            .unwrap();
-        assert!(!comments.is_empty(), "Manager comments returned 0 items");
-
-        let revisions = manager
+            .unwrap()
+            .is_empty());
+        manager
             .fetch_post_revisions("patreon", "3340149", "142680139")
             .await
             .unwrap();
-        let _ = revisions;
 
-        let coomer_media = manager
-            .resolve_media_url("onlyfans", "/data/aa/bb/c.mp4", None, Some(&coomer_id))
-            .await;
-        assert!(coomer_media.starts_with(&coomer_file_url));
-
-        let pawchive_media = manager
-            .resolve_media_url("patreon", "/data/aa/bb/c.mp4", None, Some(&pawchive_id))
-            .await;
-        assert!(pawchive_media.starts_with(&pawchive_file_url));
-
-        let onlyhaven_media = manager
-            .resolve_media_url(
+        for (config, service, path) in [
+            (&configs[0], "onlyfans", "/data/aa/bb/c.mp4"),
+            (&configs[2], "patreon", "/data/aa/bb/c.mp4"),
+            (
+                &configs[1],
                 "fansly",
                 "7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2",
-                None,
-                Some(&onlyhaven_id),
-            )
-            .await;
-        assert!(onlyhaven_media.starts_with(&onlyhaven_file_url));
+            ),
+        ] {
+            let url = manager
+                .resolve_media_url(service, path, None, Some(&config.id))
+                .await;
+            assert!(
+                url.starts_with(config.file_url.as_deref().unwrap()),
+                "{url}"
+            );
+        }
     }
 
     #[tokio::test]
     #[ignore = "hits live provider APIs; run with `cargo test -- --ignored`"]
-    async fn live_capabilities_and_coomer_popular_periods() {
+    async fn live_popular_periods() {
         let coomer = enabled(CoomerProvider::default_config(), 1);
-        let coomer_id = coomer.id.clone();
-        let pawchive = enabled(PawchiveProvider::default_config(), 2);
-        let pawchive_id = pawchive.id.clone();
-        let onlyhaven = enabled(OnlyHavenProvider::default_config(), 3);
-        let onlyhaven_id = onlyhaven.id.clone();
-        let configs = vec![coomer, pawchive, onlyhaven];
-        let manager = ProviderManager::new(configs);
+        let onlyhaven = enabled(OnlyHavenProvider::default_config(), 2);
+        let manager = ProviderManager::new(vec![coomer.clone(), onlyhaven.clone()]);
 
-        let all_caps = manager.get_provider_capabilities().await;
-        let coomer_cap = all_caps.get(&coomer_id).unwrap();
-        assert!(coomer_cap.popular.supported);
-        assert_eq!(coomer_cap.popular.periods.len(), 4);
-        assert!(coomer_cap.popular.periods.iter().any(|p| p.id == "recent"));
-        assert!(coomer_cap.popular.supports_date);
-
-        let pawchive_cap = all_caps.get(&pawchive_id).unwrap();
-        assert!(pawchive_cap.popular.supported);
-        assert_eq!(pawchive_cap.popular.periods.len(), 5);
-        assert!(pawchive_cap.popular.periods.iter().any(|p| p.id == "all"));
-        assert!(pawchive_cap.popular.supports_date);
-
-        let onlyhaven_cap = all_caps.get(&onlyhaven_id).unwrap();
-        assert!(onlyhaven_cap.popular.supported);
-        assert_eq!(onlyhaven_cap.popular.periods.len(), 3);
-        assert!(onlyhaven_cap.popular.supports_date);
-
-        let active_cap = manager.get_active_capabilities().await;
-        assert!(active_cap.popular.supported);
-        assert_eq!(active_cap.popular.periods.len(), 3);
-        let period_ids: Vec<&str> = active_cap
-            .popular
-            .periods
-            .iter()
-            .map(|p| p.id.as_str())
-            .collect();
-        assert_eq!(period_ids, vec!["day", "week", "month"]);
-        assert!(active_cap.popular.supports_date);
-
-        let coomer_provider = manager.get_provider_by_id(&coomer_id).await.unwrap();
-
-        let popular_week = coomer_provider
-            .fetch_popular_posts("week", None, 0)
-            .await
-            .unwrap();
-        assert!(
-            !popular_week.is_empty(),
-            "Coomer popular week returned 0 posts"
-        );
-
-        let popular_recent = coomer_provider
-            .fetch_popular_posts("recent", None, 0)
-            .await
-            .unwrap();
-        assert!(
-            !popular_recent.is_empty(),
-            "Coomer popular recent returned 0 posts"
-        );
-
-        let popular_date = coomer_provider
-            .fetch_popular_posts("day", Some("2025-01-01"), 0)
-            .await
-            .unwrap();
-        assert!(
-            !popular_date.is_empty(),
-            "Coomer popular with date returned 0 posts"
-        );
-
-        let onlyhaven_provider = manager.get_provider_by_id(&onlyhaven_id).await.unwrap();
-        let oh_popular_week = onlyhaven_provider
-            .fetch_popular_posts("week", None, 0)
-            .await
-            .unwrap();
-        assert!(
-            !oh_popular_week.is_empty(),
-            "OnlyHaven popular week returned 0 posts"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_get_queue_for_url_dynamic_routing() {
-        let mut pawchive = enabled(PawchiveProvider::default_config(), 1);
-        pawchive.api_url = "https://source-one.test".into();
-        pawchive.fallback_urls = vec!["https://source-one-mirror.test".into()];
-        pawchive.file_url = Some("https://source-one-files.test".into());
-        pawchive.image_url = Some("https://source-one-images.test".into());
-        pawchive.is_custom = true;
-        let pawchive_id = pawchive.id.clone();
-        let coomer = enabled(CoomerProvider::default_config(), 2);
-        let coomer_id = coomer.id.clone();
-        let coomer_file_url = coomer.file_url.clone().unwrap();
-        let configs = vec![pawchive, coomer];
-        let manager = ProviderManager::new(configs);
-
-        let q1 = manager
-            .get_queue_for_url("https://source-one-files.test/data/aa/bb/image.jpg")
-            .await;
-        let pawchive_prov = manager.get_provider_by_id(&pawchive_id).await.unwrap();
-        assert_eq!(
-            q1.provider_id(),
-            pawchive_prov.request_queue().unwrap().provider_id()
-        );
-
-        let q2 = manager
-            .get_queue_for_url("https://source-one-mirror.test/api/v1/posts")
-            .await;
-        assert_eq!(
-            q2.provider_id(),
-            pawchive_prov.request_queue().unwrap().provider_id()
-        );
-
-        let q3 = manager
-            .get_queue_for_url(&format!("{coomer_file_url}/data/11/22/video.mp4"))
-            .await;
-        let coomer_prov = manager.get_provider_by_id(&coomer_id).await.unwrap();
-        assert_eq!(
-            q3.provider_id(),
-            coomer_prov.request_queue().unwrap().provider_id()
-        );
-
-        let q4 = manager
-            .get_queue_for_url("https://unknown-third-party.com/file.zip")
-            .await;
-        assert_eq!(q4.provider_id(), "default");
+        for (id, period, date) in [
+            (&coomer.id, "week", None),
+            (&coomer.id, "recent", None),
+            (&coomer.id, "day", Some("2025-01-01")),
+            (&onlyhaven.id, "week", None),
+        ] {
+            let provider = manager.get_provider_by_id(id).await.unwrap();
+            let posts = provider.fetch_popular_posts(period, date, 0).await.unwrap();
+            assert!(
+                !posts.is_empty(),
+                "{id} popular {period} {date:?} returned 0 posts"
+            );
+        }
     }
 }

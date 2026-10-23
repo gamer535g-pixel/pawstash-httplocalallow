@@ -110,29 +110,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extracts_link_uri_from_iframely_html() {
-        let html = r#"{"linkUri":"https:\/\/mega.nz\/folder\/abcdef#12345"}"#;
-        assert_eq!(
-            extract_iframely_target_url(html),
-            Some("https://mega.nz/folder/abcdef#12345".to_string())
-        );
-    }
-
-    #[test]
-    fn extracts_redirect_from_iframely_html() {
-        let html = r#"{"redirect":"https:\/\/pixeldrain.com\/u\/abc12345"}"#;
-        assert_eq!(
-            extract_iframely_target_url(html),
-            Some("https://pixeldrain.com/u/abc12345".to_string())
-        );
-    }
-
-    #[test]
-    fn extracts_embedded_cloud_url_prefix() {
-        let html = r#"<script>var data = {"meta":{"href":"https:\/\/drive.google.com\/drive\/folders\/12345?usp=sharing"}};</script>"#;
-        assert_eq!(
-            extract_iframely_target_url(html),
-            Some("https://drive.google.com/drive/folders/12345?usp=sharing".to_string())
-        );
+    fn extracts_target_url_from_iframely_html() {
+        for (html, expected) in [
+            (
+                r#"{"linkUri":"https:\/\/mega.nz\/folder\/abcdef#12345"}"#,
+                "https://mega.nz/folder/abcdef#12345",
+            ),
+            (
+                r#"{"redirect":"https:\/\/pixeldrain.com\/u\/abc12345"}"#,
+                "https://pixeldrain.com/u/abc12345",
+            ),
+            (
+                r#"<script>var data = {"meta":{"href":"https:\/\/drive.google.com\/drive\/folders\/12345?usp=sharing"}};</script>"#,
+                "https://drive.google.com/drive/folders/12345?usp=sharing",
+            ),
+        ] {
+            assert_eq!(extract_iframely_target_url(html).as_deref(), Some(expected));
+        }
     }
 }

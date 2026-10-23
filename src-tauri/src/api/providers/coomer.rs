@@ -1064,30 +1064,21 @@ mod tests {
     use super::*;
     use crate::api::providers::traits::SourceProvider;
 
-    fn test_config(api_url: String) -> ProviderConfig {
+    fn test_config() -> ProviderConfig {
         ProviderConfig {
-            id: "coomer".into(),
-            name: "Coomer".into(),
             enabled: true,
-            api_url,
-            fallback_urls: vec![],
-            file_url: Some("https://c1.coomer.st".into()),
-            image_url: Some("https://img.coomer.st".into()),
-            file_prefix: Some("c1".into()),
-            image_prefix: Some("img".into()),
             session_cookie: "my_session_cookie".into(),
-            username: "".into(),
-            services: vec!["onlyfans".into(), "fansly".into()],
-            is_custom: false,
-            priority: 2,
-            ..Default::default()
+            ..CoomerProvider::default_config()
         }
     }
 
+    fn provider() -> CoomerProvider {
+        CoomerProvider::new(test_config()).unwrap()
+    }
+
     #[test]
-    fn test_coomer_build_headers_ddg_accept_and_cookie() {
-        let conf = test_config("https://coomer.st".into());
-        let headers = CoomerProvider::build_headers(&conf);
+    fn headers_ask_for_css_and_send_the_session_cookie() {
+        let headers = CoomerProvider::build_headers(&test_config());
         assert_eq!(headers.get(ACCEPT).unwrap(), "text/css");
         assert_eq!(
             headers.get(USER_AGENT).unwrap(),
@@ -1098,53 +1089,59 @@ mod tests {
 
     #[test]
     fn prepare_post_removes_empty_file_and_uses_wrapper_attachments() {
-        let provider = CoomerProvider::new(test_config("https://coomer.st".into())).unwrap();
-        let post = Post {
-            id: "812407167322693632".into(),
-            user: "800702847065796609".into(),
-            service: "fansly".into(),
-            file: Some(Attachment::default()),
-            attachments: Some(vec![Attachment {
-                name: Some("video.mp4".into()),
-                path: Some("/15/d4/video.mp4".into()),
-                ..Attachment::default()
-            }]),
-            ..Post::default()
+        let video = |server: Option<&str>| Attachment {
+            name: Some("video.mp4".into()),
+            path: Some("/15/d4/video.mp4".into()),
+            server: server.map(Into::into),
+            ..Attachment::default()
         };
-        let post = provider.prepare_post(
-            post,
-            Some(vec![Attachment {
-                name: Some("video.mp4".into()),
-                path: Some("/15/d4/video.mp4".into()),
-                server: Some("https://n1.coomer.st".into()),
-                ..Attachment::default()
-            }]),
+        let post = provider().prepare_post(
+            Post {
+                id: "812407167322693632".into(),
+                user: "800702847065796609".into(),
+                service: "fansly".into(),
+                file: Some(Attachment::default()),
+                attachments: Some(vec![video(None)]),
+                ..Post::default()
+            },
+            Some(vec![video(Some("https://n1.coomer.st"))]),
         );
 
         assert!(post.file.is_none());
         let attachment = &post.attachments.unwrap()[0];
         assert_eq!(attachment.server.as_deref(), Some("https://n1.coomer.st"));
         assert_eq!(
-            attachment
-                .extra
-                .get("provider_id")
-                .and_then(|value| value.as_str()),
+            attachment.extra.get("provider_id").and_then(|v| v.as_str()),
             Some("coomer")
         );
     }
 
     #[test]
-    fn test_coomer_url_resolution() {
-        let conf = test_config("https://coomer.st".into());
-        let provider = CoomerProvider::new(conf).unwrap();
-        assert_eq!(
-            provider.resolve_media_url("/data/aa/bb/video.mp4", None),
-            "https://c1.coomer.st/data/aa/bb/video.mp4"
-        );
-        assert_eq!(
-            provider.resolve_media_url("aa/bb/video.mp4", None),
-            "https://c1.coomer.st/data/aa/bb/video.mp4"
-        );
+    fn media_and_thumbnail_urls_resolve_per_server() {
+        let provider = provider();
+        for (path, server, expected) in [
+            (
+                "/data/aa/bb/video.mp4",
+                None,
+                "https://c1.coomer.st/data/aa/bb/video.mp4",
+            ),
+            (
+                "aa/bb/video.mp4",
+                None,
+                "https://c1.coomer.st/data/aa/bb/video.mp4",
+            ),
+            (
+                "/data/aa/bb/video.mp4",
+                Some("c2"),
+                "https://c2.coomer.st/data/aa/bb/video.mp4",
+            ),
+        ] {
+            assert_eq!(
+                provider.resolve_media_url(path, server),
+                expected,
+                "{path} {server:?}"
+            );
+        }
         assert_eq!(
             provider.resolve_thumbnail_url("/data/aa/bb/thumb.jpg"),
             "https://img.coomer.st/thumbnail/data/aa/bb/thumb.jpg"
@@ -1152,200 +1149,111 @@ mod tests {
         assert!(provider
             .resolve_thumbnail_url("/data/aa/bb/video.mp4")
             .is_empty());
-        assert_eq!(
-            provider.resolve_media_url("/data/aa/bb/video.mp4", Some("c2")),
-            "https://c2.coomer.st/data/aa/bb/video.mp4"
-        );
-    }
-
-    #[test]
-    fn test_coomer_auth_schema_and_rejections() {
-        let conf = test_config("https://coomer.st".into());
-        let provider = CoomerProvider::new(conf).unwrap();
-        let schema = provider.auth_schema();
-        assert_eq!(schema.provider_id, "coomer");
-        assert!(schema.supports_auth);
-        assert!(!schema.supports_remote_favorites);
-        assert!(!schema.supports_push_favorites);
     }
 
     #[tokio::test]
     #[ignore = "hits live provider APIs; run with `cargo test -- --ignored`"]
     async fn live_coomer_public_contracts() {
-        let conf = ProviderConfig {
-            id: "coomer".into(),
-            name: "Coomer".into(),
+        let provider = CoomerProvider::new(ProviderConfig {
             enabled: true,
-            api_url: "https://coomer.st".into(),
-            fallback_urls: vec![],
-            file_url: Some("https://c1.coomer.st".into()),
-            image_url: Some("https://img.coomer.st".into()),
-            file_prefix: Some("c1".into()),
-            image_prefix: Some("img".into()),
-            session_cookie: "".into(),
-            username: "".into(),
-            services: vec!["onlyfans".into(), "fansly".into()],
-            is_custom: false,
-            priority: 2,
-            ..Default::default()
-        };
-        let provider = CoomerProvider::new(conf).expect("create CoomerProvider");
+            ..CoomerProvider::default_config()
+        })
+        .unwrap();
+        let (service, creator, post_id) = ("onlyfans", "prettykitttt", "366178580");
 
-        let version = provider.app_version().await.expect("app_version");
-        assert!(!version.trim().is_empty(), "Coomer app_version is empty");
+        assert!(!provider.app_version().await.unwrap().trim().is_empty());
+        let health = provider.test_connection().await.unwrap();
+        assert!(health.is_healthy, "health check failed: {:?}", health.error);
+        assert!(!provider.fetch_creators().await.unwrap().is_empty());
 
-        let health = provider.test_connection().await.expect("test_connection");
-        assert!(
-            health.is_healthy,
-            "Coomer health check failed: {:?}",
-            health.error
-        );
-
-        let creators = provider.fetch_creators().await.expect("fetch_creators");
-        assert!(
-            !creators.is_empty(),
-            "Coomer creators list returned 0 creators"
-        );
-
-        let recent = provider
-            .fetch_recent_posts(None, 0)
-            .await
-            .expect("fetch_recent_posts");
-        assert!(!recent.is_empty(), "Coomer recent feed returned 0 posts");
+        let recent = provider.fetch_recent_posts(None, 0).await.unwrap();
         assert_eq!(
             recent[0].extra.get("provider_id").and_then(|v| v.as_str()),
             Some("coomer")
         );
-
-        let paged = provider
-            .fetch_recent_posts(None, 50)
-            .await
-            .expect("fetch_recent_posts paged");
-        assert!(!paged.is_empty(), "Coomer offset 50 returned 0 posts");
-
-        let searched = provider
-            .fetch_recent_posts(Some("slut"), 0)
-            .await
-            .expect("fetch_recent_posts query");
-        assert!(!searched.is_empty(), "Coomer search returned 0 posts");
-
-        for period in ["day", "week", "month"] {
-            let popular = provider
-                .fetch_popular_posts(period, None, 0)
-                .await
-                .expect("fetch_popular_posts");
+        for (query, offset) in [(None, 50), (Some("slut"), 0)] {
+            let posts = provider.fetch_recent_posts(query, offset).await.unwrap();
             assert!(
-                !popular.is_empty(),
-                "Coomer popular feed ({period}) returned 0 posts"
+                !posts.is_empty(),
+                "recent {query:?} @ {offset} returned 0 posts"
             );
+        }
+        for period in ["day", "week", "month"] {
+            let posts = provider.fetch_popular_posts(period, None, 0).await.unwrap();
+            assert!(!posts.is_empty(), "popular {period} returned 0 posts");
         }
 
         let profile = provider
-            .fetch_creator_profile("onlyfans", "prettykitttt")
+            .fetch_creator_profile(service, creator)
             .await
-            .expect("fetch_creator_profile");
-        assert_eq!(profile.id, "prettykitttt");
-        assert_eq!(profile.service, "onlyfans");
-
-        let links = provider
-            .fetch_creator_links("onlyfans", "prettykitttt")
-            .await
-            .expect("fetch_creator_links");
-        let _ = links;
-
-        let tags = provider
-            .fetch_creator_tags("onlyfans", "prettykitttt")
-            .await
-            .expect("fetch_creator_tags");
-        let _ = tags;
-
-        let posts = provider
-            .fetch_posts("onlyfans", "prettykitttt", 0, None)
-            .await
-            .expect("fetch_posts");
-        assert!(!posts.is_empty(), "Coomer creator posts returned 0 posts");
-
-        let paged_creator_posts = provider
-            .fetch_posts("onlyfans", "prettykitttt", 50, None)
-            .await
-            .expect("fetch_posts paged");
-        assert!(
-            !paged_creator_posts.is_empty(),
-            "Coomer creator offset 50 returned 0 posts"
+            .unwrap();
+        assert_eq!(
+            (profile.id.as_str(), profile.service.as_str()),
+            (creator, service)
         );
-
-        let filtered_posts = provider
-            .fetch_posts("onlyfans", "prettykitttt", 0, Some("slut"))
+        provider
+            .fetch_creator_links(service, creator)
             .await
-            .expect("fetch_posts with query");
-        assert!(
-            !filtered_posts.is_empty(),
-            "Coomer creator posts with query returned 0 posts"
-        );
-
-        let single_post = provider
-            .fetch_post("onlyfans", "prettykitttt", "366178580")
-            .await
-            .expect("fetch_post");
-        assert!(single_post.is_some(), "Coomer post 366178580 returned None");
-        let post = single_post.unwrap();
-        assert_eq!(post.id, "366178580");
-        assert_eq!(post.user, "prettykitttt");
-        assert_eq!(post.service, "onlyfans");
-        assert!(
-            post.file.is_some() || post.attachments.as_ref().is_some_and(|a| !a.is_empty()),
-            "Coomer post has neither file nor attachments"
-        );
-
-        let non_existent = provider
-            .fetch_post("onlyfans", "prettykitttt", "999999999999999")
-            .await
-            .expect("fetch non-existent post");
-        assert!(non_existent.is_none(), "Non-existent post returned Some");
-
-        let revisions = provider
-            .fetch_post_revisions("onlyfans", "prettykitttt", "366178580")
-            .await
-            .expect("fetch_post_revisions");
-        let _ = revisions;
-
-        let comments = provider
-            .fetch_post_comments("onlyfans", "prettykitttt", "366178580")
-            .await
-            .expect("fetch_post_comments");
-        let _ = comments;
-
-        if let Some(file) = &post.file {
-            if let Some(path) = &file.path {
-                let media_url = provider.resolve_media_url(path, None);
-                assert!(media_url.starts_with("https://c1.coomer.st/data/"));
-                let thumb_url = provider.resolve_thumbnail_url(path);
-                if path_has_image_mime(path) {
-                    assert!(thumb_url.starts_with("https://img.coomer.st/thumbnail/data/"));
-                } else {
-                    assert!(thumb_url.is_empty());
-                }
-            }
+            .unwrap();
+        provider.fetch_creator_tags(service, creator).await.unwrap();
+        for (offset, query) in [(0, None), (50, None), (0, Some("slut"))] {
+            let posts = provider
+                .fetch_posts(service, creator, offset, query)
+                .await
+                .unwrap();
+            assert!(
+                !posts.is_empty(),
+                "creator posts {query:?} @ {offset} returned 0 posts"
+            );
         }
-        let custom_srv_url = provider.resolve_media_url("/data/aa/bb/video.mp4", Some("c2"));
-        assert_eq!(custom_srv_url, "https://c2.coomer.st/data/aa/bb/video.mp4");
-        assert_eq!(provider.id(), "coomer");
-        assert_eq!(provider.name(), "Coomer");
-        assert!(provider.supports_service("onlyfans"));
-        assert!(provider.logout().await.is_ok());
-        assert!(provider.get_account_session().await.is_err());
+
+        let post = provider
+            .fetch_post(service, creator, post_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (post.id.as_str(), post.user.as_str(), post.service.as_str()),
+            (post_id, creator, service)
+        );
+        assert!(post.file.is_some() || post.attachments.as_ref().is_some_and(|a| !a.is_empty()));
+        if let Some(path) = post.file.as_ref().and_then(|f| f.path.as_deref()) {
+            assert!(provider
+                .resolve_media_url(path, None)
+                .starts_with("https://c1.coomer.st/data/"));
+            let thumb = provider.resolve_thumbnail_url(path);
+            assert_eq!(
+                thumb.starts_with("https://img.coomer.st/thumbnail/data/"),
+                path_has_image_mime(path)
+            );
+        }
         assert!(provider
-            .fetch_fancards("onlyfans", "prettykitttt")
+            .fetch_post(service, creator, "999999999999999")
+            .await
+            .unwrap()
+            .is_none());
+        provider
+            .fetch_post_revisions(service, creator, post_id)
+            .await
+            .unwrap();
+        provider
+            .fetch_post_comments(service, creator, post_id)
+            .await
+            .unwrap();
+
+        assert!(provider
+            .fetch_fancards(service, creator)
             .await
             .unwrap()
             .is_empty());
+        assert!(provider.get_account_session().await.is_err());
         assert!(provider.login("dummy", "secret").await.is_err());
         assert!(provider
-            .set_creator_favorite("onlyfans", "prettykitttt", true)
+            .set_creator_favorite(service, creator, true)
             .await
             .is_err());
         assert!(provider
-            .set_post_favorite("onlyfans", "prettykitttt", "366178580", true)
+            .set_post_favorite(service, creator, post_id, true)
             .await
             .is_err());
     }

@@ -249,6 +249,8 @@ fn decode_array<const N: usize>(value: &str) -> Result<[u8; N], String> {
 mod tests {
     use super::*;
 
+    const PASSWORD: &str = "correct horse battery";
+
     #[test]
     fn vault_and_records_round_trip_and_authenticate_aad() {
         let kdf = KdfEnvelope {
@@ -257,14 +259,8 @@ mod tests {
             ..KdfEnvelope::generate()
         };
         let secrets = VaultSecrets::generate();
-        let wrapped = wrap_vault("correct horse battery", &kdf, &secrets).unwrap();
-        let opened = unwrap_vault(
-            "correct horse battery",
-            &kdf,
-            &wrapped.ciphertext,
-            &wrapped.nonce,
-        )
-        .unwrap();
+        let wrapped = wrap_vault(PASSWORD, &kdf, &secrets).unwrap();
+        let opened = unwrap_vault(PASSWORD, &kdf, &wrapped.ciphertext, &wrapped.nonce).unwrap();
         assert_eq!(opened.vault_key, secrets.vault_key);
         assert!(unwrap_vault(
             "wrong password here",
@@ -273,6 +269,7 @@ mod tests {
             &wrapped.nonce
         )
         .is_err());
+
         let key = opened.vault_key_bytes().unwrap();
         let record = encrypt_record(&key, "record-1", b"snapshot").unwrap();
         assert_eq!(
@@ -288,8 +285,7 @@ mod tests {
             memory_kib: 1024 * 1024,
             ..KdfEnvelope::generate()
         };
-        let secrets = VaultSecrets::generate();
-        assert!(wrap_vault("correct horse battery", &bad_kdf, &secrets).is_err());
+        assert!(wrap_vault(PASSWORD, &bad_kdf, &VaultSecrets::generate()).is_err());
     }
 
     #[test]
@@ -297,20 +293,19 @@ mod tests {
         let key = [42u8; KEY_BYTES];
         let record_id = "test:post:123";
 
-        let sample_json = r#"{"id":"123","service":"kemono","title":"Test Post With Long Text","content":"repeated content text ".repeat(100)}"#.as_bytes();
-        let enc = encrypt_record(&key, record_id, sample_json).unwrap();
-        let dec = decrypt_record(&key, record_id, &enc.ciphertext, &enc.nonce).unwrap();
-        assert_eq!(dec, sample_json);
+        let json = r#"{"id":"123","service":"kemono","title":"Test Post With Long Text","content":"repeated content text ".repeat(100)}"#.as_bytes();
+        let enc = encrypt_record(&key, record_id, json).unwrap();
+        assert_eq!(
+            decrypt_record(&key, record_id, &enc.ciphertext, &enc.nonce).unwrap(),
+            json
+        );
 
-        let legacy_json = b"{\"legacy\":true,\"name\":\"uncompressed\"}";
-        let legacy_enc = encrypt(
-            &key,
-            legacy_json,
-            format!("pawstash:v1:vault_snapshot:{record_id}").as_bytes(),
-        )
-        .unwrap();
-        let legacy_dec =
-            decrypt_record(&key, record_id, &legacy_enc.ciphertext, &legacy_enc.nonce).unwrap();
-        assert_eq!(legacy_dec, legacy_json);
+        let legacy_json = br#"{"legacy":true,"name":"uncompressed"}"#;
+        let aad = format!("pawstash:v1:vault_snapshot:{record_id}");
+        let legacy = encrypt(&key, legacy_json, aad.as_bytes()).unwrap();
+        assert_eq!(
+            decrypt_record(&key, record_id, &legacy.ciphertext, &legacy.nonce).unwrap(),
+            legacy_json
+        );
     }
 }

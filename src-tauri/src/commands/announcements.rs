@@ -179,26 +179,18 @@ mod tests {
     #[test]
     fn version_bounds_are_inclusive() {
         let now = chrono::Utc::now();
-        assert!(applies(
-            &announcement(Some("26.10.1-1"), Some("26.10.1-2")),
-            "26.10.1-1",
-            now
-        ));
-        assert!(applies(
-            &announcement(None, Some("26.10.1-2")),
-            "26.10.1-2",
-            now
-        ));
-        assert!(!applies(
-            &announcement(None, Some("26.10.1-1")),
-            "26.10.1-2",
-            now
-        ));
-        assert!(!applies(
-            &announcement(Some("26.10.2"), None),
-            "26.10.1-2",
-            now
-        ));
+        for (min, max, version, shown) in [
+            (Some("26.10.1-1"), Some("26.10.1-2"), "26.10.1-1", true),
+            (None, Some("26.10.1-2"), "26.10.1-2", true),
+            (None, Some("26.10.1-1"), "26.10.1-2", false),
+            (Some("26.10.2"), None, "26.10.1-2", false),
+        ] {
+            assert_eq!(
+                applies(&announcement(min, max), version, now),
+                shown,
+                "{version}"
+            );
+        }
     }
 
     #[test]

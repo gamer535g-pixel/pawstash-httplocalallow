@@ -342,6 +342,28 @@ export function isSameAttachment(a: Attachment | null | undefined, b: Attachment
   return false;
 }
 
+const CLOUD_PROVIDER_NAMES: Record<string, string> = {
+  mega: 'Mega',
+  dropbox: 'Dropbox',
+  pixeldrain: 'Pixeldrain',
+  googledrive: 'Google Drive',
+  filen: 'Filen'
+};
+
+export function cloudProviderName(provider: unknown): string | undefined {
+  return typeof provider === 'string' ? CLOUD_PROVIDER_NAMES[provider] : undefined;
+}
+
+export function isCloudMirror(a: Attachment, b: Attachment): boolean {
+  return (
+    a.is_cloud === true &&
+    b.is_cloud === true &&
+    a.cloud_provider !== b.cloud_provider &&
+    Boolean(a.size && a.size === b.size) &&
+    Boolean(a.name && a.name.trim().toLowerCase() === b.name?.trim().toLowerCase())
+  );
+}
+
 export function attachmentThumbnailUrl(file: Attachment, _service?: string, post?: Post | null): string {
   if (!file) return '';
   const thumbnail = extraField<string>(file, 'thumbnail_url');
@@ -1011,6 +1033,10 @@ export function getFileExtension(filename?: string): string {
 }
 
 // Mirrors `detect_format` in archive/mod.rs: the formats `open_archive` recognises.
+export function isListableArchive(filename?: string): boolean {
+  return /\.(zip|cbz)$/i.test(filename?.trim() ?? '');
+}
+
 export function isOpenableArchive(filename?: string): boolean {
   return /\.(zip|cbz|rar|cbr|7z|cb7|7z\.\d+)$/i.test(filename?.trim() ?? '');
 }

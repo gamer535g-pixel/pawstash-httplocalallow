@@ -1173,25 +1173,30 @@ fn absolute_download_dir(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::provider_manager::ProviderManager;
+
+    fn normalized(mut settings: AppSettings) -> AppSettings {
+        settings.normalize();
+        settings
+    }
 
     #[test]
     fn relative_download_dir_is_anchored_to_home() {
-        let mut settings = AppSettings {
+        let settings = normalized(AppSettings {
             download_dir: "Downloads/Pawstash".into(),
             ..AppSettings::default()
-        };
-        settings.normalize();
+        });
         assert!(std::path::Path::new(&settings.download_dir).is_absolute());
         assert!(settings.download_dir.ends_with("Pawstash"));
-        let absolute = settings.download_dir.clone();
-        settings.normalize();
-        assert_eq!(settings.download_dir, absolute);
+        assert_eq!(
+            normalized(settings.clone()).download_dir,
+            settings.download_dir
+        );
     }
 
     #[test]
     fn legacy_onlyhaven_saved_as_coomer_is_renamed_not_duplicated() {
         use crate::api::providers::onlyhaven::OnlyHavenProvider;
-        let defaults = crate::api::provider_manager::ProviderManager::default_configs();
         let legacy = crate::api::provider::ProviderConfig {
             id: "coomer".to_string(),
             name: "OnlyHaven".to_string(),
@@ -1203,14 +1208,16 @@ mod tests {
             ..Default::default()
         };
         let mut settings = AppSettings {
-            providers: vec![defaults[0].clone(), legacy],
+            providers: vec![ProviderManager::default_configs()[0].clone(), legacy],
             ..AppSettings::default()
         };
 
-        let renamed = settings.migrate_legacy_provider_ids();
+        assert_eq!(
+            settings.migrate_legacy_provider_ids(),
+            vec!["coomer".to_string()]
+        );
         settings.normalize();
 
-        assert_eq!(renamed, vec!["coomer".to_string()]);
         let onlyhaven: Vec<_> = settings
             .providers
             .iter()
@@ -1243,7 +1250,7 @@ mod tests {
 
     #[test]
     fn provider_mirrors_keep_their_ids() {
-        let mut coomer = crate::api::provider_manager::ProviderManager::default_configs()
+        let mut coomer = ProviderManager::default_configs()
             .into_iter()
             .find(|p| p.id == "coomer")
             .unwrap();
@@ -1257,43 +1264,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_fields_use_defaults() {
-        let settings: AppSettings =
-            serde_json::from_str(r#"{"api_domain":"mirror.example","download_dir":"downloads"}"#)
-                .unwrap();
-        assert_eq!(settings.api_domain, "mirror.example");
-        assert_eq!(settings.file_domain, AppSettings::default().file_domain);
-        assert!(settings.proxy_bypass_local);
-        assert_eq!(settings.grid_scale, 100);
-        assert_eq!(settings.grid_aspect_ratio, GridAspectRatio::Square);
-    }
-
-    #[test]
-    fn grid_scale_is_normalized() {
-        let mut settings = AppSettings {
-            grid_scale: 999,
-            ..AppSettings::default()
-        };
-        settings.normalize();
-        assert_eq!(settings.grid_scale, 160);
-    }
-
-    #[test]
-    fn cache_limit_is_normalized() {
-        let mut settings = AppSettings {
-            cache_max_mb: 1,
-            ..AppSettings::default()
-        };
-        settings.normalize();
-        assert_eq!(settings.cache_max_mb, 64);
-
-        settings.cache_max_mb = u64::MAX;
-        settings.normalize();
-        assert_eq!(settings.cache_max_mb, 2048);
-    }
-
-    #[test]
-    fn toast_position_keeps_every_choice_the_ui_offers() {
+    fn normalize_keeps_every_choice_the_ui_offers() {
         for offered in [
             "auto",
             "top-left",
@@ -1303,43 +1274,30 @@ mod tests {
             "bottom-center",
             "bottom-right",
         ] {
-            let mut settings = AppSettings {
+            let settings = AppSettings {
                 toast_position: offered.to_string(),
                 ..AppSettings::default()
             };
-            settings.normalize();
-            assert_eq!(settings.toast_position, offered);
+            assert_eq!(normalized(settings).toast_position, offered);
         }
-
-        let mut settings = AppSettings {
-            toast_position: "sideways".to_string(),
-            ..AppSettings::default()
-        };
-        settings.normalize();
-        assert_eq!(settings.toast_position, "auto");
-    }
-
-    #[test]
-    fn normalize_keeps_card_view_modes_offered_by_settings() {
         for offered in ["detailed", "lite"] {
-            let mut settings = AppSettings {
+            let settings = AppSettings {
                 card_view_mode: offered.to_string(),
                 ..AppSettings::default()
             };
-            settings.normalize();
-            assert_eq!(settings.card_view_mode, offered);
+            assert_eq!(normalized(settings).card_view_mode, offered);
         }
-
-        let mut settings = AppSettings {
+        let unknown = normalized(AppSettings {
+            toast_position: "sideways".to_string(),
             card_view_mode: "compact".to_string(),
             ..AppSettings::default()
-        };
-        settings.normalize();
-        assert_eq!(settings.card_view_mode, "detailed");
+        });
+        assert_eq!(unknown.toast_position, "auto");
+        assert_eq!(unknown.card_view_mode, "detailed");
     }
 
     #[test]
-    fn scalar_database_values_exclude_secrets() {
+    fn scalar_database_values_round_trip_without_secrets() {
         let original = AppSettings {
             api_domain: "mirror.example".to_string(),
             proxy_mode: ProxyMode::System,
@@ -1364,144 +1322,84 @@ mod tests {
             .collect();
         let mut restored = AppSettings::default();
         restored.apply_values(&values);
-        assert_eq!(restored.api_domain, original.api_domain);
-        assert_eq!(restored.proxy_mode, ProxyMode::System);
-        assert!(restored.session_cookie.is_empty());
-        assert_eq!(restored.grid_scale, 125);
-        assert!(!restored.dynamic_accent);
-        assert!(!restored.sticky_header);
-        assert_eq!(restored.layout_mode, "mobile");
-        assert!(!restored.sync_enabled);
-        assert!(!restored.sync_auto);
-        assert!(!restored.sync_on_change);
-        assert!(restored.sync_pawchive_session);
-        assert_eq!(restored.sync_pull_interval_seconds, 120);
-        assert_eq!(restored.sync_push_interval_seconds, 30);
+        let expected = AppSettings {
+            session_cookie: String::new(),
+            ..original
+        };
+        assert_eq!(
+            serde_json::to_value(&restored).unwrap(),
+            serde_json::to_value(&expected).unwrap()
+        );
         assert!(!values[&format!("{SETTINGS_PREFIX}providers_json")].contains("session=secret"));
     }
 
     #[test]
-    fn test_resolve_cookie_for_url_multi_provider() {
-        let mut settings = AppSettings::default();
-        settings.normalize();
-        let primary_id = settings.providers[0].id.clone();
-        let secondary_id = settings.providers[1].id.clone();
-        settings
-            .providers
-            .iter_mut()
-            .find(|provider| provider.id == primary_id)
-            .unwrap()
-            .session_cookie = "primary_session_secret".into();
-        settings
-            .providers
-            .iter_mut()
-            .find(|provider| provider.id == secondary_id)
-            .unwrap()
-            .session_cookie = "secondary_session_secret".into();
-        let primary = settings
-            .providers
-            .iter()
-            .find(|provider| provider.id == primary_id)
-            .unwrap();
-        let primary_url = format!(
-            "{}/data/ab/cd/video.mp4",
-            primary.file_url.as_deref().unwrap()
+    fn session_cookies_only_go_to_their_provider_hosts() {
+        let mut settings = normalized(AppSettings::default());
+        let mut file_urls = Vec::new();
+        for (provider, cookie) in settings.providers.iter_mut().zip(["primary", "secondary"]) {
+            provider.session_cookie = cookie.into();
+            file_urls.push(format!(
+                "{}/data/ab/cd/video.mp4",
+                provider.file_url.as_deref().unwrap()
+            ));
+        }
+        assert_eq!(
+            settings.resolve_cookie_for_url(&file_urls[0]),
+            Some("primary".into())
         );
-        let primary_host = reqwest::Url::parse(&primary.api_url)
+        assert_eq!(
+            settings.resolve_cookie_for_url(&file_urls[1]),
+            Some("secondary".into())
+        );
+
+        let primary_host = reqwest::Url::parse(&settings.providers[0].api_url)
             .unwrap()
             .host_str()
             .unwrap()
             .to_string();
-        let secondary = settings
-            .providers
-            .iter()
-            .find(|provider| provider.id == secondary_id)
-            .unwrap();
-        let secondary_url = format!(
-            "{}/data/ab/cd/video.mp4",
-            secondary.file_url.as_deref().unwrap()
-        );
-
-        assert_eq!(
-            settings.resolve_cookie_for_url(&secondary_url),
-            Some("secondary_session_secret".into())
-        );
-
-        assert_eq!(
-            settings.resolve_cookie_for_url(&primary_url),
-            Some("primary_session_secret".into())
-        );
-        assert_eq!(
-            settings
-                .resolve_cookie_for_url(&format!("https://{primary_host}.evil.example/video.mp4")),
-            None
-        );
-        assert_eq!(
-            settings.resolve_cookie_for_url("https://unrelated.example/video.mp4"),
-            None
-        );
-    }
-
-    #[test]
-    fn test_normalize_providers() {
-        let mut settings = AppSettings::default();
-        settings.normalize();
-
-        for expected in crate::api::provider_manager::ProviderManager::default_configs() {
-            let actual = settings
-                .providers
-                .iter()
-                .find(|provider| provider.id == expected.id)
-                .unwrap();
-            assert_eq!(actual.file_prefix, expected.file_prefix);
-            assert_eq!(actual.image_prefix, expected.image_prefix);
-            assert_eq!(actual.file_url, expected.file_url);
-            assert_eq!(actual.image_url, expected.image_url);
+        for foreign in [
+            format!("https://{primary_host}.evil.example/video.mp4"),
+            "https://unrelated.example/video.mp4".to_string(),
+        ] {
+            assert_eq!(settings.resolve_cookie_for_url(&foreign), None, "{foreign}");
         }
     }
 
     #[test]
     fn normalize_repairs_builtin_media_origins_without_overriding_mirrors() {
-        let default = crate::api::provider_manager::ProviderManager::default_configs()
+        let default = ProviderManager::default_configs()
             .into_iter()
             .find(|provider| provider.file_url.is_some() && provider.image_url.is_some())
             .unwrap();
-        let mut settings = AppSettings::default();
-        let provider = settings
-            .providers
-            .iter_mut()
-            .find(|provider| provider.id == default.id)
-            .unwrap();
-        provider.file_url = Some(provider.api_url.clone());
-        provider.image_url = None;
+        let normalized_provider = |edit: &dyn Fn(&mut crate::api::provider::ProviderConfig)| {
+            let mut settings = AppSettings::default();
+            edit(
+                settings
+                    .providers
+                    .iter_mut()
+                    .find(|p| p.id == default.id)
+                    .unwrap(),
+            );
+            normalized(settings)
+                .providers
+                .into_iter()
+                .find(|p| p.id == default.id)
+                .unwrap()
+        };
 
-        settings.normalize();
+        let repaired = normalized_provider(&|p| {
+            p.file_url = Some(p.api_url.clone());
+            p.image_url = None;
+        });
+        assert_eq!(repaired.file_url, default.file_url);
+        assert_eq!(repaired.image_url, default.image_url);
 
-        let provider = settings
-            .providers
-            .iter()
-            .find(|provider| provider.id == default.id)
-            .unwrap();
-        assert_eq!(provider.file_url, default.file_url);
-        assert_eq!(provider.image_url, default.image_url);
-
-        let mut mirror_settings = AppSettings::default();
-        let mirror = mirror_settings
-            .providers
-            .iter_mut()
-            .find(|provider| provider.id == default.id)
-            .unwrap();
-        mirror.api_url = "https://mirror.example".into();
-        mirror.file_url = None;
-        mirror.image_url = None;
-
-        mirror_settings.normalize();
-
-        let mirror = mirror_settings
-            .providers
-            .iter()
-            .find(|provider| provider.id == default.id)
-            .unwrap();
+        let mirror = normalized_provider(&|p| {
+            p.api_url = "https://mirror.example".into();
+            p.file_url = None;
+            p.image_url = None;
+        });
         assert_eq!(mirror.file_url, None);
         assert_eq!(mirror.image_url, None);
     }

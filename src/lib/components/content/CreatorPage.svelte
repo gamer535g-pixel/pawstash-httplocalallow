@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { edgeFade } from '$lib/actions/edgeFade';
   import { onMount, tick, untrack } from 'svelte';
   import EmptyState from '$lib/components/ui/EmptyState.svelte';
   import { contentState, creatorCacheKey, type CachedCreator } from '$lib/state/contentState.svelte';
@@ -1227,7 +1228,7 @@
     </header>
 
     <div class="media-controls-row mt-2">
-      <div class="creator-tabs-scroll">
+      <div class="creator-tabs-scroll" use:edgeFade>
         <ChoiceGroup
           options={creatorTabOptions}
           value={activeTab}
@@ -1787,9 +1788,6 @@
     overflow-x: auto;
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
-    -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
-    mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
-    padding-right: 20px;
   }
 
   .creator-tabs-scroll::-webkit-scrollbar {

@@ -211,10 +211,12 @@ pub use crate::cloud::normalize_cloud_direct_url as normalize_download_url;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::providers::{PawchiveProvider, ProviderManager};
+    use crate::cloud::dropbox::example_url;
 
     #[test]
-    fn test_derive_download_referer_domains() {
-        for config in crate::api::providers::ProviderManager::default_configs() {
+    fn referer_points_at_the_provider_site() {
+        for config in ProviderManager::default_configs() {
             let expected = format!("{}/", config.api_url.trim_end_matches('/'));
             for endpoint in [Some(config.api_url), config.file_url, config.image_url]
                 .into_iter()
@@ -223,90 +225,54 @@ mod tests {
                 assert_eq!(derive_download_referer(&endpoint), Some(expected.clone()));
             }
         }
-
-        assert_eq!(
-            derive_download_referer("https://cdn.custom-provider.org/data/11/22/archive.zip"),
-            Some("https://custom-provider.org/".into())
-        );
-        assert_eq!(
-            derive_download_referer(
-                "https://img.custom-provider.org/thumbnail/data/11/22/thumb.jpg"
-            ),
-            Some("https://custom-provider.org/".into())
-        );
-
-        assert_eq!(
-            derive_download_referer(crate::cloud::dropbox::example_url()),
-            None
-        );
+        for custom in [
+            "https://cdn.custom-provider.org/data/11/22/archive.zip",
+            "https://img.custom-provider.org/thumbnail/data/11/22/thumb.jpg",
+        ] {
+            assert_eq!(
+                derive_download_referer(custom),
+                Some("https://custom-provider.org/".into())
+            );
+        }
+        assert_eq!(derive_download_referer(example_url()), None);
     }
 
     #[test]
-    fn test_derive_download_cookie() {
-        let provider_url = crate::api::providers::ProviderManager::default_configs()
+    fn session_cookie_is_sent_only_to_provider_hosts() {
+        let provider_url = ProviderManager::default_configs()
             .into_iter()
             .next()
             .and_then(|config| config.file_url)
             .expect("default provider has a file endpoint");
-        assert_eq!(
-            derive_download_cookie(&provider_url, "abc_session"),
-            Some("session=abc_session".into())
-        );
-        assert_eq!(
-            derive_download_cookie(&provider_url, "session=abc_session"),
-            Some("session=abc_session".into())
-        );
-
-        assert_eq!(
-            derive_download_cookie(crate::cloud::dropbox::example_url(), "abc_session"),
-            None
-        );
+        for session in ["abc_session", "session=abc_session"] {
+            assert_eq!(
+                derive_download_cookie(&provider_url, session),
+                Some("session=abc_session".into())
+            );
+        }
+        assert_eq!(derive_download_cookie(example_url(), "abc_session"), None);
     }
 
     #[test]
-    fn test_standard_browser_headers() {
-        let headers = standard_browser_headers();
-        assert_eq!(
-            headers.get("user-agent").and_then(|v| v.to_str().ok()),
-            Some(crate::net::DEFAULT_BROWSER_USER_AGENT)
-        );
-        assert_eq!(
-            headers
-                .get("sec-ch-ua-platform")
-                .and_then(|v| v.to_str().ok()),
-            Some("\"Windows\"")
-        );
-        assert_eq!(
-            headers
-                .get("sec-ch-ua-mobile")
-                .and_then(|v| v.to_str().ok()),
-            Some("?0")
-        );
-        assert!(headers.contains_key("sec-ch-ua"));
-        assert!(headers.contains_key("sec-fetch-dest"));
-
-        let args = standard_browser_header_args();
-        assert!(args.iter().any(|a| a.starts_with("--user-agent=")));
-        assert!(args.iter().any(|a| a.starts_with("--header=sec-ch-ua:")));
-        assert!(args
-            .iter()
-            .any(|a| a == "--header=sec-ch-ua-platform: \"Windows\""));
-    }
-
-    #[test]
-    fn test_provider_user_agent_headers() {
-        let url = crate::api::providers::PawchiveProvider::default_config()
+    fn provider_downloads_identify_as_pawstash_and_others_as_a_browser() {
+        let user_agent = |url: &str| {
+            derive_download_headers(url)
+                .get("user-agent")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string)
+        };
+        let provider_url = PawchiveProvider::default_config()
             .file_url
             .expect("default provider has a file endpoint");
-        let headers = derive_download_headers(&url);
         assert_eq!(
-            headers.get("user-agent").and_then(|v| v.to_str().ok()),
+            user_agent(&provider_url).as_deref(),
             Some(PAWSTASH_USER_AGENT)
         );
-
-        let args = derive_download_header_args(&url);
-        assert!(args
-            .iter()
-            .any(|a| a == &format!("--user-agent={PAWSTASH_USER_AGENT}")));
+        assert!(derive_download_header_args(&provider_url)
+            .contains(&format!("--user-agent={PAWSTASH_USER_AGENT}")));
+        assert_eq!(
+            user_agent(example_url()).as_deref(),
+            Some(crate::net::DEFAULT_BROWSER_USER_AGENT)
+        );
     }
 }

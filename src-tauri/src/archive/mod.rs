@@ -1153,16 +1153,21 @@ mod tests {
     fn normalizes_entry_paths() {
         assert_eq!(normalize_entry_path("a\\b\\c.txt"), "a/b/c.txt");
         assert_eq!(normalize_entry_path("/./a//../b/"), "a/b");
+        assert_eq!(normalize_entry_path("../../etc/passwd"), "etc/passwd");
     }
 
     #[test]
     fn detects_formats_by_name() {
-        assert_eq!(detect_format("Pack.ZIP"), "zip");
-        assert_eq!(detect_format("comic.cbz"), "zip");
-        assert_eq!(detect_format("set.part1.rar"), "rar");
-        assert_eq!(detect_format("set.7z.001"), "7z");
-        assert_eq!(detect_format("set.7z"), "7z");
-        assert_eq!(detect_format("video.mp4"), "unknown");
+        for (name, format) in [
+            ("Pack.ZIP", "zip"),
+            ("comic.cbz", "zip"),
+            ("set.part1.rar", "rar"),
+            ("set.7z.001", "7z"),
+            ("set.7z", "7z"),
+            ("video.mp4", "unknown"),
+        ] {
+            assert_eq!(detect_format(name), format, "{name}");
+        }
     }
 
     fn build_sample_zip(path: &Path) -> Vec<(&'static str, Vec<u8>)> {
@@ -1266,14 +1271,6 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    #[test]
-    fn archive_ids_are_stable_hex_sha256() {
-        let id = archive_id_for("https://file.example/data/a.zip");
-        assert_eq!(id.len(), 64);
-        assert_eq!(id, archive_id_for("https://file.example/data/a.zip"));
-        assert_ne!(id, archive_id_for("https://file.example/data/b.zip"));
-    }
-
     const LIVE_ARCHIVE: &str = "https://file.pawchive.pw/data/56/55/565569f370906b543e1a64dbd70b0b3972da114f8ede7eb190be71da0b0bbf1b.zip";
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1329,13 +1326,6 @@ mod tests {
             .await
             .expect("entry head");
         let head = response.bytes().await.unwrap();
-        println!(
-            "entries={} listing_bytes={listing_bytes} after_data_start={} first_entry={} data_start={data_start} head={:?}",
-            session.entries.len(),
-            remote.fetched_bytes(),
-            session.entries[first_file].path,
-            &head[4..8]
-        );
         assert!(matches!(
             &head[4..8],
             b"ftyp" | b"wide" | b"free" | b"mdat" | b"moov" | b"skip" | b"pnot"

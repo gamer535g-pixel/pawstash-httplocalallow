@@ -1,5 +1,7 @@
 use super::models::{CloudFolderResult, CloudNode};
+use futures_util::stream::{self, StreamExt};
 use reqwest::Client;
+use scraper::{Html, Selector};
 
 pub fn supports_url(url: &str) -> bool {
     super::url_host_matches(url, &["drive.google.com", "docs.google.com"])
@@ -16,6 +18,11 @@ pub fn should_proxy_stream(url: &str) -> bool {
     )
 }
 
+const MAX_FOLDERS: usize = 200;
+const MAX_FILES: usize = 300;
+const LISTING_CONCURRENCY: usize = 4;
+const FILE_CONCURRENCY: usize = 6;
+
 pub async fn resolve_googledrive(
     client: &Client,
     url_str: &str,
@@ -24,54 +31,200 @@ pub async fn resolve_googledrive(
         .ok_or_else(|| format!("Invalid Google Drive URL: {url_str}"))?;
 
     if is_folder {
-        let folder_title = format!("Google Drive Folder ({target_id})");
-        let direct_url = format!("https://drive.google.com/drive/folders/{target_id}");
-        let node = CloudNode {
-            id: target_id.clone(),
-            parent_id: None,
-            name: folder_title.clone(),
-            size: None,
-            is_folder: true,
-            mime_type: Some("application/vnd.google-apps.folder".into()),
-            download_url: Some(direct_url.clone()),
-            stream_url: Some(direct_url.clone()),
-            thumbnail_url: None,
-            children: None,
-            is_encrypted: false,
-        };
-
-        return Ok(CloudFolderResult {
-            provider: "googledrive".into(),
-            url: url_str.to_string(),
-            title: folder_title,
-            total_files: 1,
-            total_size: 0,
-            is_single_file: false,
-            nodes: vec![node],
-        });
+        return Ok(resolve_folder(client, url_str, &target_id).await);
     }
 
+    let node = resolve_file(client, &target_id, None).await;
+    Ok(CloudFolderResult {
+        provider: "googledrive".into(),
+        url: url_str.to_string(),
+        title: node.name.clone(),
+        total_files: 1,
+        total_size: node.size.unwrap_or(0),
+        is_single_file: true,
+        nodes: vec![node],
+    })
+}
+
+struct FolderEntry {
+    id: String,
+    name: String,
+    is_folder: bool,
+    thumbnail_url: Option<String>,
+}
+
+struct FolderListing {
+    title: Option<String>,
+    entries: Vec<FolderEntry>,
+}
+
+async fn resolve_folder(client: &Client, url_str: &str, root_id: &str) -> CloudFolderResult {
+    let mut title = format!("Google Drive Folder ({root_id})");
+    let mut nodes = vec![folder_node(root_id.to_string(), None, title.clone())];
+    let mut files: Vec<(FolderEntry, String)> = Vec::new();
+    let mut level = vec![root_id.to_string()];
+
+    while !level.is_empty() {
+        let listings: Vec<(String, Result<FolderListing, String>)> = stream::iter(level)
+            .map(|parent| async move {
+                let listing = list_folder(client, &parent).await;
+                (parent, listing)
+            })
+            .buffer_unordered(LISTING_CONCURRENCY)
+            .collect()
+            .await;
+
+        let mut next = Vec::new();
+        for (parent, listing) in listings {
+            let listing = match listing {
+                Ok(listing) => listing,
+                Err(error) => {
+                    tracing::warn!(%error, folder = %parent, "Couldn't list a Google Drive folder");
+                    continue;
+                }
+            };
+            if parent == root_id {
+                if let Some(name) = listing.title {
+                    title = name.clone();
+                    nodes[0].name = name;
+                }
+            }
+            for entry in listing.entries {
+                if entry.is_folder {
+                    if nodes.len() >= MAX_FOLDERS {
+                        continue;
+                    }
+                    nodes.push(folder_node(
+                        entry.id.clone(),
+                        Some(parent.clone()),
+                        entry.name,
+                    ));
+                    next.push(entry.id);
+                } else if files.len() < MAX_FILES {
+                    files.push((entry, parent.clone()));
+                }
+            }
+        }
+        level = next;
+    }
+
+    let file_nodes: Vec<CloudNode> = stream::iter(files)
+        .map(|(entry, parent)| async move {
+            let mut node = resolve_file(client, &entry.id, Some(&entry.name)).await;
+            node.parent_id = Some(parent);
+            if node.thumbnail_url.is_none() {
+                node.thumbnail_url = entry.thumbnail_url;
+            }
+            node
+        })
+        .buffered(FILE_CONCURRENCY)
+        .collect()
+        .await;
+
+    let total_size = file_nodes.iter().filter_map(|node| node.size).sum();
+    let total_files = file_nodes.len() as u64;
+    nodes.extend(file_nodes);
+    CloudFolderResult {
+        provider: "googledrive".into(),
+        url: url_str.to_string(),
+        title,
+        total_files,
+        total_size,
+        is_single_file: false,
+        nodes,
+    }
+}
+
+async fn list_folder(client: &Client, folder_id: &str) -> Result<FolderListing, String> {
+    let url = format!("https://drive.google.com/embeddedfolderview?id={folder_id}");
+    let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("Google Drive returned HTTP {}", response.status()));
+    }
+    let html = response.text().await.map_err(|e| e.to_string())?;
+    parse_folder_listing(&html)
+}
+
+fn parse_folder_listing(html: &str) -> Result<FolderListing, String> {
+    let selector = |css: &str| Selector::parse(css).map_err(|e| e.to_string());
+    let entry_selector = selector("div.flip-entry")?;
+    let link_selector = selector("a[href]")?;
+    let title_selector = selector(".flip-entry-title")?;
+    let thumb_selector = selector(".flip-entry-thumb img")?;
+    let page_title_selector = selector("title")?;
+
+    let document = Html::parse_document(html);
+    let title = document
+        .select(&page_title_selector)
+        .next()
+        .map(|element| element.text().collect::<String>().trim().to_string())
+        .filter(|name| !name.is_empty());
+    let entries = document
+        .select(&entry_selector)
+        .filter_map(|entry| {
+            let id = entry
+                .value()
+                .attr("id")?
+                .strip_prefix("entry-")?
+                .to_string();
+            let href = entry.select(&link_selector).next()?.value().attr("href")?;
+            let name = entry
+                .select(&title_selector)
+                .next()?
+                .text()
+                .collect::<String>()
+                .trim()
+                .to_string();
+            let thumbnail_url = entry
+                .select(&thumb_selector)
+                .next()
+                .and_then(|img| img.value().attr("src"))
+                .map(|src| src.replace("=s190", "=w800"));
+            Some(FolderEntry {
+                id,
+                name,
+                is_folder: href.contains("/drive/folders/"),
+                thumbnail_url,
+            })
+        })
+        .collect();
+    Ok(FolderListing { title, entries })
+}
+
+fn folder_node(id: String, parent_id: Option<String>, name: String) -> CloudNode {
+    CloudNode {
+        id,
+        parent_id,
+        name,
+        size: None,
+        is_folder: true,
+        mime_type: Some("application/vnd.google-apps.folder".into()),
+        download_url: None,
+        stream_url: None,
+        thumbnail_url: None,
+        children: None,
+        is_encrypted: false,
+    }
+}
+
+async fn resolve_file(client: &Client, target_id: &str, known_name: Option<&str>) -> CloudNode {
     let direct_url = format!(
         "https://drive.usercontent.google.com/download?id={target_id}&export=download&confirm=t"
     );
     let fallback_download_url =
         format!("https://drive.google.com/uc?export=download&id={target_id}&confirm=t");
 
-    let mut filename = format!("Google_Drive_File_{target_id}");
+    let mut filename = known_name
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("Google_Drive_File_{target_id}"));
     let mut size = None;
 
     let view_url = format!("https://drive.google.com/file/d/{target_id}/view");
     if let Ok(resp) = client.get(&view_url).send().await {
         if let Ok(html) = resp.text().await {
-            if let Some(og_title) = extract_meta_content(&html, "og:title") {
-                let trimmed = og_title.trim();
-                if !trimmed.is_empty() && trimmed != "Google Drive" {
-                    filename = trimmed.to_string();
-                }
-            } else if let Some(page_title) = extract_title(&html) {
-                let cleaned = page_title.trim().trim_end_matches("- Google Drive").trim();
-                if !cleaned.is_empty() && cleaned != "Google Drive" {
-                    filename = cleaned.to_string();
+            if known_name.is_none() {
+                if let Some(name) = page_file_name(&html) {
+                    filename = name;
                 }
             }
 
@@ -170,8 +323,8 @@ pub async fn resolve_googledrive(
         None
     };
 
-    let node = CloudNode {
-        id: target_id.clone(),
+    CloudNode {
+        id: target_id.to_string(),
         parent_id: None,
         name: filename.clone(),
         size,
@@ -182,19 +335,19 @@ pub async fn resolve_googledrive(
         thumbnail_url,
         children: None,
         is_encrypted: false,
+    }
+}
+
+fn page_file_name(html: &str) -> Option<String> {
+    let name = match extract_meta_content(html, "og:title") {
+        Some(title) => title.trim().to_string(),
+        None => extract_title(html)?
+            .trim()
+            .trim_end_matches("- Google Drive")
+            .trim()
+            .to_string(),
     };
-
-    let total_size = size.unwrap_or(0);
-
-    Ok(CloudFolderResult {
-        provider: "googledrive".into(),
-        url: url_str.to_string(),
-        title: filename,
-        total_files: 1,
-        total_size,
-        is_single_file: true,
-        nodes: vec![node],
-    })
+    (!name.is_empty() && name != "Google Drive").then_some(name)
 }
 
 fn parse_human_size(s: &str) -> Option<u64> {
@@ -427,6 +580,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn folder_listing_reads_files_and_subfolders() {
+        let html = r#"<html><head><title>Doggy</title></head><body><div class="flip-entries">
+            <div class="flip-entry" id="entry-1GEL0gIAa" tabindex="0" role="link"><div class="flip-entry-info"><a href="https://drive.google.com/drive/folders/1GEL0gIAa" target="_blank"><div class="flip-entry-title">Outfit 1</div></a></div></div>
+            <div class="flip-entry" id="entry-1M2CGvlnP" tabindex="0" role="link"><div class="flip-entry-info"><a href="https://drive.google.com/file/d/1M2CGvlnP/view?usp=drive_web" target="_blank"><div class="flip-entry-visual"><div class="flip-entry-visual-card"><div class="flip-entry-thumb"><img src="https://lh3.googleusercontent.com/drive-storage/abc=s190" alt="Video"/></div></div></div><div class="flip-entry-title">Outfit 1 Cam 3 4K.mp4</div></a></div></div>
+        </div></body></html>"#;
+
+        let listing = parse_folder_listing(html).unwrap();
+        assert_eq!(listing.title.as_deref(), Some("Doggy"));
+        assert_eq!(listing.entries.len(), 2);
+        assert!(listing.entries[0].is_folder);
+        assert_eq!(listing.entries[0].id, "1GEL0gIAa");
+        let file = &listing.entries[1];
+        assert!(!file.is_folder);
+        assert_eq!(file.name, "Outfit 1 Cam 3 4K.mp4");
+        assert_eq!(
+            file.thumbnail_url.as_deref(),
+            Some("https://lh3.googleusercontent.com/drive-storage/abc=w800")
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "hits Google Drive"]
+    async fn public_folder_lists_nested_files() {
+        let client = Client::builder().user_agent("Mozilla/5.0").build().unwrap();
+        let result = resolve_googledrive(
+            &client,
+            "https://drive.google.com/drive/folders/1YdwGRj55E_KjW4740AQ4Gmo42STDa7l2",
+        )
+        .await
+        .unwrap();
+        for node in &result.nodes {
+            println!(
+                "{} {:?} {} {:?}",
+                node.is_folder, node.parent_id, node.name, node.size
+            );
+        }
+        assert_eq!(result.title, "Doggy");
+        assert!(result.total_files > 0);
+    }
+
+    #[test]
     fn test_extract_filename_from_cd() {
         assert_eq!(
             extract_filename_from_cd("attachment; filename=\"DVA_Stuckplug_Sep_02.mp4\""),
@@ -455,20 +649,28 @@ mod tests {
 
     #[test]
     fn test_parse_googledrive_urls() {
-        assert_eq!(
-            parse_googledrive_url("https://drive.google.com/file/d/1a2b3c4d5e/view?usp=sharing"),
-            Some(("1a2b3c4d5e".to_string(), false))
-        );
-
-        assert_eq!(
-            parse_googledrive_url("https://drive.google.com/drive/folders/folder98765"),
-            Some(("folder98765".to_string(), true))
-        );
-
-        assert_eq!(
-            parse_googledrive_url("https://drive.google.com/uc?id=query_id_123&export=download"),
-            Some(("query_id_123".to_string(), false))
-        );
+        for (url, id, is_folder) in [
+            (
+                "https://drive.google.com/file/d/1a2b3c4d5e/view?usp=sharing",
+                "1a2b3c4d5e",
+                false,
+            ),
+            (
+                "https://drive.google.com/drive/folders/folder98765",
+                "folder98765",
+                true,
+            ),
+            (
+                "https://drive.google.com/uc?id=query_id_123&export=download",
+                "query_id_123",
+                false,
+            ),
+        ] {
+            assert_eq!(
+                parse_googledrive_url(url),
+                Some((id.to_string(), is_folder))
+            );
+        }
     }
 
     #[test]

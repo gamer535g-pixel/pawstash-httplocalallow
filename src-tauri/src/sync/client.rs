@@ -347,52 +347,68 @@ mod tests {
     };
     use uuid::Uuid;
 
+    fn unique(prefix: &str) -> String {
+        format!("{prefix}_{}", Uuid::new_v4().simple())
+    }
+
+    fn fast_kdf() -> KdfEnvelope {
+        KdfEnvelope {
+            memory_kib: 1024,
+            iterations: 1,
+            ..KdfEnvelope::generate()
+        }
+    }
+
+    async fn device_session(
+        client: &SyncHttpClient,
+        account: &str,
+        auth_token: &str,
+        name: &str,
+    ) -> (String, String) {
+        let bootstrap = client.session(account, auth_token, None).await.unwrap();
+        let device = unique("device");
+        client
+            .register_device(&bootstrap.token, &device, name)
+            .await
+            .unwrap();
+        let session = client
+            .session(account, auth_token, Some(&device))
+            .await
+            .unwrap();
+        (device, session.token)
+    }
+
     #[tokio::test]
     #[ignore = "requires a local pawstash sync-server in PAWSTASH_TEST_SYNC_URL"]
     async fn two_devices_exchange_only_encrypted_records() {
         let server = std::env::var("PAWSTASH_TEST_SYNC_URL").unwrap();
         let client = SyncHttpClient::new(&server, &AppSettings::default()).unwrap();
-        let account = format!("account_{}", Uuid::new_v4().simple());
+        let account = unique("account");
         let password = "integration master password";
-        let kdf = KdfEnvelope {
-            memory_kib: 1024,
-            iterations: 1,
-            ..KdfEnvelope::generate()
-        };
+        let kdf = fast_kdf();
         let secrets = VaultSecrets::generate();
         let wrapped = wrap_vault(password, &kdf, &secrets).unwrap();
-        let kdf_value = serde_json::to_value(&kdf).unwrap();
         client
             .create_account(&CreateAccountRequest {
                 account_id: &account,
                 auth_token: &secrets.auth_token,
-                kdf: &kdf_value,
+                kdf: &serde_json::to_value(&kdf).unwrap(),
                 encrypted_key_bundle: &wrapped.ciphertext,
                 nonce: &wrapped.nonce,
             })
             .await
             .unwrap();
-        let bootstrap = client
-            .session(&account, &secrets.auth_token, None)
-            .await
-            .unwrap();
-        let first_device = format!("device_{}", Uuid::new_v4().simple());
-        client
-            .register_device(&bootstrap.token, &first_device, "Device A")
-            .await
-            .unwrap();
-        let first_session = client
-            .session(&account, &secrets.auth_token, Some(&first_device))
-            .await
-            .unwrap();
-        let record_id = format!("record_{}", Uuid::new_v4().simple());
+        let (first_device, first_token) =
+            device_session(&client, &account, &secrets.auth_token, "Device A").await;
+
+        let record_id = unique("record");
         let plaintext = br#"{"schema_version":1,"collections":[],"entries":[],"memberships":[],"subscriptions":[]}"#;
         let encrypted =
             encrypt_record(&secrets.vault_key_bytes().unwrap(), &record_id, plaintext).unwrap();
         client
             .push(
-                &first_session.token,
-                &format!("request_{}", Uuid::new_v4().simple()),
+                &first_token,
+                &unique("request"),
                 &[PushRecordInput {
                     record_id: &record_id,
                     kind: "collection",
@@ -406,28 +422,17 @@ mod tests {
             .await
             .unwrap();
 
-        let remote_bundle = client.bundle(&account).await.unwrap();
+        let bundle = client.bundle(&account).await.unwrap();
         let second_secrets = unwrap_vault(
             password,
-            &serde_json::from_value(remote_bundle.kdf).unwrap(),
-            &remote_bundle.encrypted_key_bundle,
-            &remote_bundle.nonce,
+            &serde_json::from_value(bundle.kdf).unwrap(),
+            &bundle.encrypted_key_bundle,
+            &bundle.nonce,
         )
         .unwrap();
-        let second_bootstrap = client
-            .session(&account, &second_secrets.auth_token, None)
-            .await
-            .unwrap();
-        let second_device = format!("device_{}", Uuid::new_v4().simple());
-        client
-            .register_device(&second_bootstrap.token, &second_device, "Device B")
-            .await
-            .unwrap();
-        let second_session = client
-            .session(&account, &second_secrets.auth_token, Some(&second_device))
-            .await
-            .unwrap();
-        let pulled = client.pull(&second_session.token, 0).await.unwrap();
+        let (_, second_token) =
+            device_session(&client, &account, &second_secrets.auth_token, "Device B").await;
+        let pulled = client.pull(&second_token, 0).await.unwrap();
         assert_eq!(pulled.changes.len(), 1);
         let change = &pulled.changes[0];
         let opened = decrypt_record(
@@ -439,29 +444,18 @@ mod tests {
         .unwrap();
         assert_eq!(opened, plaintext);
 
-        let devices = client.list_devices(&second_session.token).await.unwrap();
-        assert_eq!(
-            devices
-                .iter()
-                .filter(|device| device.revoked_at.is_none())
-                .count(),
-            2
-        );
+        let devices = client.list_devices(&second_token).await.unwrap();
+        assert_eq!(devices.iter().filter(|d| d.revoked_at.is_none()).count(), 2);
 
         let new_password = "replacement integration password";
-        let new_kdf = KdfEnvelope {
-            memory_kib: 1024,
-            iterations: 1,
-            ..KdfEnvelope::generate()
-        };
+        let new_kdf = fast_kdf();
         let replacement = wrap_vault(new_password, &new_kdf, &second_secrets).unwrap();
-        let new_kdf_value = serde_json::to_value(&new_kdf).unwrap();
         client
             .replace_bundle(
-                &second_session.token,
+                &second_token,
                 &account,
                 &ReplaceBundleRequest {
-                    kdf: &new_kdf_value,
+                    kdf: &serde_json::to_value(&new_kdf).unwrap(),
                     encrypted_key_bundle: &replacement.ciphertext,
                     nonce: &replacement.nonce,
                 },
@@ -470,23 +464,19 @@ mod tests {
             .unwrap();
         let replaced = client.bundle(&account).await.unwrap();
         let replaced_kdf: KdfEnvelope = serde_json::from_value(replaced.kdf).unwrap();
-        assert!(unwrap_vault(
-            password,
-            &replaced_kdf,
-            &replaced.encrypted_key_bundle,
-            &replaced.nonce
-        )
-        .is_err());
-        unwrap_vault(
-            new_password,
-            &replaced_kdf,
-            &replaced.encrypted_key_bundle,
-            &replaced.nonce,
-        )
-        .unwrap();
+        let open_with = |pass| {
+            unwrap_vault(
+                pass,
+                &replaced_kdf,
+                &replaced.encrypted_key_bundle,
+                &replaced.nonce,
+            )
+        };
+        assert!(open_with(password).is_err());
+        assert!(open_with(new_password).is_ok());
 
         client
-            .revoke_device(&second_session.token, &first_device)
+            .revoke_device(&second_token, &first_device)
             .await
             .unwrap();
         assert!(client

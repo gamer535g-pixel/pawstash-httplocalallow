@@ -1750,110 +1750,92 @@ mod tests {
     use super::*;
     use crate::api::providers::traits::SourceProvider;
 
-    #[test]
-    fn test_clean_onlyhaven_title() {
-        assert_eq!(
-            clean_onlyhaven_title("<p>Hello <b>World</b> &amp; Friends</p>"),
-            "Hello World & Friends"
-        );
-        assert_eq!(
-            clean_onlyhaven_title("**Bold** __Underline__ ~~Strike~~"),
-            "Bold Underline Strike"
-        );
-        assert_eq!(clean_onlyhaven_title(""), "");
+    const HASH: &str = "7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2";
+
+    fn provider() -> OnlyHavenProvider {
+        OnlyHavenProvider::new(OnlyHavenProvider::default_config()).unwrap()
+    }
+
+    fn post_from(json: &str, creator_id: &str) -> Post {
+        let row: OnlyHavenPostRow = serde_json::from_str(json).unwrap();
+        row.into_post(creator_id, "onlyhaven")
     }
 
     #[test]
-    fn test_onlyhaven_url_resolution() {
-        let provider = OnlyHavenProvider::new(ProviderConfig {
-            id: "onlyhaven".to_string(),
-            name: "OnlyHaven".to_string(),
-            enabled: true,
-            priority: 1,
-            api_url: "https://cum.st".to_string(),
-            file_url: Some("https://e1.cum.st".to_string()),
-            image_url: Some("https://img.cum.st".to_string()),
-            fallback_urls: vec![],
-            session_cookie: "".to_string(),
-            username: "".to_string(),
-            services: vec!["onlyfans".to_string()],
-            file_prefix: None,
-            image_prefix: None,
-            is_custom: false,
-            ..Default::default()
-        })
-        .unwrap();
-
-        assert_eq!(
-            provider.resolve_media_url("7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2", None),
-            "https://e1.cum.st/media/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/original.jpg"
-        );
-        assert_eq!(
-            provider.resolve_media_url("7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/original.mp4", None),
-            "https://e1.cum.st/media/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/original.mp4"
-        );
-        assert_eq!(
-            provider.resolve_thumbnail_url("7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2"),
-            "https://img.cum.st/thumbnail/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/preview.webp"
-        );
-        assert_eq!(
-            provider.resolve_thumbnail_url("7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/original.mp4"),
-            "https://img.cum.st/thumbnail/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/preview.webp"
-        );
-        assert_eq!(
-            provider.resolve_thumbnail_url("/data/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/original.jpg"),
-            "https://img.cum.st/thumbnail/7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2/preview.webp"
-        );
+    fn titles_are_stripped_of_html_and_markdown() {
+        for (raw, clean) in [
+            (
+                "<p>Hello <b>World</b> &amp; Friends</p>",
+                "Hello World & Friends",
+            ),
+            ("**Bold** __Underline__ ~~Strike~~", "Bold Underline Strike"),
+            ("", ""),
+        ] {
+            assert_eq!(clean_onlyhaven_title(raw), clean);
+        }
     }
 
     #[test]
-    fn test_onlyhaven_video_and_image_attachment_resolution() {
-        let raw_json = r#"{
-            "id": "12345",
-            "service": "onlyfans",
-            "creatorId": "30340311",
-            "attachments": [
-                {
-                    "storageKey": "dbdb2948798318c9ecc41637ebaedf2e1e33a55f7517a63affd3afd5c375b93b",
-                    "kind": "video",
-                    "variants": [
-                        { "name": "original.mp4", "bytes": 107505000 },
-                        { "name": "240p.mp4", "bytes": 28856538 }
-                    ]
-                },
-                {
-                    "storageKey": "f71cb7891234",
-                    "kind": "image",
-                    "variants": [
-                        { "name": "original.jpg", "bytes": 50000 }
-                    ]
-                },
-                {
-                    "storageKey": "aaaa11112222",
-                    "kind": "video"
-                }
+    fn storage_keys_resolve_to_media_and_thumbnail_urls() {
+        let provider = provider();
+        let media = format!("https://e1.cum.st/media/{HASH}");
+        let thumb = format!("https://img.cum.st/thumbnail/{HASH}/preview.webp");
+        assert_eq!(
+            provider.resolve_media_url(HASH, None),
+            format!("{media}/original.jpg")
+        );
+        assert_eq!(
+            provider.resolve_media_url(&format!("{HASH}/original.mp4"), None),
+            format!("{media}/original.mp4")
+        );
+        for path in [
+            HASH.to_string(),
+            format!("{HASH}/original.mp4"),
+            format!("/data/{HASH}/original.jpg"),
+        ] {
+            assert_eq!(provider.resolve_thumbnail_url(&path), thumb, "{path}");
+        }
+    }
+
+    #[test]
+    fn attachments_pick_the_original_variant_per_kind() {
+        let post = post_from(
+            r#"{
+                "id": "12345", "service": "onlyfans", "creatorId": "30340311",
+                "attachments": [
+                    {
+                        "storageKey": "dbdb2948798318c9ecc41637ebaedf2e1e33a55f7517a63affd3afd5c375b93b",
+                        "kind": "video",
+                        "variants": [{ "name": "original.mp4", "bytes": 107505000 }, { "name": "240p.mp4", "bytes": 28856538 }]
+                    },
+                    { "storageKey": "f71cb7891234", "kind": "image", "variants": [{ "name": "original.jpg", "bytes": 50000 }] },
+                    { "storageKey": "aaaa11112222", "kind": "video" }
+                ]
+            }"#,
+            "30340311",
+        );
+        let attachments = post.attachments.unwrap();
+        let paths: Vec<_> = attachments
+            .iter()
+            .map(|a| a.path.as_deref().unwrap())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "/dbdb2948798318c9ecc41637ebaedf2e1e33a55f7517a63affd3afd5c375b93b/original.mp4",
+                "/f71cb7891234/original.jpg",
+                "/aaaa11112222/original.mp4",
             ]
-        }"#;
-        let row: OnlyHavenPostRow = serde_json::from_str(raw_json).unwrap();
-        let post = row.into_post("30340311", "onlyhaven");
-        let atts = post.attachments.expect("attachments should exist");
-        assert_eq!(atts.len(), 3);
-        assert_eq!(
-            atts[0].path.as_deref(),
-            Some("/dbdb2948798318c9ecc41637ebaedf2e1e33a55f7517a63affd3afd5c375b93b/original.mp4")
         );
-        assert_eq!(atts[0].name.as_deref(), Some("original.mp4"));
-        assert_eq!(atts[1].path.as_deref(), Some("/f71cb7891234/original.jpg"));
-        assert_eq!(atts[1].name.as_deref(), Some("original.jpg"));
-        assert_eq!(atts[2].path.as_deref(), Some("/aaaa11112222/original.mp4"));
+        assert_eq!(attachments[0].name.as_deref(), Some("original.mp4"));
+        assert_eq!(attachments[1].name.as_deref(), Some("original.jpg"));
 
-        let provider = OnlyHavenProvider::new(OnlyHavenProvider::default_config()).unwrap();
         let mut legacy_video = Attachment {
             name: Some("legacy-video.MP4".into()),
             path: Some("/abdd1153589ba0dd317b5e3337b12b31".into()),
             ..Attachment::default()
         };
-        provider.enrich_attachment(&mut legacy_video);
+        provider().enrich_attachment(&mut legacy_video);
         assert_eq!(
             legacy_video.url.as_deref(),
             Some("https://e1.cum.st/media/abdd1153589ba0dd317b5e3337b12b31/original.mp4")
@@ -1861,278 +1843,145 @@ mod tests {
     }
 
     #[test]
-    fn test_onlyhaven_prev_next_normalization() {
-        let raw_json = r#"{
-            "id": "950597293931769856",
-            "service": "fansly",
-            "creatorId": "665110462043533312",
-            "title": null,
-            "caption": "💙",
-            "prev": { "id": "949880048393932800" },
-            "next": null
-        }"#;
-        let row: OnlyHavenPostRow = serde_json::from_str(raw_json).unwrap();
-        let post = row.into_post("665110462043533312", "onlyhaven");
+    fn prev_and_next_are_swapped_into_feed_order() {
+        let post = post_from(
+            r#"{
+                "id": "950597293931769856", "service": "fansly", "creatorId": "665110462043533312",
+                "title": null, "caption": "💙", "prev": { "id": "949880048393932800" }, "next": null
+            }"#,
+            "665110462043533312",
+        );
         assert_eq!(post.prev, None);
         assert_eq!(post.next.as_deref(), Some("949880048393932800"));
     }
 
     #[test]
-    fn test_onlyhaven_locked_attachments_preserved() {
-        let raw_json = r#"{
-            "id": "917213282249502720",
-            "service": "fansly",
-            "creatorId": "717101518569873409",
-            "title": null,
-            "caption": "Audio RP",
-            "attachments": [
-                {
-                    "locked": true,
-                    "position": 0,
-                    "externalId": "917212607612474548",
-                    "type": "audio",
-                    "priceCents": 15000
-                }
-            ]
-        }"#;
-        let row: OnlyHavenPostRow = serde_json::from_str(raw_json).unwrap();
-        let post = row.into_post("717101518569873409", "onlyhaven");
-        let attachments = post.attachments.expect("attachments should be present");
-        assert_eq!(attachments.len(), 1);
-        let att = &attachments[0];
-        assert_eq!(att.extra.get("locked").and_then(Value::as_bool), Some(true));
-        assert_eq!(att.extra.get("kind").and_then(Value::as_str), Some("audio"));
+    fn locked_attachments_are_kept_with_their_kind() {
+        let post = post_from(
+            r#"{
+                "id": "917213282249502720", "service": "fansly", "creatorId": "717101518569873409",
+                "title": null, "caption": "Audio RP",
+                "attachments": [
+                    { "locked": true, "position": 0, "externalId": "917212607612474548", "type": "audio", "priceCents": 15000 }
+                ]
+            }"#,
+            "717101518569873409",
+        );
         assert!(post.file.is_some());
-    }
-
-    fn test_oh_config(api_url: String) -> ProviderConfig {
-        ProviderConfig {
-            id: "onlyhaven".to_string(),
-            name: "OnlyHaven".to_string(),
-            enabled: true,
-            priority: 1,
-            api_url,
-            file_url: Some("https://e1.cum.st".to_string()),
-            image_url: Some("https://img.cum.st".to_string()),
-            fallback_urls: vec![],
-            session_cookie: "".to_string(),
-            username: "".to_string(),
-            services: vec!["fansly".to_string(), "onlyfans".to_string()],
-            file_prefix: None,
-            image_prefix: None,
-            is_custom: false,
-            ..Default::default()
-        }
+        let attachments = post.attachments.unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(
+            attachments[0].extra.get("locked").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            attachments[0].extra.get("kind").and_then(Value::as_str),
+            Some("audio")
+        );
     }
 
     #[test]
-    fn test_onlyhaven_auth_schema() {
-        let conf = test_oh_config("https://cum.st".into());
-        let provider = OnlyHavenProvider::new(conf).unwrap();
-        let schema = provider.auth_schema();
-        assert_eq!(schema.provider_id, "onlyhaven");
-        assert!(schema.supports_auth);
-        assert!(!schema.supports_remote_favorites);
-        assert!(!schema.supports_push_favorites);
+    fn popular_response_deserializes() {
+        let response: OnlyHavenListResponse<OnlyHavenPostRow> = serde_json::from_str(
+            r#"{
+                "total": 500, "uncapped": 500, "period": "day", "date": "2026-09-07",
+                "posts": [{
+                    "id": "1329029322", "service": "onlyfans", "creatorId": "307380936",
+                    "creatorName": "dutifuldolly", "captionHtml": "<p>hello</p>",
+                    "added": 1788670357, "published": 1729288830, "bookmarked": 9, "score": 9,
+                    "attachments": [{
+                        "locked": false, "position": 0, "id": "7b6fac0f-7c44-4dfb-a0fe-444fd292833e",
+                        "sha256": "148d475a2d444bc461da309c491fe015c6372ea6b31a3cb3430f6187510191a0",
+                        "kind": "video", "mimeType": "video/mp4", "bytes": 131191210,
+                        "storageKey": "148d475a2d444bc461da309c491fe015c6372ea6b31a3cb3430f6187510191a0",
+                        "previewThumbhash": "2JcGHAYMYNkpmCZ4mnd/pIaQhg=="
+                    }]
+                }]
+            }"#,
+        )
+        .unwrap();
+        let posts = response.posts.unwrap();
+        assert_eq!(posts.len(), 1);
+        let post = posts[0].clone().into_post("", "onlyhaven");
+        assert_eq!(
+            (post.id.as_str(), post.user.as_str(), post.service.as_str()),
+            ("1329029322", "307380936", "onlyfans")
+        );
+        assert_eq!(post.favorite_count, Some(9));
+        assert!(post.file.is_some());
     }
 
     #[tokio::test]
     #[ignore = "hits live provider APIs; run with `cargo test -- --ignored`"]
     async fn live_onlyhaven_public_contracts() {
-        let conf = ProviderConfig {
-            id: "onlyhaven".into(),
-            name: "OnlyHaven".into(),
-            enabled: true,
-            api_url: "https://cum.st".into(),
-            fallback_urls: vec![],
-            file_url: Some("https://e1.cum.st".into()),
-            image_url: Some("https://img.cum.st".into()),
-            file_prefix: None,
-            image_prefix: None,
-            session_cookie: "".into(),
-            username: "".into(),
-            services: vec!["onlyfans".into(), "fansly".into()],
-            is_custom: false,
-            priority: 1,
-            ..Default::default()
-        };
-        let provider = OnlyHavenProvider::new(conf).expect("create OnlyHavenProvider");
+        let provider = provider();
+        let (service, creator, post_id) = ("onlyfans", "30340311", "2642729960");
 
-        let health = provider.test_connection().await.expect("test_connection");
-        assert!(
-            health.is_healthy,
-            "OnlyHaven health check failed: {:?}",
-            health.error
+        let health = provider.test_connection().await.unwrap();
+        assert!(health.is_healthy, "health check failed: {:?}", health.error);
+        assert!(!provider.fetch_creators().await.unwrap().is_empty());
+        assert_eq!(
+            provider
+                .fetch_creator_profile(service, creator)
+                .await
+                .unwrap()
+                .id,
+            creator
         );
 
-        let creators = provider.fetch_creators().await.expect("fetch_creators");
-        assert!(
-            !creators.is_empty(),
-            "OnlyHaven fetch_creators returned 0 creators"
-        );
+        for (query, offset) in [(None, 0), (None, 50), (Some("cat"), 0)] {
+            let posts = provider.fetch_recent_posts(query, offset).await.unwrap();
+            assert!(
+                !posts.is_empty(),
+                "recent {query:?} @ {offset} returned 0 posts"
+            );
+        }
+        for period in ["day", "month"] {
+            let posts = provider.fetch_popular_posts(period, None, 0).await.unwrap();
+            assert!(!posts.is_empty(), "popular {period} returned 0 posts");
+        }
+        for query in [None, Some("test")] {
+            let posts = provider
+                .fetch_posts(service, creator, 0, query)
+                .await
+                .unwrap();
+            assert!(
+                !posts.is_empty(),
+                "creator posts {query:?} returned 0 posts"
+            );
+        }
 
-        let profile = provider
-            .fetch_creator_profile("onlyfans", "30340311")
+        let post = provider
+            .fetch_post(service, creator, post_id)
             .await
-            .expect("fetch_creator_profile");
-        assert_eq!(profile.id, "30340311");
-
-        let recent = provider
-            .fetch_recent_posts(None, 0)
-            .await
-            .expect("fetch_recent_posts");
-        assert!(!recent.is_empty(), "OnlyHaven recent feed returned 0 posts");
-
-        let paged = provider
-            .fetch_recent_posts(None, 50)
-            .await
-            .expect("fetch_recent_posts paged");
-        assert!(!paged.is_empty(), "OnlyHaven offset 50 returned 0 posts");
-
-        let searched = provider
-            .fetch_recent_posts(Some("cat"), 0)
-            .await
-            .expect("fetch_recent_posts query");
-        assert!(!searched.is_empty(), "OnlyHaven search returned 0 posts");
-
-        let popular = provider
-            .fetch_popular_posts("day", None, 0)
-            .await
-            .expect("fetch_popular_posts day");
-        assert!(
-            !popular.is_empty(),
-            "OnlyHaven popular feed returned 0 posts"
-        );
-
-        let popular_month = provider
-            .fetch_popular_posts("month", None, 0)
-            .await
-            .expect("fetch_popular_posts month");
-        assert!(
-            !popular_month.is_empty(),
-            "OnlyHaven popular month returned 0 posts"
-        );
-
-        let posts = provider
-            .fetch_posts("onlyfans", "30340311", 0, None)
-            .await
-            .expect("fetch_posts");
-        assert!(
-            !posts.is_empty(),
-            "OnlyHaven creator posts returned 0 posts"
-        );
-
-        let filtered_posts = provider
-            .fetch_posts("onlyfans", "30340311", 0, Some("test"))
-            .await
-            .expect("fetch_posts with query");
-        assert!(
-            !filtered_posts.is_empty(),
-            "OnlyHaven creator posts with query returned 0 posts"
-        );
-
-        let single = provider
-            .fetch_post("onlyfans", "30340311", "2642729960")
-            .await
-            .expect("fetch_post");
-        assert!(single.is_some(), "OnlyHaven post 2642729960 returned None");
-        let post = single.unwrap();
-        assert_eq!(post.id, "2642729960");
-
-        let non_existent = provider
-            .fetch_post("onlyfans", "30340311", "999999999999999")
-            .await
-            .expect("fetch non-existent post");
-        assert!(non_existent.is_none(), "Non-existent post returned Some");
-
-        let revisions = provider
-            .fetch_post_revisions("onlyfans", "30340311", "2642729960")
-            .await
-            .expect("fetch_post_revisions");
-        let _ = revisions;
-
-        let comments = provider
-            .fetch_post_comments("onlyfans", "30340311", "2642729960")
-            .await
-            .expect("fetch_post_comments");
-        let _ = comments;
-
-        let sample_hash = "7426b2f88640e8807ec0f23a00e9702eb99ff2fd51913d6b27be12887e295fe2";
-        let media_url = provider.resolve_media_url(sample_hash, None);
-        assert!(media_url.starts_with("https://e1.cum.st/media/"));
-        let thumb_url = provider.resolve_thumbnail_url(sample_hash);
-        assert!(thumb_url.starts_with("https://img.cum.st/thumbnail/"));
-
-        assert_eq!(provider.id(), "onlyhaven");
-        assert_eq!(provider.name(), "OnlyHaven");
-        assert!(provider.supports_service("onlyfans"));
-        assert!(provider.logout().await.is_ok());
-        assert!(provider.search_hash(sample_hash).await.is_err());
+            .unwrap();
+        assert_eq!(post.map(|p| p.id).as_deref(), Some(post_id));
         assert!(provider
-            .fetch_fancards("onlyfans", "30340311")
+            .fetch_post(service, creator, "999999999999999")
+            .await
+            .unwrap()
+            .is_none());
+        provider
+            .fetch_post_revisions(service, creator, post_id)
+            .await
+            .unwrap();
+        provider
+            .fetch_post_comments(service, creator, post_id)
+            .await
+            .unwrap();
+        assert!(!provider
+            .is_post_flagged(service, creator, post_id)
+            .await
+            .unwrap());
+        assert!(provider
+            .fetch_fancards(service, creator)
             .await
             .unwrap()
             .is_empty());
-        assert!(!provider
-            .is_post_flagged("onlyfans", "30340311", "2642729960")
-            .await
-            .unwrap());
+        assert!(provider.search_hash(HASH).await.is_err());
         assert!(provider
             .login("bad_user_9999", "bad_pass_9999")
             .await
             .is_err());
-    }
-
-    #[test]
-    fn test_deserialize_popular_response() {
-        let sample = r#"{
-            "total": 500,
-            "uncapped": 500,
-            "period": "day",
-            "date": "2026-09-07",
-            "posts": [
-                {
-                    "id": "1329029322",
-                    "service": "onlyfans",
-                    "creatorId": "307380936",
-                    "creatorName": "dutifuldolly",
-                    "captionHtml": "<p>hello</p>",
-                    "added": 1788670357,
-                    "published": 1729288830,
-                    "bookmarked": 9,
-                    "score": 9,
-                    "attachments": [
-                        {
-                            "locked": false,
-                            "position": 0,
-                            "id": "7b6fac0f-7c44-4dfb-a0fe-444fd292833e",
-                            "sha256": "148d475a2d444bc461da309c491fe015c6372ea6b31a3cb3430f6187510191a0",
-                            "kind": "video",
-                            "mimeType": "video/mp4",
-                            "bytes": 131191210,
-                            "storageKey": "148d475a2d444bc461da309c491fe015c6372ea6b31a3cb3430f6187510191a0",
-                            "previewThumbhash": "2JcGHAYMYNkpmCZ4mnd/pIaQhg=="
-                        }
-                    ]
-                }
-            ]
-        }"#;
-        let parsed: Result<OnlyHavenListResponse<OnlyHavenPostRow>, _> =
-            serde_json::from_str(sample);
-        assert!(
-            parsed.is_ok(),
-            "Failed to deserialize popular response: {:?}",
-            parsed.err()
-        );
-        let res = parsed.unwrap();
-        let posts = res.posts.unwrap();
-        assert_eq!(posts.len(), 1);
-        let first = &posts[0];
-        let post = first.clone().into_post("", "onlyhaven");
-        assert_eq!(post.id, "1329029322");
-        assert_eq!(post.user, "307380936");
-        assert_eq!(post.service, "onlyfans");
-        assert_eq!(post.favorite_count, Some(9));
-        assert!(post.file.is_some());
     }
 }

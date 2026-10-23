@@ -513,12 +513,14 @@ pub trait SourceProvider: Send + Sync {
 
 #[cfg(test)]
 mod provider_network_tests {
+    use super::super::queue::ProviderQueueConfig;
     use super::*;
     use std::time::Duration;
 
-    fn tuned() -> ProviderConfig {
+    fn tuned(advanced_network: bool) -> ProviderConfig {
         ProviderConfig {
             id: "test".to_string(),
+            advanced_network,
             user_agent: "  Tuned/1.0  ".to_string(),
             timeout_secs: 12,
             proxy_url: "  http://127.0.0.1:9000  ".to_string(),
@@ -529,37 +531,32 @@ mod provider_network_tests {
     }
 
     #[test]
-    fn overrides_are_inert_until_advanced_network_is_on() {
-        let config = tuned();
-        assert_ne!(config.effective_user_agent(), "Tuned/1.0");
+    fn overrides_apply_trimmed_only_when_advanced_network_is_on() {
+        let off = tuned(false);
+        assert_ne!(off.effective_user_agent(), "Tuned/1.0");
         assert_eq!(
-            config.effective_timeout(),
+            off.effective_timeout(),
             crate::net::defaults().request_timeout
         );
-        assert_eq!(config.effective_proxy_url(), None);
-
-        let queue =
-            config.apply_queue_overrides(super::super::queue::ProviderQueueConfig::default());
-        assert_eq!(queue.max_retries, 3);
-    }
-
-    #[test]
-    fn enabled_overrides_are_applied_and_trimmed() {
-        let config = ProviderConfig {
-            advanced_network: true,
-            ..tuned()
-        };
-        assert_eq!(config.effective_user_agent(), "Tuned/1.0");
-        assert_eq!(config.effective_timeout(), Duration::from_secs(12));
+        assert_eq!(off.effective_proxy_url(), None);
         assert_eq!(
-            config.effective_proxy_url().as_deref(),
-            Some("http://127.0.0.1:9000")
+            off.apply_queue_overrides(ProviderQueueConfig::default())
+                .max_retries,
+            3
         );
 
-        let queue =
-            config.apply_queue_overrides(super::super::queue::ProviderQueueConfig::default());
-        assert_eq!(queue.max_retries, 7);
-        assert_eq!(queue.min_interval, Duration::from_millis(250));
+        let on = tuned(true);
+        assert_eq!(on.effective_user_agent(), "Tuned/1.0");
+        assert_eq!(on.effective_timeout(), Duration::from_secs(12));
+        assert_eq!(
+            on.effective_proxy_url().as_deref(),
+            Some("http://127.0.0.1:9000")
+        );
+        let queue = on.apply_queue_overrides(ProviderQueueConfig::default());
+        assert_eq!(
+            (queue.max_retries, queue.min_interval),
+            (7, Duration::from_millis(250))
+        );
     }
 
     #[test]

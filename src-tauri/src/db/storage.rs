@@ -4,7 +4,7 @@ use std::time::Duration;
 
 pub const INBOX_COLLECTION_ID: &str = "00000000-0000-0000-0000-000000000001";
 
-const CURRENT_SCHEMA_VERSION: i64 = 10;
+const CURRENT_SCHEMA_VERSION: i64 = 11;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -562,6 +562,15 @@ pub fn initialize_schema(connection: &mut Connection) -> Result<(), String> {
                     )
                     .map_err(|e| e.to_string())?;
             }
+            11 => {
+                transaction
+                    .execute(
+                        "UPDATE post_inner_formats SET complete = 0
+                         WHERE sources LIKE '%drive.google.com%' AND sources LIKE '%folders%'",
+                        [],
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
             _ => return Err(format!("Missing database migration {next_version}")),
         }
         transaction
@@ -595,107 +604,127 @@ fn column_exists(connection: &Connection, table: &str, column: &str) -> Result<b
 mod tests {
     use super::*;
 
+    fn migrate_from(version: i64, seed: &str) -> Connection {
+        let mut connection = Connection::open_in_memory().unwrap();
+        prepare_connection(&mut connection).unwrap();
+        connection
+            .execute_batch(&format!("{seed} PRAGMA user_version = {version};"))
+            .unwrap();
+        initialize_schema(&mut connection).unwrap();
+        connection
+    }
+
+    fn query<T: rusqlite::types::FromSql>(connection: &Connection, sql: &str, id: &str) -> T {
+        connection.query_row(sql, [id], |r| r.get(0)).unwrap()
+    }
+
+    fn user_version(connection: &Connection) -> i64 {
+        connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap()
+    }
+
     #[test]
     fn schema_is_initialized_once() {
         let mut connection = Connection::open_in_memory().unwrap();
         prepare_connection(&mut connection).unwrap();
         initialize_schema(&mut connection).unwrap();
-        let version: i64 = connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(user_version(&connection), CURRENT_SCHEMA_VERSION);
         let count: i64 = connection
             .query_row("SELECT COUNT(*) FROM collections", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1);
-        assert!(column_exists(&connection, "collections", "color").unwrap());
-        assert!(column_exists(&connection, "creators", "favorited").unwrap());
-        assert!(column_exists(&connection, "creators", "updated_at").unwrap());
-        assert!(column_exists(&connection, "creators", "indexed_at").unwrap());
-        assert!(column_exists(&connection, "creators", "is_ai").unwrap());
-        assert!(column_exists(&connection, "thumb_blobs", "content_key").unwrap());
-        assert!(column_exists(&connection, "thumb_refs", "content_key").unwrap());
-        assert!(column_exists(&connection, "subscriptions", "save_to_library").unwrap());
-        assert!(column_exists(&connection, "archive_passwords", "source").unwrap());
-        assert!(column_exists(&connection, "post_inner_formats", "sources").unwrap());
+        for (table, column) in [
+            ("collections", "color"),
+            ("creators", "favorited"),
+            ("creators", "updated_at"),
+            ("creators", "indexed_at"),
+            ("creators", "is_ai"),
+            ("thumb_blobs", "content_key"),
+            ("thumb_refs", "content_key"),
+            ("subscriptions", "save_to_library"),
+            ("archive_passwords", "source"),
+            ("post_inner_formats", "sources"),
+        ] {
+            assert!(
+                column_exists(&connection, table, column).unwrap(),
+                "{table}.{column}"
+            );
+        }
     }
 
     #[test]
     fn migration_7_repairs_auto_provider_ids() {
-        let mut connection = Connection::open_in_memory().unwrap();
-        prepare_connection(&mut connection).unwrap();
-        connection
-            .execute_batch(
-                r#"INSERT INTO creators(service, creator_id, name, snapshot_json) VALUES
-                     ('fansly', 'with_ids', 'a', '{"id":"with_ids","provider_id":"auto","provider_ids":["onlyhaven","coomer"]}'),
-                     ('fansly', 'no_ids', 'b', '{"id":"no_ids","provider_id":"auto"}'),
-                     ('patreon', 'concrete', 'c', '{"id":"concrete","provider_id":"pawchive"}'),
-                     ('patreon', 'broken', 'd', 'not json');
-                   PRAGMA user_version = 6;"#,
+        let connection = migrate_from(
+            6,
+            r#"INSERT INTO creators(service, creator_id, name, snapshot_json) VALUES
+                 ('fansly', 'with_ids', 'a', '{"id":"with_ids","provider_id":"auto","provider_ids":["onlyhaven","coomer"]}'),
+                 ('fansly', 'no_ids', 'b', '{"id":"no_ids","provider_id":"auto"}'),
+                 ('patreon', 'concrete', 'c', '{"id":"concrete","provider_id":"pawchive"}'),
+                 ('patreon', 'broken', 'd', 'not json');"#,
+        );
+        let provider_of = |id| -> Option<String> {
+            query(
+                &connection,
+                "SELECT json_extract(snapshot_json, '$.provider_id') FROM creators WHERE creator_id = ?1",
+                id,
             )
-            .unwrap();
-        initialize_schema(&mut connection).unwrap();
-
-        let provider_of = |id: &str| -> Option<String> {
-            connection
-                .query_row(
-                    "SELECT json_extract(snapshot_json, '$.provider_id') FROM creators WHERE creator_id = ?1",
-                    [id],
-                    |r| r.get(0),
-                )
-                .unwrap()
         };
         assert_eq!(provider_of("with_ids").as_deref(), Some("onlyhaven"));
         assert_eq!(provider_of("no_ids"), None);
         assert_eq!(provider_of("concrete").as_deref(), Some("pawchive"));
-        let broken: String = connection
-            .query_row(
-                "SELECT snapshot_json FROM creators WHERE creator_id = 'broken'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let broken: String = query(
+            &connection,
+            "SELECT snapshot_json FROM creators WHERE creator_id = ?1",
+            "broken",
+        );
         assert_eq!(broken, "not json");
-        let version: i64 = connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(user_version(&connection), CURRENT_SCHEMA_VERSION);
     }
 
     #[test]
     fn migration_10_reopens_details_cached_before_import() {
-        let mut connection = Connection::open_in_memory().unwrap();
-        prepare_connection(&mut connection).unwrap();
-        connection
-            .execute_batch(
-                r#"INSERT INTO creators(service, creator_id, name, snapshot_json) VALUES ('patreon', 'c', 'c', '{}');
-                   INSERT INTO posts(service, creator_id, post_id, title, snapshot_json) VALUES
-                     ('patreon', 'c', 'teaser', 't', '{"id":"teaser","detail_fetched":true,"has_full":false,"preview_state":"pending"}'),
-                     ('patreon', 'c', 'full', 't', '{"id":"full","detail_fetched":true,"has_full":true,"preview_state":"scraped"}'),
-                     ('patreon', 'c', 'broken', 't', 'not json');
-                   PRAGMA user_version = 9;"#,
+        let connection = migrate_from(
+            9,
+            r#"INSERT INTO creators(service, creator_id, name, snapshot_json) VALUES ('patreon', 'c', 'c', '{}');
+               INSERT INTO posts(service, creator_id, post_id, title, snapshot_json) VALUES
+                 ('patreon', 'c', 'teaser', 't', '{"id":"teaser","detail_fetched":true,"has_full":false,"preview_state":"pending"}'),
+                 ('patreon', 'c', 'full', 't', '{"id":"full","detail_fetched":true,"has_full":true,"preview_state":"scraped"}'),
+                 ('patreon', 'c', 'broken', 't', 'not json');"#,
+        );
+        let fetched = |id| -> Option<bool> {
+            query(
+                &connection,
+                "SELECT json_extract(snapshot_json, '$.detail_fetched') FROM posts WHERE post_id = ?1",
+                id,
             )
-            .unwrap();
-        initialize_schema(&mut connection).unwrap();
-
-        let fetched = |id: &str| -> Option<bool> {
-            connection
-                .query_row(
-                    "SELECT json_extract(snapshot_json, '$.detail_fetched') FROM posts WHERE post_id = ?1",
-                    [id],
-                    |r| r.get(0),
-                )
-                .unwrap()
         };
         assert_eq!(fetched("teaser"), Some(false));
         assert_eq!(fetched("full"), Some(true));
-        let broken: String = connection
-            .query_row(
-                "SELECT snapshot_json FROM posts WHERE post_id = 'broken'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
+        let broken: String = query(
+            &connection,
+            "SELECT snapshot_json FROM posts WHERE post_id = ?1",
+            "broken",
+        );
         assert_eq!(broken, "not json");
+    }
+
+    #[test]
+    fn migration_11_reindexes_posts_with_drive_folders() {
+        let connection = migrate_from(
+            10,
+            r#"INSERT INTO post_inner_formats(service, creator_id, post_id, sources) VALUES
+                 ('patreon', 'c', 'drive', 'https://drive.google.com/drive/folders/abc'),
+                 ('patreon', 'c', 'file', 'https://drive.google.com/file/d/abc/view'),
+                 ('patreon', 'c', 'mega', 'https://mega.nz/folder/abc');"#,
+        );
+        for (id, complete) in [("drive", 0), ("file", 1), ("mega", 1)] {
+            let actual: i64 = query(
+                &connection,
+                "SELECT complete FROM post_inner_formats WHERE post_id = ?1",
+                id,
+            );
+            assert_eq!(actual, complete, "{id}");
+        }
     }
 }

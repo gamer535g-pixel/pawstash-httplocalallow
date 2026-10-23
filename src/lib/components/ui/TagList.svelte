@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { edgeFade } from '$lib/actions/edgeFade';
   import { ripple, tooltip } from '$lib/motion';
   import { i18n } from '$lib/i18n';
   import IconChevronDown from '~icons/fluent/chevron-down-20-regular';
@@ -181,7 +182,7 @@
 {#if normalizedTags.length > 0 || showAll}
   {#if !expanded}
     <div class="tag-bar-shell size-{size} {extraClass}">
-      <div class="tag-scroll-container" bind:this={scrollEl} class:has-overflow={hasOverflow}>
+      <div class="tag-scroll-container" bind:this={scrollEl} use:edgeFade>
         <div class="tag-rows-wrapper">
           <div class="tag-flex-row">
             {@render renderAllButton()}
@@ -255,11 +256,6 @@
     scrollbar-width: none;
     -ms-overflow-style: none;
     -webkit-overflow-scrolling: touch;
-  }
-
-  .tag-scroll-container.has-overflow {
-    mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
-    -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
   }
 
   .tag-scroll-container::-webkit-scrollbar {

@@ -175,107 +175,58 @@ pub fn reconcile_post_snapshots(snapshots: Vec<(String, Post)>) -> Option<Reconc
 mod tests {
     use super::*;
 
+    fn attachment(name: &str, size: u64) -> Attachment {
+        Attachment {
+            name: Some(name.into()),
+            path: Some(format!("/path/{name}")),
+            size: Some(size),
+            ..Attachment::default()
+        }
+    }
+
     #[test]
     fn reconciles_newer_edited_snapshot() {
-        let post_old = Post {
+        let base = Post {
             id: "1".into(),
             user: "user".into(),
             service: "patreon".into(),
+            published: Some("2026-08-01T00:00:00".into()),
+            has_full: Some(true),
+            detail_fetched: Some(true),
+            ..Post::default()
+        };
+        let old = Post {
             title: "Old Title".into(),
             content: Some("Old text".into()),
-            substring: None,
-            published: Some("2026-08-01T00:00:00".into()),
             added: Some("2026-08-01T12:00:00".into()),
-            edited: None,
-            embed: None,
-            shared_file: None,
-            attachments: Some(vec![Attachment {
-                name: Some("file1.png".into()),
-                path: Some("/path/file1.png".into()),
-                server: None,
-                size: Some(1024),
-                url: None,
-                thumbnail_url: None,
-                extra: HashMap::new(),
-            }]),
-            file: None,
-            poll: None,
-            captions: None,
-            tags: None,
-            origin: None,
-            preview_state: None,
-            has_full: Some(true),
-            detail_fetched: Some(true),
-            next: None,
-            prev: None,
-            favorite_count: None,
+            attachments: Some(vec![attachment("file1.png", 1024)]),
             attachment_count: Some(1),
-            thumbnail_url: None,
-            media_url: None,
-            page_url: None,
-            preview_path: None,
-            cloud_urls: Vec::new(),
-            extra: HashMap::new(),
+            ..base.clone()
         };
-
-        let post_new = Post {
-            id: "1".into(),
-            user: "user".into(),
-            service: "patreon".into(),
+        let new = Post {
             title: "Updated Title".into(),
             content: Some("New text with additional attachments".into()),
-            substring: None,
-            published: Some("2026-08-01T00:00:00".into()),
             added: Some("2026-08-10T12:00:00".into()),
             edited: Some("2026-08-09T18:00:00".into()),
-            embed: None,
-            shared_file: None,
             attachments: Some(vec![
-                Attachment {
-                    name: Some("file1.png".into()),
-                    path: Some("/path/file1.png".into()),
-                    server: None,
-                    size: Some(1024),
-                    url: None,
-                    thumbnail_url: None,
-                    extra: HashMap::new(),
-                },
-                Attachment {
-                    name: Some("file2.png".into()),
-                    path: Some("/path/file2.png".into()),
-                    server: None,
-                    size: Some(2048),
-                    url: None,
-                    thumbnail_url: None,
-                    extra: HashMap::new(),
-                },
+                attachment("file1.png", 1024),
+                attachment("file2.png", 2048),
             ]),
-            file: None,
-            poll: None,
-            captions: None,
-            tags: None,
-            origin: None,
-            preview_state: None,
-            has_full: Some(true),
-            detail_fetched: Some(true),
-            next: None,
-            prev: None,
-            favorite_count: None,
             attachment_count: Some(2),
-            thumbnail_url: None,
-            media_url: None,
-            page_url: None,
-            preview_path: None,
-            cloud_urls: Vec::new(),
-            extra: HashMap::new(),
+            ..base
         };
 
-        let snapshots = vec![
-            ("mirror1".to_string(), post_old),
-            ("mirror2".to_string(), post_new),
-        ];
-
-        let reconciled = reconcile_post_snapshots(snapshots).unwrap();
+        let reconciled = reconcile_post_snapshots(vec![
+            ("mirror1".to_string(), old),
+            ("mirror2".to_string(), new),
+        ])
+        .unwrap();
+        let provider_of = |extra: &HashMap<String, serde_json::Value>| {
+            extra
+                .get("provider_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        };
         assert_eq!(reconciled.post.title, "Updated Title");
         assert_eq!(reconciled.available_providers.len(), 2);
         assert_eq!(reconciled.revisions.len(), 2);
@@ -284,16 +235,12 @@ mod tests {
                 .post
                 .file
                 .as_ref()
-                .and_then(|file| file.extra.get("provider_id"))
-                .and_then(|value| value.as_str()),
+                .and_then(|f| provider_of(&f.extra))
+                .as_deref(),
             Some("mirror1")
         );
-        let attachments = reconciled.post.attachments.unwrap();
         assert_eq!(
-            attachments[0]
-                .extra
-                .get("provider_id")
-                .and_then(|value| value.as_str()),
+            provider_of(&reconciled.post.attachments.unwrap()[0].extra).as_deref(),
             Some("mirror2")
         );
     }

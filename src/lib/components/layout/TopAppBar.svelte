@@ -321,6 +321,7 @@
   }
 
   .top-app-bar .bar-heading:has(+ .bar-title) {
+    flex-shrink: 0;
     margin-inline-end: 8px;
   }
 

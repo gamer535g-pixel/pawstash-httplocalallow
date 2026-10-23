@@ -291,13 +291,21 @@ mod tests {
     }
 
     #[test]
-    fn upsert_is_unique_and_preserves_identity() {
+    fn upsert_updates_settings_in_place() {
         let repository = SubscriptionRepository::in_memory();
         let (first, created) = repository.upsert(&input()).unwrap();
-        let (second, created_again) = repository.upsert(&input()).unwrap();
+        let (second, created_again) = repository
+            .upsert(&SubscriptionInput {
+                enabled: false,
+                save_to_library: false,
+                ..input()
+            })
+            .unwrap();
         assert!(created);
         assert!(!created_again);
         assert_eq!(first.id, second.id);
+        assert!(!second.enabled);
+        assert!(!second.save_to_library);
         assert_eq!(repository.list().unwrap().len(), 1);
     }
 
@@ -318,21 +326,5 @@ mod tests {
             )
             .unwrap();
         assert_eq!(seen.len(), 1);
-    }
-
-    #[test]
-    fn upsert_updates_enabled_and_save_to_library() {
-        let repository = SubscriptionRepository::in_memory();
-        let (first, _) = repository.upsert(&input()).unwrap();
-        assert!(first.enabled);
-        assert!(first.save_to_library);
-
-        let mut updated_input = input();
-        updated_input.enabled = false;
-        updated_input.save_to_library = false;
-        let (second, _) = repository.upsert(&updated_input).unwrap();
-        assert_eq!(first.id, second.id);
-        assert!(!second.enabled);
-        assert!(!second.save_to_library);
     }
 }

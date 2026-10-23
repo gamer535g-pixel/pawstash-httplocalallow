@@ -237,6 +237,21 @@ pub fn resolve_post_folder(template: &str, ctx: &TemplateContext) -> String {
     sanitize_path_segment(&result, 120)
 }
 
+pub fn split_download_path(raw: &str) -> (Vec<String>, String) {
+    let mut parts: Vec<&str> = raw
+        .split(['/', '\\'])
+        .map(str::trim)
+        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
+        .collect();
+    let name = parts.pop().unwrap_or("file").to_string();
+    let folders = parts
+        .into_iter()
+        .map(|part| sanitize_path_segment(part, 120))
+        .filter(|part| !part.is_empty())
+        .collect();
+    (folders, name)
+}
+
 pub fn resolve_filename(template: &str, ctx: &TemplateContext) -> String {
     let tpl = if template.trim().is_empty() {
         "{post_title} - {filename}"
@@ -385,6 +400,29 @@ fn pick_creator_name(
 mod tests {
     use super::*;
 
+    type Resolver = fn(&str, &TemplateContext) -> String;
+
+    #[test]
+    fn download_paths_keep_folders_but_never_leave_the_post_folder() {
+        let cases: &[(&str, &[&str], &str)] = &[
+            ("dwrite.dll", &[], "dwrite.dll"),
+            (
+                "lights-patch/extension/config/new.ini",
+                &["lights-patch", "extension", "config"],
+                "new.ini",
+            ),
+            ("../../etc/passwd", &["etc"], "passwd"),
+            ("a\\..\\b\\c.txt", &["a", "b"], "c.txt"),
+            ("/./x//y/ ", &["x"], "y"),
+            ("", &[], "file"),
+        ];
+        for (raw, folders, name) in cases {
+            let (got_folders, got_name) = split_download_path(raw);
+            assert_eq!(got_folders, *folders, "{raw}");
+            assert_eq!(got_name, *name, "{raw}");
+        }
+    }
+
     #[test]
     fn creator_name_prefers_cache_then_fallback_then_post_fields() {
         let mut post = crate::api::models::Post {
@@ -419,41 +457,20 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitization() {
-        assert_eq!(
-            sanitize_path_segment("foo/bar:baz*qux", 100),
-            "foo_bar_baz_qux"
-        );
-        assert_eq!(
-            sanitize_path_segment("  hello world...  ", 100),
-            "hello world"
-        );
-        assert_eq!(sanitize_path_segment("CON", 100), "_CON");
-        assert_eq!(sanitize_path_segment("aux", 100), "_aux");
+    fn sanitizes_path_segments() {
+        for (input, expected) in [
+            ("foo/bar:baz*qux", "foo_bar_baz_qux"),
+            ("  hello world...  ", "hello world"),
+            ("..", "unnamed"),
+            ("CON", "_CON"),
+            ("aux", "_aux"),
+        ] {
+            assert_eq!(sanitize_path_segment(input, 100), expected, "{input}");
+        }
     }
 
     #[test]
-    fn test_creator_folder_resolution() {
-        let ctx = TemplateContext {
-            service: "fanbox",
-            creator_id: "12345",
-            creator_name: "haku3490",
-            post_id: "999",
-            post_title: "My Post",
-            published: Some("2024-08-20T12:00:00Z"),
-            original_filename: "image.png",
-            index: 1,
-            media_id: "file1",
-        };
-        assert_eq!(resolve_creator_folder("{creator}", &ctx), "haku3490");
-        assert_eq!(
-            resolve_creator_folder("{creator} ({platform})", &ctx),
-            "haku3490 (fanbox)"
-        );
-    }
-
-    #[test]
-    fn test_post_folder_resolution() {
+    fn resolves_folder_and_filename_templates() {
         let ctx = TemplateContext {
             service: "fanbox",
             creator_id: "12345",
@@ -462,55 +479,55 @@ mod tests {
             post_title: "Summer Beach 2024",
             published: Some("2024-08-20T12:00:00Z"),
             original_filename: "image.png",
-            index: 1,
-            media_id: "file1",
-        };
-        assert_eq!(
-            resolve_post_folder("{post_title}", &ctx),
-            "Summer Beach 2024"
-        );
-        assert_eq!(
-            resolve_post_folder("[{date}] {post_id} - {title}", &ctx),
-            "[2024-08-20] 999 - Summer Beach 2024"
-        );
-    }
-
-    #[test]
-    fn test_filename_resolution() {
-        let ctx = TemplateContext {
-            service: "patreon",
-            creator_id: "12345",
-            creator_name: "Artist",
-            post_id: "888",
-            post_title: "New Artwork",
-            published: Some("2024-08-20"),
-            original_filename: "0u5Og13y8DV.png",
             index: 2,
-            media_id: "0u5Og13y8DV.png",
+            media_id: "image.png",
         };
-        assert_eq!(
-            resolve_filename("{post_title} - {filename}", &ctx),
-            "New Artwork - 0u5Og13y8DV.png"
-        );
-        assert_eq!(
-            resolve_filename("{post_title} - {index}", &ctx),
-            "New Artwork - 2.png"
-        );
-        assert_eq!(
-            resolve_filename("{creator} - {post_id}_{name}.{ext}", &ctx),
-            "Artist - 888_0u5Og13y8DV.png"
-        );
-        assert_eq!(
-            resolve_filename("{year}/{year_month}/{date_compact}_{index}", &ctx),
-            "2024_2024-08_20240820_2.png"
-        );
-        assert_eq!(
-            resolve_filename("[{date_dots}] {post_title}_{year_short}", &ctx),
-            "[2024.08.20] New Artwork_24.png"
-        );
-        assert_eq!(
-            resolve_filename("{post_title} - {day}_{month}_{year}", &ctx),
-            "New Artwork - 20_08_2024.png"
-        );
+        let cases: [(Resolver, &str, &str); 10] = [
+            (resolve_creator_folder, "{creator}", "haku3490"),
+            (
+                resolve_creator_folder,
+                "{creator} ({platform})",
+                "haku3490 (fanbox)",
+            ),
+            (resolve_post_folder, "{post_title}", "Summer Beach 2024"),
+            (
+                resolve_post_folder,
+                "[{date}] {post_id} - {title}",
+                "[2024-08-20] 999 - Summer Beach 2024",
+            ),
+            (
+                resolve_filename,
+                "{post_title} - {filename}",
+                "Summer Beach 2024 - image.png",
+            ),
+            (
+                resolve_filename,
+                "{post_title} - {index}",
+                "Summer Beach 2024 - 2.png",
+            ),
+            (
+                resolve_filename,
+                "{creator} - {post_id}_{name}.{ext}",
+                "haku3490 - 999_image.png",
+            ),
+            (
+                resolve_filename,
+                "{year}/{year_month}/{date_compact}_{index}",
+                "2024_2024-08_20240820_2.png",
+            ),
+            (
+                resolve_filename,
+                "[{date_dots}] {post_title}_{year_short}",
+                "[2024.08.20] Summer Beach 2024_24.png",
+            ),
+            (
+                resolve_filename,
+                "{post_title} - {day}_{month}_{year}",
+                "Summer Beach 2024 - 20_08_2024.png",
+            ),
+        ];
+        for (resolve, template, expected) in cases {
+            assert_eq!(resolve(template, &ctx), expected, "{template}");
+        }
     }
 }

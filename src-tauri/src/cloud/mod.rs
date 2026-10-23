@@ -263,39 +263,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extracts_supported_urls_without_frontend_classification() {
-        let supported = dropbox::example_url();
-        let raw = format!("before {supported} after https://example.test/file");
-        assert_eq!(extract_supported_urls(&raw), vec![supported.to_string()]);
-    }
-
-    #[test]
-    fn extracts_json_escaped_and_html_entities() {
-        let raw = r#"{"url":"https:\/\/mega.nz\/folder\/xyz#abc&amp;node=123\"}"#;
-        assert_eq!(
-            extract_supported_urls(raw),
-            vec!["https://mega.nz/folder/xyz#abc&node=123".to_string()]
+    fn extracts_supported_urls_from_post_text() {
+        let filen = "https://app.filen.io/#/f/ed204269-428e-42e0-af64-220471a7a124%236576743441697556695335625a584f446c7967716842427567575f6334453839";
+        let filen_json = format!(
+            r#"{{"content":"<a href=\"{}\">4K</a>"}}"#,
+            filen.replace('/', r"\/")
         );
-    }
-
-    #[test]
-    fn extracts_fullwidth_and_unlabelled_mega_keys() {
-        assert_eq!(
-            extract_supported_urls(
-                "https://mega.nz/folder/Jj1liCiQ   Key：TeHAplSadyE1w--Mt861ig    リンク"
+        let dropbox_text = format!(
+            "before {} after https://example.test/file",
+            dropbox::example_url()
+        );
+        for (raw, expected) in [
+            (dropbox_text.as_str(), dropbox::example_url()),
+            (
+                r#"{"url":"https:\/\/mega.nz\/folder\/xyz#abc&amp;node=123\"}"#,
+                "https://mega.nz/folder/xyz#abc&node=123",
             ),
-            vec!["https://mega.nz/folder/Jj1liCiQ#TeHAplSadyE1w--Mt861ig".to_string()]
-        );
-        assert_eq!(
-            extract_supported_urls(
-                "<a>https://mega.nz/file/jPwAmYqZ</a>     V4qd52dIsjW4Qi3zfkfESL0TrwzLZIt13C27R6c30R4"
+            (
+                "https://mega.nz/folder/Jj1liCiQ   Key：TeHAplSadyE1w--Mt861ig    リンク",
+                "https://mega.nz/folder/Jj1liCiQ#TeHAplSadyE1w--Mt861ig",
             ),
-            vec!["https://mega.nz/file/jPwAmYqZ#V4qd52dIsjW4Qi3zfkfESL0TrwzLZIt13C27R6c30R4".to_string()]
-        );
-        assert_eq!(
-            extract_supported_urls("https://mega.nz/folder/Jj1liCiQ and see you next month"),
-            vec!["https://mega.nz/folder/Jj1liCiQ".to_string()]
-        );
+            (
+                "<a>https://mega.nz/file/jPwAmYqZ</a>     V4qd52dIsjW4Qi3zfkfESL0TrwzLZIt13C27R6c30R4",
+                "https://mega.nz/file/jPwAmYqZ#V4qd52dIsjW4Qi3zfkfESL0TrwzLZIt13C27R6c30R4",
+            ),
+            (
+                "https://mega.nz/folder/Jj1liCiQ and see you next month",
+                "https://mega.nz/folder/Jj1liCiQ",
+            ),
+            (
+                r#"<p><a href="https://mega.nz/folder/0jUU2SxQ">Originalfiles</a> </p><p>code: QWMvysdMd30JRHNtF7j-Ew</p>"#,
+                "https://mega.nz/folder/0jUU2SxQ#QWMvysdMd30JRHNtF7j-Ew",
+            ),
+            (filen_json.as_str(), filen),
+        ] {
+            assert_eq!(extract_supported_urls(raw), vec![expected.to_string()], "{raw}");
+        }
     }
 
     #[test]
@@ -304,24 +307,5 @@ mod tests {
         assert_eq!(extract_adjacent_mega_key(&text, true), None);
         let text = format!("{}リンクは月初めに更新予定です", " ".repeat(248));
         assert_eq!(extract_adjacent_mega_key(&text, true), None);
-    }
-
-    #[test]
-    fn extracts_adjacent_mega_decryption_key() {
-        let raw = r#"<p><a href="https://mega.nz/folder/0jUU2SxQ">Originalfiles</a> </p><p>code: QWMvysdMd30JRHNtF7j-Ew</p>"#;
-        assert_eq!(
-            extract_supported_urls(raw),
-            vec!["https://mega.nz/folder/0jUU2SxQ#QWMvysdMd30JRHNtF7j-Ew".to_string()]
-        );
-    }
-
-    #[test]
-    fn extracts_filen_folder_links() {
-        let link = "https://app.filen.io/#/f/ed204269-428e-42e0-af64-220471a7a124%236576743441697556695335625a584f446c7967716842427567575f6334453839";
-        let raw = format!(
-            r#"{{"content":"<a href=\"{}\">4K</a>"}}"#,
-            link.replace('/', r"\/")
-        );
-        assert_eq!(extract_supported_urls(&raw), vec![link.to_string()]);
     }
 }

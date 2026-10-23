@@ -4042,7 +4042,8 @@ pub async fn resolve_cloud_link(
             .nodes
             .iter()
             .any(|n| !n.is_folder && (n.size.is_none() || n.size == Some(0)));
-        if !has_missing_sizes {
+        let has_files = cached.nodes.iter().any(|n| !n.is_folder);
+        if has_files && !has_missing_sizes {
             crate::cloud::canonicalize_cloud_result(&mut cached);
             return Ok(cached);
         }

@@ -4,12 +4,14 @@
   import { i18n } from '$lib/i18n';
   import { formatBytes, formatSpeed } from '$lib/utils/formatters';
   import { notify } from '$lib/utils/toast';
-  import Button from '$lib/components/ui/Button.svelte';
+  import { tooltip } from '$lib/motion';
+  import LinearProgress from '$lib/components/ui/LinearProgress.svelte';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import IconPause from '~icons/fluent/pause-20-regular';
   import IconPlay from '~icons/fluent/play-20-regular';
   import IconRetry from '~icons/fluent/arrow-counterclockwise-20-regular';
   import IconDismiss from '~icons/fluent/dismiss-20-regular';
+  import IconError from '~icons/fluent/error-circle-20-regular';
 
   interface Props {
     onshowfailed?: () => void;
@@ -26,6 +28,24 @@
   let percent = $derived(
     downloadState.activeProgress === null ? null : Math.floor(downloadState.activeProgress * 100)
   );
+  let detail = $derived(
+    [
+      stats.totalBytes > 0 ? `${formatBytes(stats.downloadedBytes)} / ${formatBytes(stats.totalBytes)}` : '',
+      stats.speedBps > 0 ? formatSpeed(stats.speedBps) : ''
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  );
+  let status = $derived(
+    [
+      stats.downloading > 0 ? i18n.t('downloads.queue_downloading', { count: stats.downloading }) : '',
+      stats.queued > 0 ? i18n.t('downloads.queue_queued', { count: stats.queued }) : '',
+      stats.paused > 0 ? i18n.t('downloads.queue_paused', { count: stats.paused }) : ''
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  );
+  let toggleLabel = $derived(i18n.t(running ? 'downloads.pause_all' : 'downloads.resume_all'));
   let busy = $state(false);
   let confirmCancel = $state(false);
 
@@ -41,10 +61,6 @@
     }
   }
 
-  function toggleAll() {
-    void run(() => (running ? downloadState.pauseAll() : downloadState.resumeAll()));
-  }
-
   async function cancelAll() {
     await run(() => downloadState.cancelAll());
     confirmCancel = false;
@@ -53,73 +69,62 @@
 
 <article class="grid-tile queue-tile" style:aspect-ratio={ratio} aria-label={i18n.t('downloads.queue_title')}>
   <div class="queue-body">
-    <header class="queue-head">
-      <h2 class="queue-title">{i18n.t('downloads.queue_title')}</h2>
-      {#if percent !== null}
-        <span class="queue-percent">{percent}%</span>
-      {/if}
-    </header>
+    <h2 class="queue-title">{i18n.t('downloads.queue_title')}</h2>
 
-    {#if stats.totalBytes > 0 || stats.speedBps > 0}
-      <p class="queue-bytes">
-        {#if stats.totalBytes > 0}{formatBytes(stats.downloadedBytes)} / {formatBytes(stats.totalBytes)}{/if}
-        {#if stats.speedBps > 0}<span>{formatSpeed(stats.speedBps)}</span>{/if}
-      </p>
+    {#if cancellable}
+      <div class="queue-readout">
+        {#if percent !== null}<span class="queue-percent">{percent}%</span>{/if}
+        {#if detail}<span class="queue-detail">{detail}</span>{/if}
+      </div>
+      {#if status}<p class="queue-status">{status}</p>{/if}
+      <LinearProgress
+        value={percent ?? 0}
+        indeterminate={percent === null && stats.downloading > 0}
+        label={i18n.t('downloads.queue_title')}
+      />
     {/if}
 
-    <ul class="queue-counts">
-      {#if stats.downloading > 0}<li>{i18n.t('downloads.queue_downloading', { count: stats.downloading })}</li>{/if}
-      {#if stats.queued > 0}<li>{i18n.t('downloads.queue_queued', { count: stats.queued })}</li>{/if}
-      {#if stats.paused > 0}<li>{i18n.t('downloads.queue_paused', { count: stats.paused })}</li>{/if}
-      {#if stats.failed > 0}
-        <li>
-          <button type="button" class="queue-failed" onclick={() => onshowfailed?.()}>
-            {i18n.t('downloads.queue_failed', { count: stats.failed })}
-          </button>
-        </li>
-      {/if}
-    </ul>
-
     <div class="queue-actions">
-      {#if cancellable}
-        {@const label = running ? i18n.t('downloads.pause_all') : i18n.t('downloads.resume_all')}
-        <Button variant="ghost" class="queue-toggle" disabled={busy} onclick={toggleAll} title={label} aria-label={label}>
-          {#if running}<IconPause />{:else}<IconPlay />{/if}
-          <span class="queue-toggle-label">{label}</span>
-        </Button>
-      {/if}
       {#if stats.failed > 0}
-        <Button
-          variant="ghost"
-          class="btn-icon"
+        <button type="button" class="queue-failed" onclick={() => onshowfailed?.()}>
+          <IconError />
+          <span>{i18n.t('downloads.queue_failed', { count: stats.failed })}</span>
+        </button>
+        <button
+          type="button"
+          class="grid-tile-action queue-action"
           disabled={busy}
           onclick={() => void run(() => downloadState.retryFailed())}
-          title={i18n.t('downloads.retry_failed')}
+          use:tooltip={i18n.t('downloads.retry_failed')}
           aria-label={i18n.t('downloads.retry_failed')}
         >
           <IconRetry />
-        </Button>
+        </button>
       {/if}
       {#if cancellable}
-        <Button
-          variant="ghost"
-          class="btn-icon"
+        <button
+          type="button"
+          class="grid-tile-action queue-action is-tonal"
+          disabled={busy}
+          onclick={() => void run(() => (running ? downloadState.pauseAll() : downloadState.resumeAll()))}
+          use:tooltip={toggleLabel}
+          aria-label={toggleLabel}
+        >
+          {#if running}<IconPause />{:else}<IconPlay />{/if}
+        </button>
+        <button
+          type="button"
+          class="grid-tile-action queue-action"
           disabled={busy}
           onclick={() => (confirmCancel = true)}
-          title={i18n.t('downloads.cancel_all')}
+          use:tooltip={i18n.t('downloads.cancel_all')}
           aria-label={i18n.t('downloads.cancel_all')}
         >
           <IconDismiss />
-        </Button>
+        </button>
       {/if}
     </div>
   </div>
-
-  {#if percent !== null || stats.downloading > 0}
-    <div class="download-progress" class:indeterminate={percent === null}>
-      <span style:width={`${percent ?? 0}%`}></span>
-    </div>
-  {/if}
 </article>
 
 <ConfirmDialog
@@ -136,8 +141,6 @@
 
 <style>
   .queue-tile {
-    --queue-page-control: var(--control-height);
-    container-type: size;
     background: var(--surface-container);
   }
 
@@ -146,102 +149,103 @@
     inset: 0;
     display: flex;
     flex-direction: column;
-    gap: calc(6px * var(--grid-scale, 1));
+    gap: calc(8px * var(--grid-scale, 1));
     padding: var(--tile-inset);
     color: var(--text-primary);
   }
 
-  .queue-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: calc(8px * var(--grid-scale, 1));
-  }
-
   .queue-title {
     margin: 0;
-    font-family: var(--font-display);
-    font-size: calc(15px * var(--grid-scale, 1));
-    font-weight: 600;
-    line-height: 1.25;
+    font-size: calc(var(--type-title-sm-size) * var(--grid-scale, 1));
+    line-height: calc(var(--type-title-sm-line) * var(--grid-scale, 1));
+    font-weight: 500;
+  }
+
+  .queue-readout {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   .queue-percent {
-    font-family: var(--font-mono);
-    font-size: calc(22px * var(--grid-scale, 1));
-    font-weight: 600;
+    font-size: calc(var(--type-headline-size) * var(--grid-scale, 1));
+    line-height: calc(var(--type-headline-line) * var(--grid-scale, 1));
+    font-weight: 400;
     font-variant-numeric: tabular-nums;
-    line-height: 1;
-    color: var(--accent-on-surface, var(--accent-primary));
   }
 
-  .queue-bytes {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0 calc(8px * var(--grid-scale, 1));
-    margin: 0;
-    font-family: var(--font-mono);
-    font-size: calc(11px * var(--grid-scale, 1));
-    font-variant-numeric: tabular-nums;
-    color: var(--text-secondary);
-  }
-
-  .queue-counts {
-    display: flex;
-    flex-direction: column;
-    gap: calc(2px * var(--grid-scale, 1));
-    min-height: 0;
-    margin: 0;
-    padding: 0;
+  .queue-detail,
+  .queue-status {
     overflow: hidden;
-    list-style: none;
-    font-size: calc(12px * var(--grid-scale, 1));
-    line-height: 1.4;
     color: var(--text-secondary);
+    font-size: calc(var(--type-label-md-size) * var(--grid-scale, 1));
+    line-height: calc(var(--type-label-md-line) * var(--grid-scale, 1));
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
-  .queue-failed {
-    padding: 0;
-    border: none;
-    background: none;
-    font: inherit;
-    color: var(--status-error);
-    text-decoration: underline;
-    text-underline-offset: 0.2em;
-    cursor: pointer;
+  .queue-status {
+    margin: 0;
   }
 
   .queue-actions {
-    --queue-action-gap: calc(4px * var(--grid-scale, 1));
-    /* Page control height, shrunk only when three buttons don't fit the tile. */
-    --control-height: min(
-      var(--queue-page-control),
-      calc((100cqw - 2 * var(--tile-inset) - 2 * var(--queue-action-gap)) / 3 / var(--ui-scale, 1))
-    );
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: var(--queue-action-gap);
+    gap: calc(4px * var(--grid-scale, 1));
     margin-top: auto;
   }
 
-  .queue-actions :global(.queue-toggle) {
-    flex: 1 1 auto;
-    min-width: calc(var(--control-height) * var(--ui-scale, 1));
+  .queue-failed {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(6px * var(--grid-scale, 1));
+    min-width: 0;
+    height: var(--tile-action-size);
+    margin-inline-end: auto;
+    padding-inline: calc(10px * var(--grid-scale, 1));
+    border: none;
+    border-radius: var(--radius-full);
+    background: transparent;
+    color: var(--status-error);
+    font: inherit;
+    font-size: calc(var(--type-label-lg-size) * var(--grid-scale, 1));
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-standard);
   }
 
-  .queue-toggle-label {
+  .queue-failed span {
     overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
-  @container (max-width: 190px) {
-    .queue-percent { font-size: calc(18px * var(--grid-scale, 1)); }
-    .queue-toggle-label { display: none; }
+  .queue-failed :global(svg) {
+    flex-shrink: 0;
+    width: var(--tile-action-icon, 18px);
+    height: var(--tile-action-icon, 18px);
   }
 
-  @container (max-height: 150px) {
-    .queue-counts { display: none; }
+  .queue-failed:active {
+    background: var(--state-layer-pressed);
+  }
+
+  @media (hover: hover) {
+    .queue-failed:hover {
+      background: var(--state-layer-hover);
+    }
+  }
+
+  .queue-action {
+    color: var(--text-secondary);
+  }
+
+  .queue-action.is-tonal {
+    background: var(--accent-container);
+    color: var(--accent-on-container);
   }
 </style>

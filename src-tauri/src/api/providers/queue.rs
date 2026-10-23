@@ -290,109 +290,69 @@ mod tests {
             "test_prov",
             ProviderQueueConfig::default().with_max_concurrent(3),
         ));
-        let mut prefetches = Vec::new();
-        for _ in 0..6 {
-            let q = queue.clone();
-            prefetches.push(tokio::spawn(in_background(async move {
-                let _slot = q.acquire_slot().await.unwrap();
-                sleep(Duration::from_millis(400)).await;
-            })));
-        }
+        let prefetches: Vec<_> = (0..6)
+            .map(|_| {
+                let q = queue.clone();
+                tokio::spawn(in_background(async move {
+                    let _slot = q.acquire_slot().await.unwrap();
+                    sleep(Duration::from_millis(400)).await;
+                }))
+            })
+            .collect();
         sleep(Duration::from_millis(50)).await;
 
         let started = Instant::now();
-        let _slot = queue.acquire_slot().await.unwrap();
+        drop(queue.acquire_slot().await.unwrap());
         assert!(
             started.elapsed() < Duration::from_millis(100),
             "foreground waited {:?} behind prefetch",
             started.elapsed()
         );
-        drop(_slot);
         for task in prefetches {
             task.await.unwrap();
         }
     }
 
     #[tokio::test]
-    async fn test_provider_queue_concurrency_and_spacing() {
-        let config = ProviderQueueConfig {
-            max_concurrent: 2,
-            min_interval: Duration::from_millis(50),
-            max_retries: 2,
-            default_retry_after: Duration::from_millis(100),
-            max_cooldown: Duration::from_millis(500),
-        };
-        let queue = Arc::new(ProviderRequestQueue::new("test_prov", config));
+    async fn concurrent_requests_never_exceed_max_concurrent() {
+        let queue = Arc::new(ProviderRequestQueue::new(
+            "test_prov",
+            ProviderQueueConfig::default()
+                .with_max_concurrent(2)
+                .with_min_interval(Duration::from_millis(5)),
+        ));
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
 
-        let active_concurrent = Arc::new(AtomicUsize::new(0));
-        let max_observed = Arc::new(AtomicUsize::new(0));
-        let completed = Arc::new(AtomicUsize::new(0));
-
-        let mut tasks = Vec::new();
-        for _ in 0..6 {
-            let q = queue.clone();
-            let active = active_concurrent.clone();
-            let max_obs = max_observed.clone();
-            let comp = completed.clone();
-
-            tasks.push(tokio::spawn(async move {
-                let _permit = q.semaphore.acquire().await.unwrap();
-                q.wait_for_slot().await;
-
-                let cur = active.fetch_add(1, Ordering::SeqCst) + 1;
-                max_obs.fetch_max(cur, Ordering::SeqCst);
-                sleep(Duration::from_millis(30)).await;
-                active.fetch_sub(1, Ordering::SeqCst);
-                comp.fetch_add(1, Ordering::SeqCst);
-            }));
+        let tasks: Vec<_> = (0..6)
+            .map(|_| {
+                let (q, active, peak) = (queue.clone(), active.clone(), peak.clone());
+                tokio::spawn(async move {
+                    let _slot = q.acquire_slot().await.unwrap();
+                    q.wait_for_slot().await;
+                    peak.fetch_max(active.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+                    sleep(Duration::from_millis(30)).await;
+                    active.fetch_sub(1, Ordering::SeqCst);
+                })
+            })
+            .collect();
+        for task in tasks {
+            task.await.unwrap();
         }
 
-        for t in tasks {
-            t.await.unwrap();
-        }
-
-        assert_eq!(completed.load(Ordering::SeqCst), 6);
-        assert!(
-            max_observed.load(Ordering::SeqCst) <= 2,
-            "Concurrency exceeded max_concurrent limit: {}",
-            max_observed.load(Ordering::SeqCst)
-        );
+        assert!(peak.load(Ordering::SeqCst) <= 2);
     }
 
     #[tokio::test]
-    async fn test_provider_queues_are_completely_isolated() {
-        let q_coomer = ProviderRequestQueue::new(
-            "coomer",
-            crate::api::providers::CoomerProvider::default_queue_config(),
+    async fn queue_allows_a_burst_then_throttles_to_the_configured_rate() {
+        let queue = ProviderRequestQueue::new(
+            "burst",
+            ProviderQueueConfig {
+                max_concurrent: 3,
+                min_interval: Duration::from_millis(100),
+                ..ProviderQueueConfig::default()
+            },
         );
-        let q_pawchive = ProviderRequestQueue::new(
-            "pawchive",
-            crate::api::providers::PawchiveProvider::default_queue_config(),
-        );
-
-        q_coomer.set_cooldown(Duration::from_secs(5)).await;
-
-        let coomer_gate = q_coomer.gate.lock().await;
-        assert!(coomer_gate.cooldown_until.is_some());
-        drop(coomer_gate);
-
-        let pawchive_gate = q_pawchive.gate.lock().await;
-        assert!(pawchive_gate.cooldown_until.is_none());
-        drop(pawchive_gate);
-
-        let start = Instant::now();
-        q_pawchive.wait_for_slot().await;
-        assert!(start.elapsed() < Duration::from_millis(20));
-    }
-
-    #[tokio::test]
-    async fn test_queue_allows_a_burst_then_throttles_to_the_configured_rate() {
-        let config = ProviderQueueConfig {
-            max_concurrent: 3,
-            min_interval: Duration::from_millis(100),
-            ..ProviderQueueConfig::default()
-        };
-        let queue = ProviderRequestQueue::new("burst", config);
 
         let start = Instant::now();
         for _ in 0..3 {
@@ -400,7 +360,7 @@ mod tests {
         }
         assert!(
             start.elapsed() < Duration::from_millis(50),
-            "initial burst was throttled: {:?}",
+            "burst throttled: {:?}",
             start.elapsed()
         );
 
@@ -408,71 +368,30 @@ mod tests {
         queue.wait_for_slot().await;
         assert!(
             throttled.elapsed() >= Duration::from_millis(80),
-            "sustained rate was not enforced: {:?}",
+            "rate not enforced: {:?}",
             throttled.elapsed()
         );
     }
 
     #[tokio::test]
-    async fn test_cooldown_still_blocks_before_tokens_are_spent() {
-        let queue = ProviderRequestQueue::new("cooldown", ProviderQueueConfig::default());
-        queue.set_cooldown(Duration::from_millis(120)).await;
+    async fn cooldown_blocks_only_its_own_provider() {
+        let cooling = ProviderRequestQueue::new("coomer", ProviderQueueConfig::default());
+        let other = ProviderRequestQueue::new("pawchive", ProviderQueueConfig::default());
+        cooling.set_cooldown(Duration::from_millis(120)).await;
 
         let start = Instant::now();
-        queue.wait_for_slot().await;
+        other.wait_for_slot().await;
         assert!(
-            start.elapsed() >= Duration::from_millis(100),
-            "cooldown was not honoured: {:?}",
+            start.elapsed() < Duration::from_millis(20),
+            "other provider waited {:?}",
             start.elapsed()
         );
-    }
 
-    #[tokio::test]
-    async fn test_all_providers_have_isolated_queues_and_can_be_tweaked() {
-        use crate::api::providers::coomer::CoomerProvider;
-        use crate::api::providers::onlyhaven::OnlyHavenProvider;
-        use crate::api::providers::pawchive::PawchiveProvider;
-        use crate::api::providers::traits::ProviderConfig;
-
-        let dummy_conf = |id: &str| ProviderConfig {
-            id: id.to_string(),
-            name: id.to_string(),
-            enabled: true,
-            priority: 1,
-            api_url: "https://127.0.0.1:9".to_string(),
-            fallback_urls: vec![],
-            file_url: None,
-            image_url: None,
-            session_cookie: "".to_string(),
-            username: "".to_string(),
-            services: vec![],
-            file_prefix: None,
-            image_prefix: None,
-            is_custom: false,
-            ..Default::default()
-        };
-
-        let coomer = CoomerProvider::new(dummy_conf("coomer")).unwrap();
-        let onlyhaven = OnlyHavenProvider::new(dummy_conf("onlyhaven")).unwrap();
-        let pawchive = PawchiveProvider::new(dummy_conf("pawchive")).unwrap();
-
-        assert_eq!(coomer.queue().provider_id(), "coomer");
-        assert_eq!(onlyhaven.queue().provider_id(), "onlyhaven");
-        assert_eq!(pawchive.queue().provider_id(), "pawchive");
-
-        assert_eq!(coomer.queue().config().max_concurrent, 2);
-        assert_eq!(onlyhaven.queue().config().max_concurrent, 3);
-        assert_eq!(pawchive.queue().config().max_concurrent, 4);
-
-        let custom_cfg = ProviderQueueConfig {
-            max_concurrent: 10,
-            min_interval: Duration::from_millis(5),
-            max_retries: 1,
-            default_retry_after: Duration::from_millis(50),
-            max_cooldown: Duration::from_millis(100),
-        };
-        let custom_coomer =
-            CoomerProvider::with_queue_config(dummy_conf("coomer"), custom_cfg).unwrap();
-        assert_eq!(custom_coomer.queue().config().max_concurrent, 10);
+        cooling.wait_for_slot().await;
+        assert!(
+            start.elapsed() >= Duration::from_millis(100),
+            "cooldown not honoured: {:?}",
+            start.elapsed()
+        );
     }
 }

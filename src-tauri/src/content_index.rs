@@ -167,8 +167,8 @@ async fn cloud_file_names(
         blocking(move || content.load_document::<CloudFolderResult>(CLOUD_DOCUMENT, &key, "", ""))
             .await?;
     let (folder, fetched) = match cached {
-        Some(folder) => (folder, false),
-        None => {
+        Some(folder) if folder.nodes.iter().any(|node| !node.is_folder) => (folder, false),
+        _ => {
             let folder = resolver.resolve(url).await?;
             let content = state.content.clone();
             let key = url.to_string();
@@ -260,15 +260,6 @@ fn formats_of(names: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::models::Attachment;
-
-    fn attachment(name: &str, path: &str) -> Attachment {
-        Attachment {
-            name: Some(name.into()),
-            path: Some(path.into()),
-            ..Attachment::default()
-        }
-    }
 
     #[test]
     fn classifies_entry_names() {
@@ -282,23 +273,21 @@ mod tests {
     fn collects_zip_attachments_and_cloud_links() {
         let post: Post = serde_json::from_value(serde_json::json!({
             "id": "1", "user": "u", "service": "patreon",
-            "attachments": [],
+            "attachments": [
+                {"name": "pack.zip", "path": "/aa/bb/pack.zip"},
+                {"name": "cover.jpg", "path": "/aa/bb/cover.jpg"},
+                {"name": "pack.rar", "path": "/aa/bb/pack.rar"}
+            ],
             "cloud_urls": ["https://app.filen.io/#/f/x%23y"]
         }))
         .unwrap();
-        let mut post = post;
-        post.attachments = Some(vec![
-            attachment("pack.zip", "/aa/bb/pack.zip"),
-            attachment("cover.jpg", "/aa/bb/cover.jpg"),
-            attachment("pack.rar", "/aa/bb/pack.rar"),
-        ]);
         let sources = sources_of(&post, true);
         assert_eq!(sources.archives.len(), 1);
         assert_eq!(sources.archives[0].name, "pack.zip");
-        assert_eq!(sources.clouds.len(), 1);
         assert_eq!(
             sources.fingerprint,
-            "a:/aa/bb/pack.zip\nc:https://app.filen.io/#/f/x%23y"
+            "a:/aa/bb/pack.zip
+c:https://app.filen.io/#/f/x%23y"
         );
         assert!(sources_of(&post, false).clouds.is_empty());
     }

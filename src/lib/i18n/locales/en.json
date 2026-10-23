@@ -510,6 +510,7 @@
     "search_media": "Search media…",
     "source": "Source",
     "source_auto": "Merged",
+    "source_failed": "Didn't load",
     "switch_to_merged": "Switch to Merged",
     "tab_all": "All",
     "tab_cloud": "Cloud files",

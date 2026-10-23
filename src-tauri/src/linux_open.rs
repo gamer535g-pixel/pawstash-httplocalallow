@@ -212,47 +212,27 @@ mod tests {
     const APPDIR: &str = "/tmp/.mount_PawstaAbC123";
 
     #[test]
-    fn strips_apprun_entries_and_keeps_host_ones() {
-        let path = format!(
-            "{APPDIR}/usr/bin/:{APPDIR}/usr/sbin/:{APPDIR}/usr/games/:{APPDIR}/bin/:{APPDIR}/sbin/:/usr/local/bin:/usr/bin"
-        );
-        assert_eq!(
-            strip_appdir_entries(&path, APPDIR).as_deref(),
-            Some("/usr/local/bin:/usr/bin")
-        );
-    }
-
-    #[test]
-    fn strips_gtk_hook_xdg_data_dirs() {
-        let dirs = format!("{APPDIR}/usr/share/:{APPDIR}/usr/share:/usr/share:/usr/local/share:");
-        assert_eq!(
-            strip_appdir_entries(&dirs, APPDIR).as_deref(),
-            Some("/usr/share:/usr/local/share")
-        );
-    }
-
-    #[test]
-    fn single_value_inside_appdir_is_dropped() {
-        let schema = format!("{APPDIR}//usr/share/glib-2.0/schemas");
-        assert_eq!(strip_appdir_entries(&schema, APPDIR), None);
-        assert_eq!(strip_appdir_entries(APPDIR, APPDIR), None);
-        assert_eq!(strip_appdir_entries("", APPDIR), None);
-    }
-
-    #[test]
-    fn sibling_with_shared_prefix_is_kept() {
-        let value = format!("{APPDIR}-other/lib:{APPDIR}/usr/lib");
-        assert_eq!(
-            strip_appdir_entries(&value, &format!("{APPDIR}/")).as_deref(),
-            Some(format!("{APPDIR}-other/lib").as_str())
-        );
-    }
-
-    #[test]
-    fn empty_appdir_keeps_everything() {
-        assert_eq!(
-            strip_appdir_entries("/usr/bin::/bin", "").as_deref(),
-            Some("/usr/bin:/bin")
-        );
+    fn strips_appdir_entries_and_keeps_host_ones() {
+        let appdir_slash = format!("{APPDIR}/");
+        let sibling = format!("{APPDIR}-other/lib");
+        for (value, appdir, expected) in [
+            (
+                format!("{APPDIR}/usr/bin/:{APPDIR}/usr/sbin/:{APPDIR}/usr/games/:{APPDIR}/bin/:{APPDIR}/sbin/:/usr/local/bin:/usr/bin"),
+                APPDIR,
+                Some("/usr/local/bin:/usr/bin"),
+            ),
+            (
+                format!("{APPDIR}/usr/share/:{APPDIR}/usr/share:/usr/share:/usr/local/share:"),
+                APPDIR,
+                Some("/usr/share:/usr/local/share"),
+            ),
+            (format!("{APPDIR}//usr/share/glib-2.0/schemas"), APPDIR, None),
+            (APPDIR.to_string(), APPDIR, None),
+            (String::new(), APPDIR, None),
+            (format!("{sibling}:{APPDIR}/usr/lib"), &appdir_slash, Some(sibling.as_str())),
+            ("/usr/bin::/bin".to_string(), "", Some("/usr/bin:/bin")),
+        ] {
+            assert_eq!(strip_appdir_entries(&value, appdir).as_deref(), expected, "{value}");
+        }
     }
 }

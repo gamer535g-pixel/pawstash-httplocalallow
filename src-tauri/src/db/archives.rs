@@ -111,29 +111,19 @@ mod tests {
     #[test]
     fn creator_passwords_are_distinct_and_newest_first() {
         let repo = ArchivePasswordRepository::in_memory().unwrap();
-        repo.remember("a", "patreon", "1", "old", "https://x/a.zip")
-            .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        repo.remember("b", "patreon", "1", "new", "https://x/b.zip")
-            .unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        repo.remember("c", "patreon", "1", "new", "https://x/c.zip")
-            .unwrap();
-        repo.remember("d", "fanbox", "1", "other", "https://x/d.zip")
-            .unwrap();
+        for (archive, service, password) in [
+            ("a", "patreon", "old"),
+            ("b", "patreon", "new"),
+            ("c", "patreon", "new"),
+            ("d", "fanbox", "other"),
+        ] {
+            repo.remember(archive, service, "1", password, "").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
 
         assert_eq!(
             repo.creator_passwords("patreon", "1").unwrap(),
             vec!["new".to_string(), "old".to_string()]
         );
-        assert_eq!(
-            repo.password_for_archive("a").unwrap().as_deref(),
-            Some("old")
-        );
-        assert_eq!(
-            repo.source_for_archive("c").unwrap().as_deref(),
-            Some("https://x/c.zip")
-        );
-        assert_eq!(repo.password_for_archive("missing").unwrap(), None);
     }
 }

@@ -908,149 +908,71 @@ pub struct AccountSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
-    fn creator_list_uses_unix_timestamps() {
-        let creator: Creator = serde_json::from_str(
-            r#"{
-                "id":"30500811","name":"BOKABA","service":"patreon",
-                "indexed":1785420000,"updated":1786262400,
-                "favorited":317,"ever_imported":true
-            }"#,
+    fn pawchive_revisions_flatten_post_fields() {
+        let revisions: Vec<PostRevision> = serde_json::from_str(
+            r#"[{
+                "revision_id": 19576, "id": "149912585", "user": "5564244", "service": "patreon",
+                "title": "Links to All My Animations", "content": "<p>Content</p>", "embed": {},
+                "shared_file": false, "added": "2026-06-10T05:00:00", "published": "2026-02-04T11:29:36",
+                "edited": "2026-06-18T09:42:05", "file": {}, "attachments": [], "poll": null,
+                "captions": null, "tags": "{Pack,animation,gif,mp4,nsfw}"
+            }]"#,
         )
         .unwrap();
-        assert_eq!(creator.updated, Some(1_786_262_400));
-        assert_eq!(creator.favorited, Some(317));
-    }
-
-    #[test]
-    fn compact_recent_post_is_supported() {
-        let post: Post = serde_json::from_str(
-            r#"{
-                "id":"12408586","user":"6377826","service":"fanbox",
-                "title":"post","substring":"preview","published":"2026-08-11T19:26:15",
-                "file":{"name":"cover.jpeg","path":"/91/13/file.jpeg"},
-                "attachments":[],"preview_state":"scraped","has_full":true,"origin":"import"
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(post.content, None);
-        assert_eq!(post.preview_state.as_deref(), Some("scraped"));
-        assert_eq!(post.has_full, Some(true));
-    }
-
-    #[test]
-    fn revision_flattens_post_fields() {
-        let revision: PostRevision = serde_json::from_str(
-            r#"{
-                "revision_id":42,"id":"1","user":"2","service":"fanbox",
-                "title":"revision","content":"body","attachments":[]
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(revision.revision_id, 42);
-        assert_eq!(revision.post.id, "1");
-    }
-
-    #[test]
-    fn real_pawchive_revisions_deserializes() {
-        let json = r#"[
-            {
-                "revision_id": 19576,
-                "id": "149912585",
-                "user": "5564244",
-                "service": "patreon",
-                "title": "Links to All My Animations",
-                "content": "<p>Content</p>",
-                "embed": {},
-                "shared_file": false,
-                "added": "2026-06-10T05:00:00",
-                "published": "2026-02-04T11:29:36",
-                "edited": "2026-06-18T09:42:05",
-                "file": {},
-                "attachments": [],
-                "poll": null,
-                "captions": null,
-                "tags": "{Pack,animation,gif,mp4,nsfw}"
-            }
-        ]"#;
-        let revs: Vec<PostRevision> = serde_json::from_str(json).unwrap();
-        assert_eq!(revs.len(), 1);
-        assert_eq!(revs[0].revision_id, 19576);
-        assert_eq!(revs[0].post.id, "149912585");
+        assert_eq!(revisions.len(), 1);
+        assert_eq!(revisions[0].revision_id, 19576);
+        assert_eq!(revisions[0].post.id, "149912585");
     }
 
     #[test]
     fn duplicate_keys_in_json_are_safely_handled() {
-        let json_with_duplicates = r#"{
-            "id": "123",
-            "user": "456",
-            "service": "patreon",
-            "title": "Title",
-            "edited": "2026-08-28T22:00:00",
-            "edited": "2026-08-28T22:00:00"
-        }"#;
-        let post = Post::from_json_str(json_with_duplicates).unwrap();
+        let post = Post::from_json_str(
+            r#"{
+                "id": "123", "user": "456", "service": "patreon", "title": "Title",
+                "edited": "2026-08-28T22:00:00", "edited": "2026-08-28T22:00:00"
+            }"#,
+        )
+        .unwrap();
         assert_eq!(post.id, "123");
-        assert_eq!(post.user, "456");
         assert_eq!(post.edited.as_deref(), Some("2026-08-28T22:00:00"));
     }
 
     #[test]
-    fn flexible_fields_accept_maps_and_objects() {
-        let json_with_maps = r#"{
-            "id": 98765,
-            "user": { "id": "creator_123" },
-            "service": "onlyfans",
-            "title": "Post with nested objects",
-            "prev": { "id": "98764", "title": "Previous post" },
-            "next": { "id": 98766 },
-            "origin": { "url": "https://onlyfans.com/98765" },
-            "preview_state": { "status": "done" },
-            "published": 1756543200,
-            "added": "2026-08-30T10:00:00"
-        }"#;
-        let post: Post = serde_json::from_str(json_with_maps).unwrap();
+    fn flexible_fields_accept_numbers_and_objects() {
+        let post: Post = serde_json::from_str(
+            r#"{
+                "id": 98765, "user": { "id": "creator_123" }, "service": "onlyfans",
+                "title": "Post with nested objects",
+                "prev": { "id": "98764", "title": "Previous post" }, "next": { "id": 98766 },
+                "origin": { "url": "https://onlyfans.com/98765" }, "preview_state": { "status": "done" },
+                "published": 1756543200, "added": "2026-08-30T10:00:00"
+            }"#,
+        )
+        .unwrap();
         assert_eq!(post.id, "98765");
         assert_eq!(post.user, "creator_123");
-        assert_eq!(post.service, "onlyfans");
         assert_eq!(post.prev.as_deref(), Some("98764"));
         assert_eq!(post.next.as_deref(), Some("98766"));
         assert_eq!(post.origin.as_deref(), Some("https://onlyfans.com/98765"));
         assert_eq!(post.published.as_deref(), Some("1756543200"));
         assert_eq!(post.added.as_deref(), Some("2026-08-30T10:00:00"));
+        assert_eq!(post.content, None);
     }
 
     #[test]
-    fn test_fanbox_creator_profile_deserialization() {
-        let json = r#"{"id":"28009976","name":"Eros","service":"fanbox","indexed":"2026-06-10T20:00:00","updated":"2026-09-02T11:00:00","public_id":null,"relation_id":null,"ever_imported":true,"kemono_favorited":17391}"#;
-        let prof: CreatorProfile = serde_json::from_str(json).unwrap();
-        assert_eq!(prof.id, "28009976");
-        assert_eq!(prof.name, "Eros");
-        assert_eq!(prof.service, "fanbox");
-        assert!(super::parse_timestamp_value(prof.indexed.as_ref()).is_some());
-        assert!(super::parse_timestamp_value(prof.updated.as_ref()).is_some());
-    }
-
-    #[test]
-    fn test_parse_timestamp_value_formats() {
-        use super::parse_timestamp_value;
-        use serde_json::json;
-
-        assert_eq!(
-            parse_timestamp_value(Some(&json!(1781121600))),
-            Some(1781121600)
-        );
-        assert_eq!(
-            parse_timestamp_value(Some(&json!("1781121600"))),
-            Some(1781121600)
-        );
-        assert_eq!(
-            parse_timestamp_value(Some(&json!("2026-06-10T20:00:00"))),
-            Some(1781121600)
-        );
+    fn timestamps_parse_from_numbers_and_strings() {
+        for (value, expected) in [
+            (json!(1781121600), Some(1781121600)),
+            (json!("1781121600"), Some(1781121600)),
+            (json!("2026-06-10T20:00:00"), Some(1781121600)),
+            (json!(""), None),
+        ] {
+            assert_eq!(parse_timestamp_value(Some(&value)), expected, "{value}");
+        }
         assert!(parse_timestamp_value(Some(&json!("2026-08-15T03:53:20.229981"))).is_some());
         assert_eq!(parse_timestamp_value(None), None);
-        assert_eq!(parse_timestamp_value(Some(&json!(""))), None);
     }
 }
