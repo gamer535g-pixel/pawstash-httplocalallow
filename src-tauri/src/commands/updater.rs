@@ -106,6 +106,40 @@ fn strip_redundant_release_heading(body: &str) -> String {
     output.join("\n").trim().to_string()
 }
 
+fn pending_releases<'a>(
+    releases: &'a [GitHubRelease],
+    current_version: &str,
+    include_prereleases: bool,
+) -> Vec<&'a GitHubRelease> {
+    let allow_prereleases = include_prereleases || current_version.contains('-');
+    let newer: Vec<&GitHubRelease> = releases
+        .iter()
+        .filter(|r| allow_prereleases || !r.prerelease)
+        .filter(|r| is_version_newer(r.tag_name.trim_start_matches('v'), current_version))
+        .collect();
+    let latest_is_prerelease = newer.first().is_some_and(|r| r.prerelease);
+    newer
+        .into_iter()
+        .filter(|r| latest_is_prerelease || !r.prerelease)
+        .collect()
+}
+
+fn combined_release_notes(releases: &[&GitHubRelease]) -> String {
+    releases
+        .iter()
+        .filter_map(|r| {
+            let title = r.name.as_deref().unwrap_or(&r.tag_name);
+            let cleaned = strip_redundant_release_heading(r.body.as_deref().unwrap_or("").trim());
+            match (cleaned.is_empty(), releases.len()) {
+                (true, 1) => Some(title.to_string()),
+                (true, _) => None,
+                (false, _) => Some(format!("### {title}\n{cleaned}")),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 #[tauri::command]
 pub async fn check_for_updates(include_prereleases: bool) -> Result<UpdateInfo, String> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
@@ -117,63 +151,12 @@ pub async fn check_for_updates(include_prereleases: bool) -> Result<UpdateInfo, 
 
     let releases = fetch_releases(&client).await?;
 
-    let is_current_prerelease = current_version.contains('-');
-    let allow_prereleases = include_prereleases || is_current_prerelease;
+    let pending = pending_releases(&releases, &current_version, include_prereleases);
 
-    let target_release = releases.iter().find(|r| {
-        if r.prerelease && !allow_prereleases {
-            return false;
-        }
-        let tag = r.tag_name.trim_start_matches('v');
-        is_version_newer(tag, &current_version)
-    });
-
-    if let Some(latest) = target_release {
+    if let Some(latest) = pending.first().copied() {
         let latest_tag = latest.tag_name.trim_start_matches('v');
         let (asset_url, asset_name, asset_size) = find_platform_asset(&latest.assets);
-
-        let newer_releases: Vec<&GitHubRelease> = releases
-            .iter()
-            .filter(|r| {
-                if r.prerelease && !allow_prereleases {
-                    return false;
-                }
-                let tag = r.tag_name.trim_start_matches('v');
-                if !is_version_newer(tag, &current_version) {
-                    return false;
-                }
-                if !latest.prerelease && r.prerelease {
-                    return false;
-                }
-                true
-            })
-            .collect();
-
-        let combined_notes = if newer_releases.len() <= 1 {
-            let title = latest.name.as_deref().unwrap_or(&latest.tag_name);
-            let body = latest.body.as_deref().unwrap_or("").trim();
-            let cleaned = strip_redundant_release_heading(body);
-            if cleaned.is_empty() {
-                title.to_string()
-            } else {
-                format!("### {title}\n{cleaned}")
-            }
-        } else {
-            newer_releases
-                .iter()
-                .filter_map(|r| {
-                    let body = r.body.as_deref().unwrap_or("").trim();
-                    let title = r.name.as_deref().unwrap_or(&r.tag_name);
-                    let cleaned = strip_redundant_release_heading(body);
-                    if cleaned.is_empty() && body.is_empty() {
-                        None
-                    } else {
-                        Some(format!("### {title}\n{cleaned}"))
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        };
+        let combined_notes = combined_release_notes(&pending);
 
         let installed_tag = releases
             .iter()
@@ -894,6 +877,53 @@ pub(crate) fn is_version_newer(latest: &str, current: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn release(tag: &str, prerelease: bool, change: &str) -> GitHubRelease {
+        GitHubRelease {
+            tag_name: tag.to_string(),
+            name: Some(tag.to_string()),
+            body: Some(format!("### Changes in {tag}\n\n- {change}")),
+            prerelease,
+            published_at: None,
+            html_url: String::new(),
+            assets: Vec::new(),
+        }
+    }
+
+    fn published() -> Vec<GitHubRelease> {
+        vec![
+            release("v26.10.1-7", true, "fix: imported posts stuck"),
+            release("v26.10.1-6", true, "feat: post download controls"),
+            release("v26.10.1-5", true, "fix: Linux/macOS build"),
+            release("v26.10.1-3", true, "feat: ui redesign"),
+            release("v26.9.4", false, "fix(updater): atomic AppImage update"),
+            release("v26.9.3", false, "perf(linux): drop in-scroll blurs"),
+        ]
+    }
+
+    #[test]
+    fn notes_cover_every_release_since_the_installed_one() {
+        let releases = published();
+        let pending = pending_releases(&releases, "26.10.1-3", false);
+        let tags: Vec<&str> = pending.iter().map(|r| r.tag_name.as_str()).collect();
+        assert_eq!(tags, ["v26.10.1-7", "v26.10.1-6", "v26.10.1-5"]);
+        let notes = combined_release_notes(&pending);
+        for change in ["imported posts stuck", "post download controls", "Linux/macOS build"] {
+            assert!(notes.contains(change), "{change} missing from {notes}");
+        }
+        assert!(!notes.contains("ui redesign"));
+    }
+
+    #[test]
+    fn stable_installs_skip_prereleases_unless_asked() {
+        let releases = published();
+        let stable: Vec<&str> = pending_releases(&releases, "26.9.3", false)
+            .iter()
+            .map(|r| r.tag_name.as_str())
+            .collect();
+        assert_eq!(stable, ["v26.9.4"]);
+        assert_eq!(pending_releases(&releases, "26.9.3", true).len(), 5);
+    }
 
     #[test]
     fn test_version_comparison() {

@@ -235,8 +235,13 @@ jobs:
       - name: Generate Commit Changelog
         id: changelog
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name || inputs.tag_name }}
         run: |
-          PREV_TAG=$(git tag --sort=-creatordate 2>/dev/null | grep -v "${{ github.ref_name || inputs.tag_name }}" | head -n 1 || true)
+          PREVIOUS='.[] | select(.isDraft | not) | select(.tagName != env.TAG)'
+          [[ "$TAG" == *-* ]] || PREVIOUS="$PREVIOUS | select(.isPrerelease | not)"
+          PREV_TAG=$(gh release list --limit 100 --json tagName,isDraft,isPrerelease --jq "$PREVIOUS | .tagName" | head -n 1 || true)
           if [ -n "$PREV_TAG" ]; then
             COMMITS=$(git log --pretty=format:"- %s (%h)" "$PREV_TAG..HEAD")
           else
