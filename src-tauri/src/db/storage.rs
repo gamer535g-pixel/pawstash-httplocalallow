@@ -4,7 +4,7 @@ use std::time::Duration;
 
 pub const INBOX_COLLECTION_ID: &str = "00000000-0000-0000-0000-000000000001";
 
-const CURRENT_SCHEMA_VERSION: i64 = 11;
+const CURRENT_SCHEMA_VERSION: i64 = 12;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -571,6 +571,18 @@ pub fn initialize_schema(connection: &mut Connection) -> Result<(), String> {
                     )
                     .map_err(|e| e.to_string())?;
             }
+            12 => {
+                transaction
+                    .execute(
+                        "UPDATE posts SET snapshot_json = json_remove(snapshot_json, '$.has_full', '$.preview_state')
+                         WHERE CASE WHEN json_valid(snapshot_json)
+                                    THEN json_extract(snapshot_json, '$.has_full') = 0
+                                         AND coalesce(json_extract(snapshot_json, '$.detail_fetched'), 0) = 0
+                                    ELSE 0 END",
+                        [],
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
             _ => return Err(format!("Missing database migration {next_version}")),
         }
         transaction
@@ -725,6 +737,30 @@ mod tests {
                 id,
             );
             assert_eq!(actual, complete, "{id}");
+        }
+    }
+
+    #[test]
+    fn migration_12_forgets_import_state_that_sync_invented() {
+        let connection = migrate_from(
+            11,
+            r#"INSERT INTO creators(service, creator_id, name, snapshot_json) VALUES ('patreon', 'c', 'c', '{}');
+               INSERT INTO posts(service, creator_id, post_id, title, snapshot_json) VALUES
+                 ('patreon', 'c', 'slim', 't', '{"id":"slim","has_full":false,"preview_state":"scraped","detail_fetched":false}'),
+                 ('patreon', 'c', 'detail', 't', '{"id":"detail","has_full":false,"preview_state":"pending","detail_fetched":true}'),
+                 ('patreon', 'c', 'full', 't', '{"id":"full","has_full":true,"detail_fetched":false}');"#,
+        );
+        for (id, has_full) in [
+            ("slim", None),
+            ("detail", Some(false)),
+            ("full", Some(true)),
+        ] {
+            let actual: Option<bool> = query(
+                &connection,
+                "SELECT json_extract(snapshot_json, '$.has_full') FROM posts WHERE post_id = ?1",
+                id,
+            );
+            assert_eq!(actual, has_full, "{id}");
         }
     }
 }

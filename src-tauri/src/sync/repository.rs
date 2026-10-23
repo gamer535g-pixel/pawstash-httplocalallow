@@ -154,6 +154,14 @@ pub fn favorite_creator_record_id(service: &str, creator_id: &str) -> String {
     format!("fav:creator:{service}:{creator_id}")
 }
 
+fn without_import_state(raw_json: &str) -> Option<(crate::api::models::Post, String)> {
+    let mut post = crate::api::models::Post::from_json_str(raw_json).ok()?;
+    post.has_full = None;
+    post.preview_state = None;
+    let json = serde_json::to_string(&post).ok()?;
+    Some((post, json))
+}
+
 pub fn slim_post_snapshot(raw_json: &str) -> String {
     if let Ok(post) = crate::api::models::Post::from_json_str(raw_json) {
         let slim = post.to_slim();
@@ -1068,9 +1076,8 @@ impl SyncRepository {
             "post" => {
                 let rec: PostRecord = serde_json::from_slice(bytes)
                     .map_err(|e| format!("Failed to deserialize post record ({record_id}): {e}"))?;
-                let post: crate::api::models::Post =
-                    crate::api::models::Post::from_json_str(&rec.snapshot_json)
-                        .map_err(|e| format!("Failed to parse post snapshot ({record_id}): {e}"))?;
+                let (post, incoming) = without_import_state(&rec.snapshot_json)
+                    .ok_or_else(|| format!("Failed to parse post snapshot ({record_id})"))?;
                 tx.execute(
                     "INSERT INTO creators(service,creator_id,name,snapshot_json)
                      VALUES(?1,?2,?2,json_object('id',?2,'name',?2,'service',?1))
@@ -1082,7 +1089,7 @@ impl SyncRepository {
                     tx,
                     (&rec.service, &rec.creator_id, &rec.post_id),
                     &post,
-                    rec.snapshot_json.clone(),
+                    incoming,
                 )?;
                 tx.execute(
                     "INSERT INTO posts(service,creator_id,post_id,title,content,published_at,snapshot_json,cached_at)
@@ -1194,7 +1201,7 @@ impl SyncRepository {
                 let rec: FavoritePostRecord = serde_json::from_slice(bytes).map_err(|e| {
                     format!("Failed to deserialize fav_post record ({record_id}): {e}")
                 })?;
-                if let Ok(post) = crate::api::models::Post::from_json_str(&rec.snapshot_json) {
+                if let Some((post, incoming)) = without_import_state(&rec.snapshot_json) {
                     tx.execute(
                         "INSERT INTO creators(service,creator_id,name,snapshot_json)
                          VALUES(?1,?2,?2,json_object('id',?2,'name',?2,'service',?1))
@@ -1204,6 +1211,12 @@ impl SyncRepository {
                     .map_err(|e| {
                         format!("Failed to ensure creator for fav_post ({record_id}): {e}")
                     })?;
+                    let snapshot = crate::db::content::post_snapshot_to_store(
+                        tx,
+                        (&rec.service, &rec.creator_id, &rec.post_id),
+                        &post,
+                        incoming,
+                    )?;
                     tx.execute(
                         "INSERT INTO posts(service,creator_id,post_id,title,content,published_at,snapshot_json,cached_at)
                          VALUES(?1,?2,?3,?4,?5,?6,?7,CURRENT_TIMESTAMP)
@@ -1219,7 +1232,7 @@ impl SyncRepository {
                             post.title,
                             post.content,
                             post.published,
-                            rec.snapshot_json
+                            snapshot
                         ],
                     )
                     .map_err(|e| format!("Failed to insert/update post for fav_post ({record_id}): {e}"))?;
@@ -1342,6 +1355,39 @@ mod tests {
         let bytes = serde_json::to_vec(record).unwrap();
         repo.apply_remote_change(record_id, kind, rev, Some(&bytes), false)
             .unwrap();
+    }
+
+    #[test]
+    fn synced_favorites_never_mark_a_loaded_post_unimported() {
+        let repo = SyncRepository::in_memory();
+        exec(
+            &repo,
+            r#"INSERT INTO creators(service,creator_id,name,snapshot_json) VALUES('patreon','c','c','{}');
+               INSERT INTO posts(service,creator_id,post_id,title,snapshot_json) VALUES('patreon','c','1','t',
+                 '{"id":"1","user":"c","service":"patreon","title":"t","has_full":true,"preview_state":"scraped","detail_fetched":true}');"#,
+        );
+        let teaser = r#"{"id":"1","user":"c","service":"patreon","title":"t","has_full":false,"preview_state":"pending","detail_fetched":false}"#;
+        apply(
+            &repo,
+            "fav:post:patreon:c:1",
+            "fav_post",
+            1,
+            &FavoritePostRecord {
+                service: "patreon".into(),
+                creator_id: "c".into(),
+                post_id: "1".into(),
+                snapshot_json: teaser.into(),
+                created_at: AT.into(),
+            },
+        );
+        let has_full: Option<bool> = query(
+            &repo,
+            "SELECT json_extract(snapshot_json,'$.has_full') FROM posts WHERE post_id='1'",
+        );
+        assert_eq!(has_full, Some(true));
+
+        let slim: serde_json::Value = serde_json::from_str(&slim_post_snapshot(teaser)).unwrap();
+        assert!(slim["has_full"].is_null() && slim["preview_state"].is_null());
     }
 
     fn collection(id: &str, parent_id: Option<&str>, name: &str) -> CollectionRecord {
