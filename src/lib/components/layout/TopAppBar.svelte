@@ -247,7 +247,7 @@
   }
 
   .bar-title.is-swapped {
-    animation: bar-title-in var(--duration-normal) var(--ease-expo) both;
+    animation: bar-title-in var(--duration-normal) var(--ease-expo) var(--duration-fast) both;
   }
 
   @keyframes bar-title-in {
@@ -261,6 +261,7 @@
     display: flex;
     align-items: center;
     min-width: 0;
+    transition: margin var(--duration-fast) var(--ease-standard);
   }
 
   .bar-views {
@@ -308,6 +309,10 @@
 
   .top-app-bar.is-pointer:not(.has-window-controls) {
     padding-inline-end: calc(var(--gutter) + var(--edge-right, 0px));
+  }
+
+  :global(html.mac-header-overflow) .top-app-bar.is-pointer {
+    padding-inline-start: calc(var(--mac-header-width) - var(--sidebar-width-collapsed) + 8px);
   }
 
   .top-app-bar.is-pointer .bar-title,

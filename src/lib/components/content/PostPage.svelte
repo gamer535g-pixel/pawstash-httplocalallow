@@ -6,6 +6,8 @@
 
 <script lang="ts">
   import { onMount, untrack, getContext, tick } from 'svelte';
+  import EmptyState from '$lib/components/ui/EmptyState.svelte';
+  import PostDownloadPanel from './PostDownloadPanel.svelte';
   import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
   import { contentState, postCacheKey, creatorCacheKey, normalizePostId, type CachedPost } from '$lib/state/contentState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
@@ -22,7 +24,7 @@
   import type { LibraryCollection } from '$lib/types/library';
   import { i18n } from '$lib/i18n';
   import { formatDate, formatBytes, getPostTags, cleanPostTitle } from '$lib/utils/formatters';
-  import { isImageUrl, isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isSameAttachment, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, getAttachmentDeclaredSize, isOpenableArchive, type MediaFailureState, formatServiceName, videoPoster } from '$lib/utils/media';
+  import { isVideoUrl, attachmentMediaUrl, attachmentThumbnailUrl, isSameAttachment, isAttachmentVideo, isAttachmentAudio, isAttachmentImage, getPlatformPostUrl, formatProviderName, postThumbnailUrl, creatorAvatarSrc, resolveLocalMediaUrl, getFileExtension, isH265Video, diagnoseVideoFailure, diagnoseVideoFailureAsync, cleanMediaPath, getAttachmentDeclaredSize, isOpenableArchive, type MediaFailureState, formatServiceName, videoPoster } from '$lib/utils/media';
   import { seedFromImageUrl, seedFromThumbHash } from '$lib/theme/seedColor';
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import { extractDirectMediaLinks, sanitizeEmbedHtml } from './RichContent.svelte';
@@ -1635,6 +1637,7 @@
         lastLoadedPostKey = currentKey;
         probingMediaPaths.clear();
         closeMediaSearch();
+        closeCommentsSearch();
       }
       untrack(() => {
         void contentState.loadPost(currentService, currentCreatorId, currentPostId, true, currentProvider).then(() => {
@@ -2080,6 +2083,19 @@
   const MAX_COMMENTS_HEIGHT = 600;
   let isCommentsOverflowing = $derived(commentsHeight > MAX_COMMENTS_HEIGHT);
   let commentsSort = $state<'newest' | 'oldest'>('newest');
+  const COMMENT_SEARCH_MIN = 20;
+  let commentsSearchQuery = $state('');
+  let commentsSearchOpen = $state(false);
+  let commentsQuery = $derived(commentsSearchQuery.trim().toLowerCase());
+  let commentSortOptions = $derived([
+    sortOption<'newest' | 'oldest'>('newest', 'published', 'desc'),
+    sortOption<'newest' | 'oldest'>('oldest', 'published', 'asc')
+  ]);
+
+  function closeCommentsSearch() {
+    commentsSearchOpen = false;
+    commentsSearchQuery = '';
+  }
 
   async function loadComments() {
     if (!postId) return;
@@ -2121,6 +2137,15 @@
       .filter(c => c.parent_id === commentId)
       .sort((a, b) => new Date(a.published).getTime() - new Date(b.published).getTime());
   }
+
+  function threadMatches(comment: Comment): boolean {
+    const author = (comment.commenter_name || comment.commenter || '').toLowerCase();
+    if ((comment.content ?? '').toLowerCase().includes(commentsQuery) || author.includes(commentsQuery)) return true;
+    return getReplies(comment.id).some(threadMatches);
+  }
+
+  let visibleRootComments = $derived(commentsQuery ? rootComments.filter(threadMatches) : rootComments);
+  let commentsCollapsible = $derived(isCommentsOverflowing && !commentsQuery);
 
 </script>
 
@@ -2276,7 +2301,7 @@
         disabled={true}
         title={i18n.t('post.file_not_archived')}
       >
-        <span class="attachment-button-state text-[var(--fg-muted)]">
+        <span class="attachment-button-state text-[var(--text-secondary)]">
           <IconVideoOff class="w-[16px] h-[16px]" />
           <span>{i18n.t('post.unarchived')}</span>
         </span>
@@ -2327,7 +2352,7 @@
       {:else}
         <ServiceIcon {service} />
       {/if}
-      {#if !condensed}<span class="post-bar-creator-name">{creatorName}</span>{/if}
+      <span class="post-bar-creator-name" aria-hidden={condensed}>{creatorName}</span>
     </Button>
   {/if}
 {/snippet}
@@ -2388,28 +2413,28 @@
           {#if post}
             <h1 bind:this={postTitleEl}>{cleanPostTitle(post.title) || i18n.t('feed.untitled')}</h1>
           {:else if autoEntry?.post?.title}
-            <h1 class="opacity-75">{cleanPostTitle(autoEntry.post.title)}</h1>
+            <h1>{cleanPostTitle(autoEntry.post.title)}</h1>
           {/if}
           {#if publishedDateStr}
-            <div class="post-date post-dates-row flex items-center flex-wrap gap-2 mt-2 text-sm text-[var(--fg-muted)]">
+            <div class="post-date post-dates-row flex items-center flex-wrap gap-2 mt-2 text-sm text-[var(--text-secondary)]">
               <div class="flex items-center gap-1.5 shrink-0">
-                <span class="text-[var(--fg-subtle)]">{i18n.t('post.published_at')}:</span>
-                <strong class="font-semibold text-[var(--fg-default)]">{publishedDateStr}</strong>
+                <span class="text-[var(--text-muted)]">{i18n.t('post.published_at')}:</span>
+                <strong class="font-semibold text-[var(--text-primary)]">{publishedDateStr}</strong>
               </div>
 
               {#if showEdited}
-                <span class="text-[var(--fg-subtle)]">·</span>
+                <span class="text-[var(--text-muted)]">·</span>
                 <div class="flex items-center gap-1.5 shrink-0">
-                  <span class="text-[var(--fg-subtle)]">{i18n.t('post.edited_at')}:</span>
-                  <strong class="font-medium text-[var(--fg-default)]">{editedDateStr}</strong>
+                  <span class="text-[var(--text-muted)]">{i18n.t('post.edited_at')}:</span>
+                  <strong class="font-medium text-[var(--text-primary)]">{editedDateStr}</strong>
                 </div>
               {/if}
 
               {#if showImported}
-                <span class="text-[var(--fg-subtle)]">·</span>
+                <span class="text-[var(--text-muted)]">·</span>
                 <div class="flex items-center gap-1.5 shrink-0">
-                  <span class="text-[var(--fg-subtle)]">{i18n.t('post.imported_at')}:</span>
-                  <strong class="font-medium text-[var(--fg-default)]">{addedDateStr}</strong>
+                  <span class="text-[var(--text-muted)]">{i18n.t('post.imported_at')}:</span>
+                  <strong class="font-medium text-[var(--text-primary)]">{addedDateStr}</strong>
                 </div>
               {/if}
             </div>
@@ -2457,8 +2482,15 @@
           <PostPoll poll={post.poll} />
         {/if}
 
-      {#if entry.loading && !entry.loaded}
-        <div class="detail-loading">{i18n.t('feed.loading')}</div>
+      {#if entry.loading && !entry.loaded && media.length === 0 && !hasEmbed}
+        <div class="media-gallery media-gallery-skeleton" role="status" aria-label={i18n.t('feed.loading')}>
+          {#each [0, 1] as index (index)}
+            <div class="media-skeleton">
+              <div class="media-skeleton__picture"></div>
+              <div class="media-skeleton__caption"></div>
+            </div>
+          {/each}
+        </div>
       {/if}
 
       {#if lockedCloudLinks.length > 0}
@@ -2527,7 +2559,7 @@
                       </div>
 
                       <button
-                        class="file-placeholder media-open-surface cursor-pointer hover:bg-[var(--bg-card-hover)] transition-colors"
+                        class="file-placeholder media-open-surface"
                         type="button"
                         onclick={() => {
                           if (linkedPostId) {
@@ -2538,7 +2570,7 @@
                         }}
                         aria-label={postEmbed.subject || (linkedPostId ? `Post #${linkedPostId}` : 'Linked Post')}
                       >
-                        <IconDocument class="placeholder-icon text-[var(--accent)]" />
+                        <IconDocument class="placeholder-icon" />
                         <p class="placeholder-text font-medium">{postEmbed.subject || postEmbed.description || (linkedPostId ? `Open Post #${linkedPostId}` : i18n.t('post.linked_post'))}</p>
                       </button>
 
@@ -2649,11 +2681,11 @@
                       </div>
                       <button
                         type="button"
-                        class="file-placeholder media-open-surface cursor-pointer hover:bg-[var(--bg-card-hover)] transition-colors"
+                        class="file-placeholder media-open-surface"
                         onclick={() => openCloudFolderModal(fRes, fNodeId)}
                         aria-label={i18n.t('post.open_cloud_folder', { name: file?.name ?? '' })}
                       >
-                        <IconFolder class="placeholder-icon text-[var(--accent)]" />
+                        <IconFolder class="placeholder-icon" />
                         <p class="placeholder-text font-medium">{file?.name}</p>
                       </button>
                       <div class="media-download-group">
@@ -2686,8 +2718,8 @@
                         {/if}
                       </div>
                       <div class="file-placeholder media-open-surface is-deferred-placeholder" title={i18n.t('post.file_not_saved_desc')}>
-                        <IconWarning class="placeholder-icon text-red-500" />
-                        <p class="placeholder-text text-red-400">{i18n.t('post.file_not_saved')}</p>
+                        <IconWarning class="placeholder-icon" />
+                        <p class="placeholder-text">{i18n.t('post.file_not_saved')}</p>
                       </div>
                     {:else if isAttachmentVideo(file, url) || isAttachmentImage(file, url)}
                       {@const isVid = isAttachmentVideo(file, url)}
@@ -2760,7 +2792,7 @@
                               <span>{i18n.t('downloads.retry')}</span>
                             </Button>
                           {:else if failure?.preset === 'server_error' || (failure?.httpStatus && failure.httpStatus >= 500)}
-                            <p class="placeholder-text text-red-400">{failure.message || i18n.t('post.error_server')}</p>
+                            <p class="placeholder-text text-[var(--status-error)]">{failure.message || i18n.t('post.error_server')}</p>
                             <p class="placeholder-subtext">{i18n.t('post.error_server_hint')}</p>
                             <Button
                               variant="ghost"
@@ -3067,42 +3099,26 @@
           {/if}
         </section>
 
-        {#if allMediaDownloaded || media.length > 0 || post.file}
-          <div class="post-footer-actions-row">
-            {#if allMediaDownloaded}
-              <Button
-                variant="tonal"
-                onclick={() => void openPostFolder()}
-                class="post-footer-action"
-              >
-                <IconFolder class="w-[18px] h-[18px]" />
-                <span>{i18n.t('downloads.open_post_folder')}</span>
-              </Button>
-            {:else if media.length > 0}
-              <Button
-                variant="tonal"
-                disabled={downloadingAll || allMediaQueued}
-                onclick={() => void downloadAllMedia()}
-                class="post-footer-action"
-              >
-                {#if downloadingAll}
-                  <IconLoading class="w-[18px] h-[18px]" />
-                {:else}
-                  <IconDownload class="w-[18px] h-[18px]" />
-                {/if}
-                <span>
-                  {i18n.t(downloadingAll ? 'post.downloading_all' : 'post.download_all')}{totalMediaBytes > 0 ? ` · ${formatBytes(totalMediaBytes)}` : ''}
-                </span>
-              </Button>
-            {/if}
+        {#snippet previewAction()}
+          <Button variant="primary" onclick={openPreviewViewer} class="post-footer-action">
+            <IconEye class="w-[18px] h-[18px]" />
+            <span>{i18n.t('post.view_preview')}</span>
+          </Button>
+        {/snippet}
 
-            {#if post.file || media.length > 0}
-              <Button variant="primary" onclick={openPreviewViewer} class="post-footer-action">
-                <IconEye class="w-[18px] h-[18px]" />
-                <span>{i18n.t('post.view_preview')}</span>
-              </Button>
-            {/if}
+        {#if media.length > 0}
+          <div class="post-footer-actions-row">
+            <PostDownloadPanel
+              jobs={media.map(attachmentDownload)}
+              totalBytes={totalMediaBytes}
+              starting={downloadingAll}
+              ondownload={() => void downloadAllMedia()}
+              onopenfolder={() => void openPostFolder()}
+              trailing={previewAction}
+            />
           </div>
+        {:else if post.file}
+          <div class="post-footer-actions-row">{@render previewAction()}</div>
         {/if}
 
         <nav class="post-footer-toolbar" aria-label={i18n.t('post.adjacent_posts')}>
@@ -3168,7 +3184,7 @@
       {/snippet}
 
       <section class="comments-section">
-        <div class="comments-header-row">
+        <div class="comments-header-row" class:search-active={commentsSearchOpen}>
           <h2 class="comments-title">
             <IconComment class="w-[20px] h-[20px] opacity-75" />
             <span>{i18n.t('post.comments')}</span>
@@ -3176,17 +3192,23 @@
           </h2>
 
           {#if comments.length > 1}
-            <div class="comments-sort-selector">
-              <Select
-                options={[
-                  { value: 'newest', label: i18n.t('post.sort_newest') },
-                  { value: 'oldest', label: i18n.t('post.sort_oldest') }
-                ]}
-                value={commentsSort}
-                onchange={(val) => commentsSort = val as 'newest' | 'oldest'}
-                variant="ghost"
-                align="right"
-              />
+            <div class="comments-actions">
+              <HeaderActions
+                bind:searchOpen={commentsSearchOpen}
+                bind:searchQuery={commentsSearchQuery}
+                showSearchButton={comments.length >= COMMENT_SEARCH_MIN || Boolean(commentsSearchQuery)}
+                searchPlaceholder={i18n.t('post.search_comments')}
+                onsearchtoggle={(open) => {
+                  if (!open) closeCommentsSearch();
+                }}
+              >
+                <SortControl
+                  variant="standalone"
+                  options={commentSortOptions}
+                  value={commentsSort}
+                  onchange={(value) => (commentsSort = value)}
+                />
+              </HeaderActions>
             </div>
           {/if}
         </div>
@@ -3197,21 +3219,23 @@
           <div class="comments-empty">{commentsError}</div>
         {:else if comments.length === 0}
           <div class="comments-empty">{i18n.t('post.no_comments')}</div>
+        {:else if visibleRootComments.length === 0}
+          <div class="comments-empty">{i18n.t('post.no_matching_comments', { query: commentsSearchQuery.trim() })}</div>
         {:else}
           <div class="comments-wrapper" bind:this={commentsWrapperEl}>
             <div
               class="comments-container"
-              class:is-collapsed={isCommentsOverflowing && !commentsExpanded}
-              class:is-expanded={commentsExpanded}
+              class:is-collapsed={commentsCollapsible && !commentsExpanded}
+              class:is-expanded={commentsExpanded || Boolean(commentsQuery)}
             >
               <div class="comments-list" bind:clientHeight={commentsHeight}>
-                {#each rootComments as comment (comment.id)}
+                {#each visibleRootComments as comment (comment.id)}
                   {@render commentNode(comment)}
                 {/each}
               </div>
             </div>
 
-            {#if isCommentsOverflowing && !commentsExpanded}
+            {#if commentsCollapsible && !commentsExpanded}
               <div class="comments-expand-action">
                 <Button
                   variant="ghost"
@@ -3224,7 +3248,7 @@
                   <span>{i18n.t('post.expand_comments')}</span>
                 </Button>
               </div>
-            {:else if isCommentsOverflowing && commentsExpanded}
+            {:else if commentsCollapsible && commentsExpanded}
               <div class="comments-collapse-action">
                 <Button
                   variant="ghost"
@@ -3240,34 +3264,27 @@
         {/if}
       </section>
       {:else if entry.loading || !entry.loaded}
-        <div class="detail-loading py-16 flex flex-col items-center justify-center gap-3">
-          <IconLoading class="w-8 h-8 text-accent" />
-          <span class="text-sm text-[var(--fg-muted)]">{i18n.t('feed.loading')}</span>
-        </div>
+        <div class="detail-loading" role="status" aria-label={i18n.t('feed.loading')}><IconLoading /></div>
       {:else}
-        <div class="detail-empty py-16 px-4 flex flex-col items-center justify-center text-center">
-          <IconWarning class="w-10 h-10 text-[var(--fg-subtle)] mb-3 opacity-60" />
-          <h2 class="text-lg font-semibold text-[var(--fg-default)] mb-1">
-            {i18n.t('post.not_found_on_provider', { provider: currentProviderName })}
-          </h2>
-          <p class="text-sm text-[var(--fg-muted)] max-w-md mb-6">
-            {i18n.t('post.not_found_on_provider_desc', { provider: currentProviderName })}
-          </p>
+        <EmptyState
+          icon={IconSource}
+          title={i18n.t('post.not_found_on_provider', { provider: currentProviderName })}
+          description={i18n.t('post.not_found_on_provider_desc', { provider: currentProviderName })}
+        >
           {#if candidateProviders.length > 1}
-            <Button
-              variant="accent"
-              onclick={() => onProviderChange('auto')}
-            >
-              <IconSparkle class="w-4 h-4 mr-1.5" />
-              <span>{i18n.t('post.switch_to_merged')}</span>
-            </Button>
+            <Button variant="tonal" onclick={() => onProviderChange('auto')}>{i18n.t('post.switch_to_merged')}</Button>
           {/if}
-        </div>
+        </EmptyState>
       {/if}
     {:else if entry.loading}
-      <div class="detail-loading">{i18n.t('feed.loading')}</div>
+      <div class="detail-loading" role="status" aria-label={i18n.t('feed.loading')}><IconLoading /></div>
     {:else if entry.error}
-      <div class="detail-loading">{entry.error}</div>
+      <EmptyState icon={IconWarning} tone="error" title={i18n.t('post.load_error')} description={entry.error}>
+        <Button variant="tonal" onclick={() => void refreshPost()}>
+          <IconArrowClockwise />
+          <span>{i18n.t('common.retry')}</span>
+        </Button>
+      </EmptyState>
     {/if}
   </div>
 </PageShell>
@@ -3305,8 +3322,8 @@
     max-width: 100%;
   }
 
-  .media-controls-row :global(.btn),
-  .comments-header-row :global(.btn) {
+  .media-controls-row :global(.btn:not(.btn-icon)),
+  .comments-header-row :global(.btn:not(.btn-icon)) {
     height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
     padding: 0 18px !important;
     font-size: calc(var(--control-font-size, 14px) * var(--ui-scale, 1)) !important;
@@ -3342,25 +3359,30 @@
     min-width: 0;
     max-width: 240px;
     flex-shrink: 1;
-    padding-inline: 6px 14px;
-  }
-
-  :global(.post-bar-creator.is-condensed) {
-    padding-inline: 6px;
   }
 
   .post-bar-creator-name {
     min-width: 0;
+    max-width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    transition:
+      max-width var(--duration-fast) var(--ease-standard),
+      margin var(--duration-fast) var(--ease-standard),
+      opacity var(--duration-fast) var(--ease-standard);
   }
 
-  .comments-header-row :global(.select-trigger) {
-    height: 44px !important;
-    font-size: 13.5px !important;
-    padding: 0 18px !important;
-    border-radius: var(--radius-full) !important;
+  :global(.post-bar-creator.is-condensed) .post-bar-creator-name {
+    max-width: 0;
+    margin-inline: calc(-1 * var(--control-gap, 8px)) -12px;
+    opacity: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .post-bar-creator-name {
+      transition: none;
+    }
   }
 
   .detail-header {
@@ -3411,7 +3433,8 @@
     font-size: 12px;
   }
 
-  .detail-loading { min-height: 300px; display: grid; place-items: center; color: var(--text-secondary); font-size: 13px; }
+  .detail-loading { min-height: 300px; display: grid; place-items: center; color: var(--text-secondary); }
+  .detail-loading :global(svg) { width: 32px; height: 32px; }
 
   .media-controls-row {
     display: flex;
@@ -3542,6 +3565,40 @@
     font-size: 13px;
     color: var(--text-muted);
     margin: 0;
+  }
+
+  .media-skeleton {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .media-skeleton__picture,
+  .media-skeleton__caption {
+    background: rgba(var(--surface-tint-rgb), 0.06);
+    animation: media-skeleton-pulse 1.6s var(--ease-standard) infinite;
+  }
+
+  .media-skeleton__picture {
+    aspect-ratio: 16 / 9;
+    border-radius: var(--radius-md);
+  }
+
+  .media-skeleton__caption {
+    width: 45%;
+    height: 12px;
+    border-radius: var(--radius-full);
+  }
+
+  @keyframes media-skeleton-pulse {
+    50% { opacity: 0.5; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .media-skeleton__picture,
+    .media-skeleton__caption {
+      animation: none;
+    }
   }
 
   .media-gallery {
@@ -3791,15 +3848,33 @@
     align-items: center !important;
     justify-content: center !important;
     gap: 12px;
-    height: 240px;
-    max-height: 520px;
+    aspect-ratio: 16 / 9;
     width: 100%;
     box-sizing: border-box;
     padding: 16px;
-    background: transparent;
     border: 0;
+    border-radius: var(--radius-md);
+    background: var(--surface-container);
     cursor: pointer;
     text-align: center;
+    transition: background-color var(--duration-fast) var(--ease-standard);
+  }
+
+  .file-placeholder.is-error-placeholder,
+  .file-placeholder.is-deferred-placeholder {
+    cursor: default;
+  }
+
+  .file-placeholder.is-error-placeholder :global(.placeholder-icon),
+  .file-placeholder.is-deferred-placeholder :global(.placeholder-icon) {
+    color: var(--status-error);
+    opacity: 1;
+  }
+
+  @media (hover: hover) {
+    button.file-placeholder:hover {
+      background: var(--surface-container-high);
+    }
   }
 
   .file-placeholder :global(.placeholder-icon) {
@@ -4138,9 +4213,18 @@
     gap: 10px;
   }
 
-  .comments-sort-selector {
-    width: 180px;
-    flex-shrink: 0;
+  .comments-actions {
+    display: flex;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+
+  :global([data-layout='mobile']) .comments-header-row.search-active .comments-title {
+    display: none;
+  }
+
+  :global([data-layout='mobile']) .comments-header-row.search-active .comments-actions {
+    flex: 1;
   }
 
   .comments-wrapper {
@@ -4209,14 +4293,13 @@
   }
 
   .creator-badge {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 2px 6px;
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--accent-primary) 20%, transparent);
-    color: var(--text-on-accent, white);
+    padding: 0 8px;
+    border-radius: var(--radius-full);
+    background: var(--accent-container);
+    color: var(--accent-on-container);
+    font-size: var(--type-label-sm-size);
+    line-height: var(--type-label-sm-line);
+    font-weight: 500;
   }
 
   .comment-date {

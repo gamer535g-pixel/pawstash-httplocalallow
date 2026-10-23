@@ -354,7 +354,7 @@
   .shortcut-box:hover .left-icon,
   .shortcut-box:focus .left-icon,
   .shortcut-box.is-recording .left-icon {
-    color: var(--accent);
+    color: var(--accent-primary);
     opacity: 1;
   }
 
@@ -402,9 +402,9 @@
     justify-content: center;
     width: 24px;
     height: 24px;
-    border: 1px dashed var(--accent);
+    border: 1px dashed var(--accent-primary);
     border-radius: var(--radius-sm, 6px);
-    color: var(--accent);
+    color: var(--accent-primary);
     font-size: 12px;
     font-weight: 700;
     animation: rec-pulse 1s infinite ease-in-out;
@@ -413,7 +413,7 @@
   .recording-prompt {
     display: flex;
     align-items: center;
-    color: var(--accent);
+    color: var(--accent-primary);
     font-size: 13px;
     font-weight: 500;
   }

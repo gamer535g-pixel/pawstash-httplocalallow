@@ -50,6 +50,12 @@
 
   let isMacStyle = $derived(layoutState.effectiveTitlebarStyle === 'macos');
   let isCompact = $derived(layoutState.isSidebarCompact);
+
+  $effect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('mac-header-overflow', isMacStyle && isCompact);
+    return () => root.classList.remove('mac-header-overflow');
+  });
   let activeRoot = $derived(navigationState.activeRoot);
   onMount(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -618,17 +624,13 @@
     padding-inline-start: 16px;
   }
 
-  .sidebar-aside.compact.mac-style .sidebar-header {
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: center;
-    gap: 4px;
-    height: auto;
-    min-height: var(--toolbar-height);
-    padding: 18px 8px 0 10px;
+  .sidebar-aside.compact.mac-style {
+    overflow: visible;
   }
 
-  .sidebar-aside.compact .sidebar-header :global(.traffic-lights) {
-    gap: 6px;
+  .sidebar-aside.compact.mac-style .sidebar-header {
+    position: relative;
+    z-index: 2;
+    width: var(--mac-header-width);
   }
 </style>

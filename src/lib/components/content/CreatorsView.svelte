@@ -1,5 +1,6 @@
 <script lang="ts">
   import { haptic } from '$lib/utils/haptics';
+  import EmptyState from '$lib/components/ui/EmptyState.svelte';
   import { paintSelect } from '$lib/actions/paintSelect';
   import { onMount, getContext, onDestroy } from 'svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
@@ -37,6 +38,8 @@
   import IconOptions from '~icons/fluent/options-24-regular';
   import IconHeartFilled from '~icons/fluent/heart-24-filled';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
+  import IconWarning from '~icons/fluent/warning-24-regular';
+  import IconPeople from '~icons/fluent/people-24-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconSearch from '~icons/fluent/search-24-regular';
   import IconGlobe from '~icons/fluent/globe-24-regular';
@@ -502,24 +505,17 @@
   {#snippet actions()}{@render search()}{/snippet}
 
   {#if creatorsState.error && creatorsState.creators.length === 0}
-    <div class="status-container error">
-      <strong>{creatorsState.error}</strong>
-      <span class="error-msg">{creatorsState.error}</span>
-      <Button variant="accent" size="sm" onclick={() => void creatorsState.refresh()}>
-        <IconArrowClockwise /> {i18n.t('feed.retry')}
+    <EmptyState icon={IconWarning} tone="error" title={i18n.t('creators.load_error')} description={creatorsState.error}>
+      <Button variant="tonal" onclick={() => void creatorsState.refresh()}>
+        <IconArrowClockwise />
+        <span>{i18n.t('common.retry')}</span>
       </Button>
-    </div>
+    </EmptyState>
   {:else if creatorsList.length === 0 && !handoff.skeletonMounted}
     {#if activeTab === 'subscribed'}
-      <div class="status-container empty">
-        <strong>{i18n.t('subscriptions.empty')}</strong>
-        <span>{i18n.t('subscriptions.empty_desc')}</span>
-      </div>
+      <EmptyState icon={IconPeople} title={i18n.t('subscriptions.empty')} description={i18n.t('subscriptions.empty_desc')} />
     {:else}
-      <div class="status-container empty">
-        <strong>{i18n.t('creators.empty')}</strong>
-        <span>{i18n.t('creators.empty_desc')}</span>
-      </div>
+      <EmptyState icon={IconPeople} title={i18n.t('creators.empty')} description={i18n.t('creators.empty_desc')} />
     {/if}
   {:else}
 

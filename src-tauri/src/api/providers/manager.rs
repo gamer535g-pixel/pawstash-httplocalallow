@@ -985,6 +985,7 @@ impl ProviderManager {
                     .entry("provider_id".to_string())
                     .or_insert_with(|| serde_json::Value::String(pid.clone()));
                 if seen_keys.insert((pid.clone(), r.revision_id)) {
+                    self.enrich_post(&mut r.post).await;
                     all_revs.push(r);
                 }
             }

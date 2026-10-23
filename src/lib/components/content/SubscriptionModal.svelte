@@ -266,7 +266,7 @@
 </script>
 
 {#snippet modalBody()}
-  <div class="sub-modal-body flex flex-col gap-3 text-[var(--fg-default)]">
+  <div class="sub-modal-body flex flex-col gap-3 text-[var(--text-primary)]">
     {#if isEditing && existingSub}
       <div class="sub-status-card">
         <div class="sub-status-header">
@@ -321,7 +321,7 @@
 
         {#if existingSub.last_error}
           <div class="sub-error-banner">
-            <IconWarning class="w-4 h-4 shrink-0 text-[var(--danger-primary)]" />
+            <IconWarning class="w-4 h-4 shrink-0 text-[var(--status-error)]" />
             <div class="sub-error-content">
               <span class="sub-error-message">{existingSub.last_error}</span>
               {#if existingSub.failure_count > 1}

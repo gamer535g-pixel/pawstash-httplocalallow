@@ -181,6 +181,7 @@
   :root {
     --sidebar-width-expanded: 160px;
     --sidebar-width-collapsed: 56px;
+    --mac-header-width: calc(16px + 52px + 12px + var(--control-height-base) + 8px);
     --nav-min-width: 200px;
     --nav-max-width: 280px;
     --mobile-nav-height: 64px;
@@ -798,54 +799,8 @@ html[data-platform="touch"][data-layout="desktop"] {
     border-radius var(--duration-normal) var(--ease-standard);
 }
 
-.status-container,
-.empty-state {
-  display: flex;
-  min-height: 310px;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  color: var(--text-muted);
-  text-align: center;
-}
-
-.status-container strong,
-.empty-state strong {
-  color: var(--text-secondary);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.status-container span,
-.empty-state span {
-  max-width: 360px;
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.5;
-}
-
-.status-container svg,
-.empty-state svg,
-.status-icon {
-  width: 34px;
-  height: 34px;
-  margin-bottom: 5px;
-  color: var(--text-muted);
-}
-
-.status-container.error,
-.status-container.error span,
 .inline-error {
   color: var(--status-error);
-}
-
-.error-msg {
-  max-width: 400px;
-  margin-bottom: 8px;
-  font-size: 12px;
-  opacity: 0.8;
-  overflow-wrap: anywhere;
 }
 
 .grid-stack {

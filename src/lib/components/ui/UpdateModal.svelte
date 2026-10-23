@@ -2,6 +2,7 @@
   import Modal from '$lib/components/ui/Modal.svelte';
   import BottomSheet from '$lib/components/ui/BottomSheet.svelte';
   import Button from '$lib/components/ui/Button.svelte';
+  import LinearProgress from './LinearProgress.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { updateState } from '$lib/state/updateState.svelte';
   import { i18n } from '$lib/i18n';
@@ -148,9 +149,7 @@
             </span>
           {/if}
         </div>
-        <div class="update-progress-track" class:is-indeterminate={updateState.installing}>
-          <div class="update-progress-bar" style:width={updateState.installing ? undefined : `${updateState.downloadProgress}%`}></div>
-        </div>
+        <LinearProgress value={updateState.downloadProgress} indeterminate={updateState.installing} />
       </div>
       {#if !updateState.installing}
         <Button variant="ghost" size="md" class="update-cancel" onclick={() => updateState.cancelDownload()}>
@@ -440,42 +439,4 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .update-progress-track {
-    position: relative;
-    height: 4px;
-    overflow: hidden;
-    border-radius: var(--radius-full);
-    background: var(--accent-container);
-  }
-
-  .update-progress-bar {
-    height: 100%;
-    border-radius: inherit;
-    background: var(--accent-primary);
-    transition: width var(--duration-fast) var(--ease-standard);
-  }
-
-  .is-indeterminate .update-progress-bar {
-    position: absolute;
-    width: 40%;
-    animation: update-indeterminate 1.2s var(--ease-standard) infinite;
-  }
-
-  @keyframes update-indeterminate {
-    from {
-      left: -40%;
-    }
-    to {
-      left: 100%;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .is-indeterminate .update-progress-bar {
-      left: 0;
-      width: 100%;
-      animation: none;
-      opacity: 0.6;
-    }
-  }
 </style>

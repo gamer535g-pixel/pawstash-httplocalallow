@@ -1,5 +1,6 @@
 <script lang="ts">
   import { haptic } from '$lib/utils/haptics';
+  import EmptyState from '$lib/components/ui/EmptyState.svelte';
   import { paintSelect } from '$lib/actions/paintSelect';
   import { onMount, onDestroy, getContext } from 'svelte';
   import { accountState } from '$lib/state/accountState.svelte';
@@ -40,6 +41,7 @@
   import { notify } from '$lib/utils/toast';
   import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
+  import IconWarning from '~icons/fluent/warning-24-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconHeart from '~icons/fluent/heart-24-regular';
   import IconHeartFilled from '~icons/fluent/heart-24-filled';
@@ -841,11 +843,12 @@
   {#snippet actions()}{@render search()}{/snippet}
 
   {#if error && currentCount === 0}
-    <div class="status-container error">
-      <strong>{i18n.t('favorites.load_error')}</strong>
-      <span>{error}</span>
-      <Button variant="accent" size="sm" onclick={() => void loadFavorites(true)}><IconArrowClockwise /> {i18n.t('feed.retry')}</Button>
-    </div>
+    <EmptyState icon={IconWarning} tone="error" title={i18n.t('favorites.load_error')} description={error}>
+      <Button variant="tonal" onclick={() => void loadFavorites(true)}>
+        <IconArrowClockwise />
+        <span>{i18n.t('common.retry')}</span>
+      </Button>
+    </EmptyState>
   {:else if activeTab === 'posts'}
     <PostGrid
       posts={filteredPosts}
@@ -856,11 +859,11 @@
       emptyDescription={searchQuery || activeFilterCount > 0 ? i18n.t('favorites.no_results_desc') : (!authenticated ? i18n.t('favorites.empty_posts_guest') : i18n.t('favorites.empty_posts_desc'))}
     />
   {:else if filteredCreators.length === 0 && !creatorsHandoff.skeletonMounted}
-    <div class="status-container empty">
-      <IconPeople class="status-icon" />
-      <strong>{searchQuery || activeFilterCount > 0 ? i18n.t('favorites.no_results') : i18n.t('favorites.empty_creators')}</strong>
-      <span>{searchQuery || activeFilterCount > 0 ? i18n.t('favorites.no_results_desc') : (!authenticated ? i18n.t('favorites.empty_creators_guest') : i18n.t('favorites.empty_creators_desc'))}</span>
-    </div>
+    <EmptyState
+      icon={IconPeople}
+      title={searchQuery || activeFilterCount > 0 ? i18n.t('favorites.no_results') : i18n.t('favorites.empty_creators')}
+      description={searchQuery || activeFilterCount > 0 ? i18n.t('favorites.no_results_desc') : (!authenticated ? i18n.t('favorites.empty_creators_guest') : i18n.t('favorites.empty_creators_desc'))}
+    />
   {:else}
     <div class="grid-stack">
       <div

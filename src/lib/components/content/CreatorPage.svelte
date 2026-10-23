@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
+  import EmptyState from '$lib/components/ui/EmptyState.svelte';
   import { contentState, creatorCacheKey, type CachedCreator } from '$lib/state/contentState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
@@ -1186,27 +1187,27 @@
       </div>
 
       {#if latestPostDateStr || showUpdated || showIndexed}
-        <div class="post-date post-dates-row flex items-center flex-wrap gap-2 mt-2 text-sm text-[var(--fg-muted)]">
+        <div class="post-date post-dates-row flex items-center flex-wrap gap-2 mt-2 text-sm text-[var(--text-secondary)]">
           {#if latestPostDateStr}
             <div class="flex items-center gap-1.5 shrink-0">
-              <span class="text-[var(--fg-subtle)]">{i18n.t('creator.latest_post_at')}:</span>
-              <strong class="font-semibold text-[var(--fg-default)]">{latestPostDateStr}</strong>
+              <span class="text-[var(--text-muted)]">{i18n.t('creator.latest_post_at')}:</span>
+              <strong class="font-semibold text-[var(--text-primary)]">{latestPostDateStr}</strong>
             </div>
           {/if}
 
           {#if showUpdated}
-            {#if latestPostDateStr}<span class="text-[var(--fg-subtle)]">·</span>{/if}
+            {#if latestPostDateStr}<span class="text-[var(--text-muted)]">·</span>{/if}
             <div class="flex items-center gap-1.5 shrink-0">
-              <span class="text-[var(--fg-subtle)]">{i18n.t('creator.updated_at')}:</span>
-              <strong class="font-medium text-[var(--fg-default)]">{updatedDateStr}</strong>
+              <span class="text-[var(--text-muted)]">{i18n.t('creator.updated_at')}:</span>
+              <strong class="font-medium text-[var(--text-primary)]">{updatedDateStr}</strong>
             </div>
           {/if}
 
           {#if showIndexed}
-            {#if latestPostDateStr || showUpdated}<span class="text-[var(--fg-subtle)]">·</span>{/if}
+            {#if latestPostDateStr || showUpdated}<span class="text-[var(--text-muted)]">·</span>{/if}
             <div class="flex items-center gap-1.5 shrink-0">
-              <span class="text-[var(--fg-subtle)]">{i18n.t('creator.indexed_at')}:</span>
-              <strong class="font-medium text-[var(--fg-default)]">{indexedDateStr}</strong>
+              <span class="text-[var(--text-muted)]">{i18n.t('creator.indexed_at')}:</span>
+              <strong class="font-medium text-[var(--text-primary)]">{indexedDateStr}</strong>
             </div>
           {/if}
         </div>
@@ -1293,59 +1294,30 @@
         {/if}
 
         {#if selectedTag && visibleCreatorPosts.length === 0}
-          <div class="status-container empty py-12 text-center">
-            <p class="text-sm font-medium text-[var(--text-secondary)]">
-              {i18n.t('creator.no_posts_with_tag')} <span class="text-[var(--accent-primary)] font-semibold">#{selectedTag}</span>
-            </p>
-            <Button variant="tonal" size="sm" class="mt-3" onclick={() => selectedTag = null}>
-              {i18n.t('creator.clear_tag_filter')}
-            </Button>
-          </div>
+          <EmptyState icon={IconSearch} title={i18n.t('creator.no_posts_with_tag', { tag: selectedTag })}>
+            <Button variant="tonal" onclick={() => (selectedTag = null)}>{i18n.t('creator.clear_tag_filter')}</Button>
+          </EmptyState>
         {:else if postSearchError && visibleCreatorPosts.length === 0}
-          <div class="creator-error">{postSearchError}</div>
+          <EmptyState icon={IconWarning} tone="error" title={i18n.t('creator.search_error')} description={postSearchError} />
         {:else if (entry.error || (entry.loaded && entry.posts.length === 0)) && activeProviderId && activeProviderId !== 'auto' && !isPostsFiltered && !entry.loading}
-          <div class="detail-empty py-16 px-4 flex flex-col items-center justify-center text-center">
-            <IconWarning class="w-10 h-10 text-[var(--fg-subtle)] mb-3 opacity-60" />
-            <h2 class="text-lg font-semibold text-[var(--fg-default)] mb-1">
-              {i18n.t('creator.not_found_on_provider', { provider: currentProviderName })}
-            </h2>
-            <p class="text-sm text-[var(--fg-muted)] max-w-md mb-2">
-              {i18n.t('creator.not_found_on_provider_desc', { provider: currentProviderName })}
-            </p>
-            {#if autoEntry && autoEntry.posts.length > 0}
-              <p class="text-xs text-[var(--fg-subtle)] mb-6">
-                {i18n.t('creator.available_on_other_sources', { count: autoEntry.posts.length })}
-              </p>
-            {:else}
-              <div class="mb-4"></div>
-            {/if}
+          <EmptyState
+            icon={IconSource}
+            title={i18n.t('creator.not_found_on_provider', { provider: currentProviderName })}
+            description={autoEntry && autoEntry.posts.length > 0
+              ? i18n.t('creator.available_on_other_sources', { count: autoEntry.posts.length })
+              : i18n.t('creator.not_found_on_provider_desc', { provider: currentProviderName })}
+          >
             {#if candidateProviders.length > 1}
-              <Button
-                variant="accent"
-                onclick={() => handleProviderChange('auto')}
-              >
-                <IconSparkle class="w-4 h-4 mr-1.5" />
-                <span>{i18n.t('post.switch_to_merged')}</span>
-              </Button>
+              <Button variant="tonal" onclick={() => handleProviderChange('auto')}>{i18n.t('post.switch_to_merged')}</Button>
             {/if}
-          </div>
+          </EmptyState>
         {:else if entry.error && entry.posts.length === 0 && !entry.loading}
-          <div class="detail-empty py-16 px-4 flex flex-col items-center justify-center text-center">
-            <IconWarning class="w-10 h-10 text-[var(--fg-subtle)] mb-3 opacity-60" />
-            <h2 class="text-lg font-semibold text-[var(--fg-default)] mb-1">
-              {i18n.t('common.error')}
-            </h2>
-            <p class="text-sm text-[var(--fg-muted)] max-w-md mb-6">
-              {entry.error}
-            </p>
-            <Button
-              variant="tonal"
-              onclick={() => contentState.refreshCreator(service, creatorId, activeProviderId)}
-            >
-              <IconArrowClockwise class="w-4 h-4 mr-1.5" />
+          <EmptyState icon={IconWarning} tone="error" title={i18n.t('creator.load_error')} description={entry.error}>
+            <Button variant="tonal" onclick={() => contentState.refreshCreator(service, creatorId, activeProviderId)}>
+              <IconArrowClockwise />
               <span>{i18n.t('common.retry')}</span>
             </Button>
-          </div>
+          </EmptyState>
         {:else}
           <PostGrid
             posts={visibleCreatorPosts}
@@ -1361,11 +1333,7 @@
     {:else if activeTab === 'similar'}
       <div class="creator-section-view">
         {#if similarCreators.length === 0}
-          <div class="status-container empty">
-            <IconSparkle />
-            <strong>{i18n.t('creator.no_similar_artists')}</strong>
-            <span>{i18n.t('creator.no_similar_artists_desc')}</span>
-          </div>
+          <EmptyState icon={IconSparkle} title={i18n.t('creator.no_similar_artists')} description={i18n.t('creator.no_similar_artists_desc')} />
         {:else}
           <div class="creator-cards-grid" style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
             {#each similarCreators as sim}
@@ -1432,11 +1400,7 @@
     {:else if activeTab === 'links'}
       <div class="creator-section-view">
         {#if creatorLinks.length === 0}
-          <div class="status-container empty">
-            <IconGlobe />
-            <strong>{i18n.t('creator.no_links')}</strong>
-            <span>{i18n.t('creator.no_links_desc')}</span>
-          </div>
+          <EmptyState icon={IconGlobe} title={i18n.t('creator.no_links')} description={i18n.t('creator.no_links_desc')} />
         {:else}
           <div class="creator-cards-grid" style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
             {#each creatorLinks as link}
@@ -1503,11 +1467,7 @@
     {:else if activeTab === 'announcements'}
       <div class="creator-section-view">
         {#if announcements.length === 0}
-          <div class="status-container empty">
-            <IconNews />
-            <strong>{i18n.t('creator.no_announcements')}</strong>
-            <span>{i18n.t('creator.no_announcements_desc')}</span>
-          </div>
+          <EmptyState icon={IconNews} title={i18n.t('creator.no_announcements')} description={i18n.t('creator.no_announcements_desc')} />
         {:else}
           <div class="announcements-list">
             {#each announcements as ann}
@@ -1528,11 +1488,7 @@
     {:else if activeTab === 'fancards'}
       <div class="creator-section-view">
         {#if fancards.length === 0}
-          <div class="status-container empty">
-            <IconImageOff />
-            <strong>{i18n.t('creator.no_fancards')}</strong>
-            <span>{i18n.t('creator.no_fancards_desc')}</span>
-          </div>
+          <EmptyState icon={IconImageOff} title={i18n.t('creator.no_fancards')} description={i18n.t('creator.no_fancards_desc')} />
         {:else}
           <div class="creator-cards-grid" style={`--grid-scale: ${scale}; --grid-card-width: ${Math.round(targetCardWidth)}px; --grid-gap: ${gap}px;`}>
             {#each fancards as card, index}
@@ -1955,12 +1911,5 @@
     height: auto;
   }
 
-  .creator-error {
-    min-height: 300px;
-    display: grid;
-    place-items: center;
-    color: var(--text-muted);
-    font-size: 14px;
-  }
 
 </style>

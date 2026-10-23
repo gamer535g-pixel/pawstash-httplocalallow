@@ -666,7 +666,7 @@
       emptyDescription={feedState.isSearchActive ? i18n.t('favorites.no_results_desc') : i18n.t('feed.empty_desc')}
     />
     {#if feedState.error}
-      <p class="mt-5 text-center text-xs text-red-300/80">{feedState.error}</p>
+      <p class="mt-5 text-center text-xs text-[var(--status-error)]">{feedState.error}</p>
     {/if}
   {/if}
 </PageShell>

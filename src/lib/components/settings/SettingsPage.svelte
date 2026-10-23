@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, type Component } from 'svelte';
+  import EmptyState from '$lib/components/ui/EmptyState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
   import { providerState } from '$lib/state/providerState.svelte';
@@ -142,11 +143,7 @@
   <div class="settings-body" data-control-size="base">
     {#if searching}
       {#if resultGroups.length === 0}
-        <div class="empty-state">
-          <IconSearch />
-          <strong>{i18n.t('settings.search_empty_title')}</strong>
-          <span>{i18n.t('settings.search_empty_desc', { query: searchQuery.trim() })}</span>
-        </div>
+        <EmptyState icon={IconSearch} title={i18n.t('settings.search_empty_title')} description={i18n.t('settings.search_empty_desc', { query: searchQuery.trim() })} />
       {:else}
         {#each resultGroups as group (group.section)}
           <SettingsGroup label={group.title}>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { paintSelect } from '$lib/actions/paintSelect';
+  import EmptyState from '$lib/components/ui/EmptyState.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { countDownloadPosts, downloadPostKey, downloadState, type DownloadFilter } from '$lib/state/downloadState.svelte';
   import { navigationState } from '$lib/state/navigationState.svelte';
@@ -606,11 +607,7 @@
       {/if}
     </div>
   {:else if !downloadState.loading}
-    <div class="empty-state">
-      <IconDownload class="w-[36px] h-[36px] mb-2" />
-      <strong>{i18n.t('downloads.empty')}</strong>
-      <span>{i18n.t('downloads.empty_desc')}</span>
-    </div>
+    <EmptyState icon={IconDownload} title={i18n.t('downloads.empty')} description={i18n.t('downloads.empty_desc')} />
   {/if}
 
   {#if downloadState.error}<p class="page-error">{downloadState.error}</p>{/if}

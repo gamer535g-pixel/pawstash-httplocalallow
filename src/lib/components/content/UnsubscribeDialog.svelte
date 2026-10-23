@@ -113,9 +113,9 @@
     onconfirm={handleConfirm}
   >
     <div class="unsubscribe-options flex flex-col gap-3 pt-2">
-      <label class="flex items-center gap-3 cursor-pointer select-none group p-2.5 rounded-xl bg-[var(--surface-sunken)] border border-[var(--border-subtle)] hover:border-[var(--border-color)] transition-colors">
+      <label class="flex items-center gap-3 cursor-pointer select-none group px-3 py-2.5 rounded-[var(--radius-md)] bg-[var(--surface-container-high)]">
         <Checkbox checked={removePosts} onchange={(v) => (removePosts = v)} />
-        <span class="text-xs font-medium text-[var(--fg-default)] group-hover:text-[var(--fg-emphasized)] leading-relaxed">
+        <span class="text-xs font-medium text-[var(--text-primary)] group-hover:text-[var(--text-primary)] leading-relaxed">
           {#if isBatch}
             {i18n.t('subscriptions.batch_unsubscribe_remove_posts')}
           {:else if postCount !== null && postCount > 0}

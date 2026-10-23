@@ -4,6 +4,7 @@
 
 <script lang="ts">
   import { paintSelect } from '$lib/actions/paintSelect';
+  import EmptyState from '$lib/components/ui/EmptyState.svelte';
   import { getContext, onDestroy } from 'svelte';
   import { SCROLLABLE_CONTEXT, type ScrollableContext } from '$lib/actions/scrollable';
   import type { Post } from '$lib/types/content';
@@ -277,11 +278,7 @@
       {/each}
     </div>
   {:else if !handoff.skeletonMounted}
-    <div class="empty-state">
-      <IconEmpty />
-      <strong>{emptyTitle}</strong>
-      <span>{emptyDescription}</span>
-    </div>
+    <EmptyState icon={IconEmpty} title={emptyTitle} description={emptyDescription} />
   {/if}
 
   {#if handoff.skeletonMounted}

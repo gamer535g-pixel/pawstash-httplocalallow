@@ -2433,10 +2433,13 @@ pub async fn fetch_post_revisions(
             Ok(items)
         }
         _ => {
-            let revisions = state
+            let mut revisions = state
                 .content
                 .load_post_revisions(&service, &creator_id, &post_id)
                 .unwrap_or_default();
+            for revision in &mut revisions {
+                state.provider_manager.enrich_post(&mut revision.post).await;
+            }
             Ok(revisions)
         }
     }

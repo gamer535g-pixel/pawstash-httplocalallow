@@ -988,13 +988,13 @@
               <p class="text-amber-400 font-medium text-base text-center mt-2">{i18n.t('post.error_forbidden')}</p>
               <p class="text-ink/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_forbidden_hint')}</p>
             {:else if failure.preset === 'not_found' || failure.httpStatus === 404}
-              <p class="text-red-400 font-medium text-base text-center mt-2">{i18n.t('post.error_not_found')}</p>
+              <p class="text-[var(--status-error)] font-medium text-base text-center mt-2">{i18n.t('post.error_not_found')}</p>
               <p class="text-ink/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_not_found_hint')}</p>
             {:else if failure.preset === 'rate_limited' || failure.httpStatus === 429}
               <p class="text-amber-400 font-medium text-base text-center mt-2">{i18n.t('post.error_rate_limited')}</p>
               <p class="text-ink/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_rate_limited_hint')}</p>
             {:else if failure.preset === 'server_error' || (failure.httpStatus && failure.httpStatus >= 500)}
-              <p class="text-red-400 font-medium text-base text-center mt-2">{failure.message || i18n.t('post.error_server')}</p>
+              <p class="text-[var(--status-error)] font-medium text-base text-center mt-2">{failure.message || i18n.t('post.error_server')}</p>
               <p class="text-ink/70 text-xs max-w-md text-center mt-1">{i18n.t('post.error_server_hint')}</p>
             {:else if failure.preset === 'unarchived'}
               <p class="text-ink/80 text-sm max-w-md text-center mt-2">{i18n.t('post.file_not_archived')}</p>
@@ -1660,7 +1660,6 @@
     background: #000;
     border-radius: var(--radius-lg, 12px);
     overflow: hidden;
-    box-shadow: var(--shadow-xl);
   }
 
   .viewer-embed-iframe-wrapper :global(iframe) {

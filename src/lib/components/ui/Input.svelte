@@ -273,7 +273,7 @@
 
   .input-box:hover .left-icon,
   .input-box:focus-within .left-icon {
-    color: var(--accent);
+    color: var(--accent-primary);
     opacity: 1;
   }
 
