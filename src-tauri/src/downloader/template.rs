@@ -377,7 +377,7 @@ fn pick_creator_name(
         .flatten()
         .chain(from_post)
         .map(str::trim)
-        .find(|name| !name.is_empty())
+        .find(|name| !name.is_empty() && *name != post.user)
         .map(String::from)
 }
 
@@ -409,6 +409,10 @@ mod tests {
         assert_eq!(
             pick_creator_name(None, Some(""), &post).as_deref(),
             Some("post_user")
+        );
+        assert_eq!(
+            pick_creator_name(Some("12345"), Some("Sub"), &post).as_deref(),
+            Some("Sub")
         );
         post.extra.clear();
         assert_eq!(pick_creator_name(None, None, &post), None);

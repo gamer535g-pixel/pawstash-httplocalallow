@@ -908,7 +908,11 @@ mod tests {
         let tags: Vec<&str> = pending.iter().map(|r| r.tag_name.as_str()).collect();
         assert_eq!(tags, ["v26.10.1-7", "v26.10.1-6", "v26.10.1-5"]);
         let notes = combined_release_notes(&pending);
-        for change in ["imported posts stuck", "post download controls", "Linux/macOS build"] {
+        for change in [
+            "imported posts stuck",
+            "post download controls",
+            "Linux/macOS build",
+        ] {
             assert!(notes.contains(change), "{change} missing from {notes}");
         }
         assert!(!notes.contains("ui redesign"));
