@@ -197,6 +197,16 @@ impl Post {
         }
     }
 
+    pub fn keeps_detail_over(&self, incoming: &Post) -> bool {
+        fn unchanged<T: PartialEq>(incoming: &Option<T>, stored: &Option<T>) -> bool {
+            incoming.is_none() || incoming == stored
+        }
+        self.detail_fetched == Some(true)
+            && incoming.detail_fetched != Some(true)
+            && unchanged(&incoming.has_full, &self.has_full)
+            && unchanged(&incoming.preview_state, &self.preview_state)
+    }
+
     pub fn from_json_str(json_str: &str) -> Result<Self, String> {
         match serde_json::from_str::<Post>(json_str) {
             Ok(mut post) => {

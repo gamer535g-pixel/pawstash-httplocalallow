@@ -281,21 +281,21 @@ export class ContentState {
     }
   }
 
-  private prefetchQueue: Array<{ service: string; creatorId: string; postId: string }> = [];
+  private prefetchQueue: Array<{ service: string; creatorId: string; postId: string; refresh: boolean }> = [];
   private prefetchRunning = 0;
   private maxPrefetchConcurrency = 2;
   private queuedKeys = new Set<string>();
 
-  enqueueDetailPrefetch(service: string, creatorId: string | number, rawPostId: unknown, urgent = false) {
+  enqueueDetailPrefetch(service: string, creatorId: string | number, rawPostId: unknown, urgent = false, refresh = false) {
     const postId = normalizePostId(rawPostId);
     if (!postId || !service || !creatorId) return;
     const key = postCacheKey(service, creatorId, postId);
 
     const entry = this.posts[key];
-    if (entry?.loaded && entry.post?.detail_fetched) return;
+    if (entry?.loaded && entry.post?.detail_fetched && !refresh) return;
     if (entry?.loading) return;
 
-    const item = { service: String(service), creatorId: String(creatorId), postId };
+    const item = { service: String(service), creatorId: String(creatorId), postId, refresh };
     if (this.queuedKeys.has(key)) {
       if (!urgent) return;
       this.prefetchQueue = this.prefetchQueue.filter(
@@ -331,7 +331,7 @@ export class ContentState {
       this.prefetchRunning++;
       void (async () => {
         try {
-          await this.loadPost(item.service, item.creatorId, item.postId, false, undefined, true);
+          await this.loadPost(item.service, item.creatorId, item.postId, item.refresh, undefined, true);
         } catch {} finally {
           this.prefetchRunning--;
           setTimeout(() => this.processPrefetchQueue(), 50);

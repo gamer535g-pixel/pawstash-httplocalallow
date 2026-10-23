@@ -4,7 +4,7 @@ use std::time::Duration;
 
 pub const INBOX_COLLECTION_ID: &str = "00000000-0000-0000-0000-000000000001";
 
-const CURRENT_SCHEMA_VERSION: i64 = 9;
+const CURRENT_SCHEMA_VERSION: i64 = 10;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -549,6 +549,19 @@ pub fn initialize_schema(connection: &mut Connection) -> Result<(), String> {
                     )
                     .map_err(|e| e.to_string())?;
             }
+            10 => {
+                transaction
+                    .execute(
+                        "UPDATE posts SET snapshot_json = json_set(snapshot_json, '$.detail_fetched', json('false'))
+                         WHERE CASE WHEN json_valid(snapshot_json)
+                                    THEN json_extract(snapshot_json, '$.detail_fetched') = 1
+                                         AND (json_extract(snapshot_json, '$.has_full') = 0
+                                              OR json_extract(snapshot_json, '$.preview_state') = 'pending')
+                                    ELSE 0 END",
+                        [],
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
             _ => return Err(format!("Missing database migration {next_version}")),
         }
         transaction
@@ -647,5 +660,42 @@ mod tests {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_10_reopens_details_cached_before_import() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        prepare_connection(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                r#"INSERT INTO creators(service, creator_id, name, snapshot_json) VALUES ('patreon', 'c', 'c', '{}');
+                   INSERT INTO posts(service, creator_id, post_id, title, snapshot_json) VALUES
+                     ('patreon', 'c', 'teaser', 't', '{"id":"teaser","detail_fetched":true,"has_full":false,"preview_state":"pending"}'),
+                     ('patreon', 'c', 'full', 't', '{"id":"full","detail_fetched":true,"has_full":true,"preview_state":"scraped"}'),
+                     ('patreon', 'c', 'broken', 't', 'not json');
+                   PRAGMA user_version = 9;"#,
+            )
+            .unwrap();
+        initialize_schema(&mut connection).unwrap();
+
+        let fetched = |id: &str| -> Option<bool> {
+            connection
+                .query_row(
+                    "SELECT json_extract(snapshot_json, '$.detail_fetched') FROM posts WHERE post_id = ?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(fetched("teaser"), Some(false));
+        assert_eq!(fetched("full"), Some(true));
+        let broken: String = connection
+            .query_row(
+                "SELECT snapshot_json FROM posts WHERE post_id = 'broken'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(broken, "not json");
     }
 }

@@ -1078,6 +1078,12 @@ impl SyncRepository {
                     params![rec.service, rec.creator_id],
                 )
                 .map_err(|e| format!("Failed to ensure creator for post ({record_id}): {e}"))?;
+                let snapshot = crate::db::content::post_snapshot_to_store(
+                    tx,
+                    (&rec.service, &rec.creator_id, &rec.post_id),
+                    &post,
+                    rec.snapshot_json.clone(),
+                )?;
                 tx.execute(
                     "INSERT INTO posts(service,creator_id,post_id,title,content,published_at,snapshot_json,cached_at)
                      VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
@@ -1085,11 +1091,7 @@ impl SyncRepository {
                        title=excluded.title,
                        content=coalesce(posts.content, excluded.content),
                        published_at=excluded.published_at,
-                       snapshot_json=CASE
-                           WHEN json_extract(posts.snapshot_json, '$.detail_fetched') = 1 AND (json_extract(excluded.snapshot_json, '$.detail_fetched') IS NULL OR json_extract(excluded.snapshot_json, '$.detail_fetched') = 0)
-                           THEN posts.snapshot_json
-                           ELSE excluded.snapshot_json
-                       END",
+                       snapshot_json=excluded.snapshot_json",
                     params![
                         rec.service,
                         rec.creator_id,
@@ -1097,7 +1099,7 @@ impl SyncRepository {
                         rec.title,
                         post.content,
                         rec.published_at,
-                        rec.snapshot_json,
+                        snapshot,
                         rec.cached_at
                     ],
                 )

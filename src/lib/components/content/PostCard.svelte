@@ -20,7 +20,7 @@
   import { notify } from '$lib/utils/toast';
   import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
   import { formatDate, cleanPostTitle, decodeHtmlEntities } from '$lib/utils/formatters';
-  import { isVideoUrl, isAttachmentVideo, postMediaUrl, postThumbnailSrc, postPlaceholderUrl, getPostFileCounts, isPostUnarchived, videoPoster } from '$lib/utils/media';
+  import { isVideoUrl, isAttachmentVideo, postMediaUrl, postThumbnailSrc, postPlaceholderUrl, getPostFileCounts, isPostUnarchived, importStateChanged, videoPoster } from '$lib/utils/media';
   import { getMediaThumbnail, cancelMediaThumbnail } from '$lib/utils/mediaThumbnail';
   import { thumbnailKey } from '$lib/utils/cacheKey';
   import { extraField } from '$lib/utils/fields';
@@ -69,15 +69,13 @@
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'posts');
   let selected = $derived(isSelectionActive && selectionState.isSelected(postKey));
 
-  let effectivePost = $derived.by(() => {
-    if (!post?.service || !post?.user || !post?.id) return post;
-    const key = postCacheKey(post.service, post.user, post.id);
-    const cached = contentState.posts[key]?.post;
-    if (cached?.detail_fetched) {
-      return { ...post, ...cached };
-    }
-    return post;
+  let cachedDetail = $derived.by(() => {
+    if (!post?.service || !post?.user || !post?.id) return undefined;
+    const cached = contentState.posts[postCacheKey(post.service, post.user, post.id)]?.post;
+    return cached?.detail_fetched ? cached : undefined;
   });
+  let detailIsStale = $derived(Boolean(cachedDetail && importStateChanged(post, cachedDetail)));
+  let effectivePost = $derived(cachedDetail && !detailIsStale ? { ...post, ...cachedDetail } : post);
 
   let mediaUrl = $derived(postMediaUrl(effectivePost));
   let thumbnailUrl = $derived(postThumbnailSrc(effectivePost));
@@ -362,7 +360,7 @@
     const user = post?.user;
     const id = post?.id;
     if (service && user && id && !effectivePost.detail_fetched) {
-      contentState.enqueueDetailPrefetch(service, user, id);
+      contentState.enqueueDetailPrefetch(service, user, id, false, detailIsStale);
     }
     return () => {
       if (service && user && id) {
@@ -373,7 +371,7 @@
 
   function handleCardHover() {
     if (post?.service && post?.user && post?.id && !effectivePost.detail_fetched) {
-      contentState.enqueueDetailPrefetch(post.service, post.user, post.id, true);
+      contentState.enqueueDetailPrefetch(post.service, post.user, post.id, true, detailIsStale);
     }
   }
 

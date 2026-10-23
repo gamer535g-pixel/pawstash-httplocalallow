@@ -27,6 +27,32 @@ fn map_post_row(json: String, preview: Option<String>) -> Result<Post, String> {
     Ok(post)
 }
 
+pub(crate) fn post_snapshot_to_store(
+    connection: &Connection,
+    (service, creator_id, post_id): (&str, &str, &str),
+    incoming: &Post,
+    incoming_json: String,
+) -> Result<String, String> {
+    let stored: Option<String> = connection
+        .prepare_cached(
+            "SELECT snapshot_json FROM posts WHERE service = ?1 AND creator_id = ?2 AND post_id = ?3",
+        )
+        .and_then(|mut stmt| {
+            stmt.query_row(params![service, creator_id, post_id], |r| r.get(0))
+                .optional()
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(match stored {
+        Some(json)
+            if Post::from_json_str(&json)
+                .is_ok_and(|stored| stored.keeps_detail_over(incoming)) =>
+        {
+            json
+        }
+        _ => incoming_json,
+    })
+}
+
 pub const AUTO_PROVIDER_ID: &str = "auto";
 
 pub fn concrete_provider_id(value: Option<&serde_json::Value>) -> Option<&str> {
@@ -646,18 +672,19 @@ impl ContentRepository {
                 params![clean_post.service, clean_post.user, stub.to_string()],
             )
             .map_err(|e| e.to_string())?;
-            let snapshot = serde_json::to_string(&clean_post).map_err(|e| e.to_string())?;
+            let snapshot = post_snapshot_to_store(
+                &tx,
+                (&clean_post.service, &clean_post.user, &clean_post.id),
+                &clean_post,
+                serde_json::to_string(&clean_post).map_err(|e| e.to_string())?,
+            )?;
             tx.execute(
                 "INSERT INTO posts(service, creator_id, post_id, title, content, published_at, snapshot_json, preview_path, last_checked_at)
                  VALUES(?1,?2,?3,?4,?5,?6,?7,?8,CURRENT_TIMESTAMP)
                  ON CONFLICT(service, creator_id, post_id) DO UPDATE SET
                     title=excluded.title, content=excluded.content, published_at=excluded.published_at,
                     preview_path=COALESCE(posts.preview_path, excluded.preview_path),
-                    snapshot_json=CASE
-                        WHEN json_extract(posts.snapshot_json, '$.detail_fetched') = 1 AND (json_extract(excluded.snapshot_json, '$.detail_fetched') IS NULL OR json_extract(excluded.snapshot_json, '$.detail_fetched') = 0)
-                        THEN posts.snapshot_json
-                        ELSE excluded.snapshot_json
-                    END,
+                    snapshot_json=excluded.snapshot_json,
                     remote_state='active',
                     cached_at=CURRENT_TIMESTAMP, last_checked_at=CURRENT_TIMESTAMP",
                 params![clean_post.service, clean_post.user, clean_post.id, clean_post.title, clean_post.content, clean_post.published, snapshot, clean_post.preview_path],
@@ -2166,6 +2193,32 @@ fn remove_empty_cache_dirs(root: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn import_post(has_full: bool, detail: bool) -> Post {
+        serde_json::from_value(serde_json::json!({
+            "id": "1", "user": "c", "service": "patreon", "title": "t",
+            "has_full": has_full,
+            "preview_state": if has_full { "scraped" } else { "pending" },
+            "detail_fetched": detail,
+            "attachments": [{ "name": if has_full { "full.png" } else { "preview.png" }, "path": "/a/b/x.png" }]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn fetched_detail_survives_a_list_refresh_until_the_import_state_changes() {
+        let repo = ContentRepository::in_memory(128).unwrap();
+        repo.save_posts(&[import_post(false, true)]).unwrap();
+
+        repo.save_posts(&[import_post(false, false)]).unwrap();
+        let kept = repo.get_post("patreon", "c", "1").unwrap().unwrap();
+        assert_eq!(kept.detail_fetched, Some(true));
+
+        repo.save_posts(&[import_post(true, false)]).unwrap();
+        let refreshed = repo.get_post("patreon", "c", "1").unwrap().unwrap();
+        assert_eq!(refreshed.has_full, Some(true));
+        assert_ne!(refreshed.detail_fetched, Some(true));
+    }
 
     #[test]
     fn cache_prune_is_debounced_after_writes() {

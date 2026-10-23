@@ -278,6 +278,13 @@ export function postMediaUrl(post: Post): string | null {
   return post.media_url || null;
 }
 
+export function importStateChanged(fresh: Post, cached: Post): boolean {
+  return (
+    (fresh.has_full !== undefined && fresh.has_full !== cached.has_full) ||
+    (fresh.preview_state !== undefined && fresh.preview_state !== cached.preview_state)
+  );
+}
+
 export function isPostUnarchived(post?: Post | null): boolean {
   if (!post) return false;
   const hasMedia = Boolean(
