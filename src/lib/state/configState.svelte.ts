@@ -1,5 +1,6 @@
 import type { AppSettings } from '$lib/types/config';
 import { providerState } from '$lib/state/providerState.svelte';
+import { apiSaveSettings } from '$lib/utils/ipc';
 
 export class ConfigState {
   settings = $state<AppSettings>({
@@ -64,6 +65,18 @@ export class ConfigState {
     notifications_show_preview: true,
     notifications_sound: false
   });
+
+  private loaded = false;
+
+  hydrate(stored: AppSettings) {
+    this.updateSettings(stored);
+    this.loaded = true;
+  }
+
+  async save(next: AppSettings) {
+    if (!this.loaded) throw new Error('Settings have not been read from disk yet');
+    await apiSaveSettings(next);
+  }
 
   updateSettings(newSettings: AppSettings) {
     const sc = newSettings.panic_button_shortcut || newSettings.boss_key_shortcut;

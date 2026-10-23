@@ -113,7 +113,7 @@ class SettingsController {
     if (networkDefaults.status === 'fulfilled') this.networkDefaults = networkDefaults.value;
     else logger.warn('Failed to fetch network defaults', networkDefaults.reason);
     if (onDisk.status === 'fulfilled') {
-      configState.updateSettings(onDisk.value);
+      configState.hydrate(onDisk.value);
       this.settings = { ...onDisk.value };
     } else {
       logger.warn('Failed to refresh settings from disk', onDisk.reason);
@@ -137,7 +137,7 @@ class SettingsController {
     const next = { ...this.settings };
     configState.updateSettings(next);
     try {
-      await apiSaveSettings(next);
+      await configState.save(next);
       if (keys.includes('cache_max_mb')) await this.loadCacheStats();
       this.refreshWebviewProxyStatus();
       return true;
@@ -212,7 +212,7 @@ class SettingsController {
         }
         this.settings = next;
         configState.updateSettings(next);
-        await apiSaveSettings(next);
+        await configState.save(next);
         if (id === 'interface') {
           await apiUpdatePanicKey(next.panic_button_shortcut || 'H', next.panic_button_enabled ?? true);
         }
@@ -256,7 +256,7 @@ class SettingsController {
     try {
       const defaults = await apiGetDefaultSettings();
       await apiSaveSettings(defaults);
-      configState.updateSettings(defaults);
+      configState.hydrate(defaults);
       this.settings = { ...defaults };
       themeState.reset();
       backgroundState.reset();

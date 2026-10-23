@@ -1,5 +1,6 @@
-import { apiSaveSettings } from '$lib/utils/ipc';
 import { configState } from './configState.svelte';
+import { i18n } from '$lib/i18n';
+import { notify } from '$lib/utils/toast';
 
 type ScaleKind = 'grid' | 'interface';
 
@@ -43,7 +44,10 @@ function setGridScale(next: number) {
   configState.settings.grid_scale = value;
   scaleIndicator.show('grid', value);
   clearTimeout(gridSaveTimer);
-  gridSaveTimer = setTimeout(() => void apiSaveSettings(configState.settings), SAVE_DELAY_MS);
+  gridSaveTimer = setTimeout(
+    () => configState.save(configState.settings).catch((error) => notify.error(i18n.t('settings.save_failed'), error)),
+    SAVE_DELAY_MS
+  );
 }
 
 const gridStep = wheelStepper();

@@ -20,7 +20,7 @@
   import { notify } from '$lib/utils/toast';
   import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
   import { formatDate, cleanPostTitle, decodeHtmlEntities } from '$lib/utils/formatters';
-  import { isVideoUrl, isAttachmentVideo, postMediaUrl, postThumbnailSrc, postPlaceholderUrl, getPostFileCounts, isPostUnarchived, importStateChanged, videoPoster } from '$lib/utils/media';
+  import { isVideoUrl, isAttachmentVideo, postMediaUrl, postThumbnailSrc, postPlaceholderUrl, getPostFileCounts, isPostUnarchived, detailIsOutdated, videoPoster } from '$lib/utils/media';
   import { getMediaThumbnail, cancelMediaThumbnail } from '$lib/utils/mediaThumbnail';
   import { thumbnailKey } from '$lib/utils/cacheKey';
   import { extraField } from '$lib/utils/fields';
@@ -74,7 +74,7 @@
     const cached = contentState.posts[postCacheKey(post.service, post.user, post.id)]?.post;
     return cached?.detail_fetched ? cached : undefined;
   });
-  let detailIsStale = $derived(Boolean(cachedDetail && importStateChanged(post, cachedDetail)));
+  let detailIsStale = $derived(Boolean(cachedDetail && detailIsOutdated(post, cachedDetail)));
   let effectivePost = $derived(cachedDetail && !detailIsStale ? { ...post, ...cachedDetail } : post);
 
   let mediaUrl = $derived(postMediaUrl(effectivePost));

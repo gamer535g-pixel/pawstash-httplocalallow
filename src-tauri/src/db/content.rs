@@ -2221,6 +2221,26 @@ mod tests {
     }
 
     #[test]
+    fn fetched_detail_is_replaced_once_the_post_is_edited() {
+        let repo = ContentRepository::in_memory(128).unwrap();
+        let mut detail = import_post(true, true);
+        detail.edited = Some("2026-10-01T00:00:00".into());
+        repo.save_posts(&[detail]).unwrap();
+
+        let mut listed = import_post(true, false);
+        listed.edited = Some("2026-10-01T00:00:00".into());
+        repo.save_posts(&[listed.clone()]).unwrap();
+        let kept = repo.get_post("patreon", "c", "1").unwrap().unwrap();
+        assert_eq!(kept.detail_fetched, Some(true));
+
+        listed.edited = Some("2026-10-21T20:36:27".into());
+        repo.save_posts(&[listed]).unwrap();
+        let refreshed = repo.get_post("patreon", "c", "1").unwrap().unwrap();
+        assert_eq!(refreshed.edited.as_deref(), Some("2026-10-21T20:36:27"));
+        assert_ne!(refreshed.detail_fetched, Some(true));
+    }
+
+    #[test]
     fn cache_prune_is_debounced_after_writes() {
         let repo = ContentRepository::in_memory(128).unwrap();
 

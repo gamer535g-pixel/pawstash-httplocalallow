@@ -7,6 +7,21 @@ import { scaleIndicator, wheelStepper } from './scaleState.svelte';
 
 const KEY_STEP = 10;
 
+let viewportFactor = 1;
+
+function applyViewportScale(factor = viewportFactor) {
+  viewportFactor = factor;
+  const viewport = window.visualViewport;
+  const deviceWidth = viewport ? viewport.width * viewport.scale : window.innerWidth;
+  const width = Math.floor(deviceWidth / factor);
+  document
+    .querySelector('meta[name="viewport"]')
+    ?.setAttribute(
+      'content',
+      `width=${width}, initial-scale=${factor}, minimum-scale=${factor}, maximum-scale=${factor}, user-scalable=no, viewport-fit=cover`
+    );
+}
+
 class UiScaleState {
   percent = $state(0);
   systemPercent = $state(100);
@@ -25,6 +40,7 @@ class UiScaleState {
     }
     window.addEventListener('focus', () => void this.enqueue(apiRefreshUiScale).catch(() => {}));
     window.addEventListener('keydown', this.handleKeydown);
+    if (layoutState.isAndroid) window.addEventListener('resize', () => applyViewportScale());
     ctrlWheel(this.handleWheel)(document.documentElement);
   }
 
@@ -43,6 +59,7 @@ class UiScaleState {
     this.queue = result.then(
       (scale) => {
         this.systemPercent = Math.round(scale.system * 100);
+        if (layoutState.isAndroid) applyViewportScale(scale.percent ? scale.percent / 100 : scale.system);
       },
       () => {}
     );

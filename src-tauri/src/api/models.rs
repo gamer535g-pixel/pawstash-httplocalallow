@@ -205,6 +205,7 @@ impl Post {
             && incoming.detail_fetched != Some(true)
             && unchanged(&incoming.has_full, &self.has_full)
             && unchanged(&incoming.preview_state, &self.preview_state)
+            && unchanged(&incoming.edited, &self.edited)
     }
 
     pub fn from_json_str(json_str: &str) -> Result<Self, String> {

@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.provider.DocumentsContract
+import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
@@ -232,6 +233,10 @@ class MainActivity : TauriActivity() {
     } catch (e: Throwable) {
       e.printStackTrace()
     }
+  }
+
+  override fun onWebViewCreate(webView: WebView) {
+    webView.settings.useWideViewPort = true
   }
 
   override fun onNewIntent(intent: Intent) {

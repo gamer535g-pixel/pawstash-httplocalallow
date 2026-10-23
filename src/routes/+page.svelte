@@ -107,7 +107,7 @@
 
     void apiGetSettings()
       .then((settings) => {
-        configState.updateSettings(settings);
+        configState.hydrate(settings);
         // Read once: transparency is fixed when the window is created.
         document.documentElement.classList.toggle(
           'opaque-window',

@@ -278,11 +278,8 @@ export function postMediaUrl(post: Post): string | null {
   return post.media_url || null;
 }
 
-export function importStateChanged(fresh: Post, cached: Post): boolean {
-  return (
-    (fresh.has_full !== undefined && fresh.has_full !== cached.has_full) ||
-    (fresh.preview_state !== undefined && fresh.preview_state !== cached.preview_state)
-  );
+export function detailIsOutdated(fresh: Post, cached: Post): boolean {
+  return (['has_full', 'preview_state', 'edited'] as const).some((key) => fresh[key] != null && fresh[key] !== cached[key]);
 }
 
 export function isPostUnarchived(post?: Post | null): boolean {
