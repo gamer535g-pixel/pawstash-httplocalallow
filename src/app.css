@@ -779,6 +779,51 @@ html[data-platform="touch"][data-layout="desktop"] {
   bottom: max(var(--safe-bottom), var(--dock-margin));
 }
 
+.section-scroll-anchor {
+  scroll-margin-top: 92px;
+}
+
+.page-shell.mobile .section-scroll-anchor {
+  scroll-margin-top: calc(56px + var(--mobile-status-bar-height, 0px) + 12px);
+}
+
+.section-collapse-action {
+  position: sticky;
+  bottom: 24px;
+  z-index: 25;
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+  pointer-events: none;
+}
+
+.section-collapse-action .btn {
+  pointer-events: auto;
+}
+
+.page-shell.mobile .section-collapse-action {
+  bottom: var(--dock-space);
+}
+
+@media (max-width: 640px) {
+  .section-collapse-action {
+    bottom: var(--dock-space);
+  }
+}
+
+.post-section-controls .btn:not(.btn-icon) {
+  height: calc(var(--control-height, 46px) * var(--ui-scale, 1));
+  padding: 0 18px;
+  font-size: calc(var(--control-font-size, 14px) * var(--ui-scale, 1));
+  border-radius: var(--radius-full);
+  gap: 8px;
+}
+
+.post-section-controls .btn svg {
+  width: 20px;
+  height: 20px;
+}
+
 .edge-fade {
   --edge-fade-start: 0px;
   --edge-fade-end: 0px;

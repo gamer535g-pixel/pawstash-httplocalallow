@@ -1,16 +1,14 @@
 <script module lang="ts">
-  const globalCloudFolderCache = new Map<string, import('$lib/types/cloud').CloudFolderResult>();
-  const globalPostCloudNodes = new Map<string, import('$lib/types/content').Attachment[]>();
   const globalProbedSizes = new Map<string, number>();
 </script>
 
 {#snippet sourceBadge(file: Attachment)}
   {@const name = cloudProviderName(file.cloud_provider) ?? String(file.cloud_provider)}
-  {#if sourceMirrors(file).length > 0}
+  {#if mirrorsOf(file).length > 0}
     <button
       type="button"
       class="cloud-source-badge is-switch"
-      onclick={(event) => showSources(event, file)}
+      onclick={(event) => contextMenuState.show(event, i18n.t('post.source'), sources.menu(file))}
       use:tooltip={i18n.t('post.source')}
       aria-label={`${i18n.t('post.source')}: ${name}`}
     >
@@ -23,6 +21,8 @@
 
 <script lang="ts">
   import { contextMenuState } from '$lib/state/contextMenuState.svelte';
+  import { MirrorSources, mirrorsOf } from '$lib/state/mirrorSources.svelte';
+  import { PostCloudLinks } from '$lib/state/postCloudLinks.svelte';
   import { edgeFade } from '$lib/actions/edgeFade';
   import { onMount, untrack, getContext, tick } from 'svelte';
   import EmptyState from '$lib/components/ui/EmptyState.svelte';
@@ -39,8 +39,8 @@
   import { accountState } from '$lib/state/accountState.svelte';
   import { themeState } from '$lib/theme/themeState.svelte';
   import { creatorsState } from '$lib/state/creatorsState.svelte';
-  import { apiFetchCreatorProfile, apiGetCreatorArtworkPath, openExternalUrl, apiFetchPostComments, apiProbeDownloadSizes, apiShowInFolder, apiStartDownload, openDownloadedFile, apiResolvePostUrl } from '$lib/utils/ipc';
-  import type { Attachment, Comment, Post } from '$lib/types/content';
+  import { apiFetchCreatorProfile, apiGetCreatorArtworkPath, openExternalUrl, apiProbeDownloadSizes, apiShowInFolder, apiStartDownload, openDownloadedFile, apiResolvePostUrl } from '$lib/utils/ipc';
+  import type { Attachment, Post } from '$lib/types/content';
   import { isFailedDownload, type DownloadItem } from '$lib/types/download';
   import type { LibraryCollection } from '$lib/types/library';
   import { i18n } from '$lib/i18n';
@@ -49,7 +49,7 @@
   import { seedFromImageUrl, seedFromThumbHash } from '$lib/theme/seedColor';
   import { serverPortState } from '$lib/state/serverPort.svelte';
   import { extractDirectMediaLinks, sanitizeEmbedHtml } from './RichContent.svelte';
-  import { apiOpenArchive, apiResolveCloudLink } from '$lib/utils/ipc';
+  import { apiOpenArchive } from '$lib/utils/ipc';
   import { cloudLinkContext, cloudLockKind, postSecretText } from '$lib/utils/cloudLink';
   import { logger, logMediaError } from '$lib/utils/logger';
   import { convertFileSrc } from '@tauri-apps/api/core';
@@ -64,10 +64,11 @@
   import Select from '$lib/components/ui/Select.svelte';
   import HeaderActions from '$lib/components/layout/HeaderActions.svelte';
   import TagList from '$lib/components/ui/TagList.svelte';
-  import CountBadge from '$lib/components/ui/CountBadge.svelte';
   import ChoiceGroup, { type ChoiceOption } from '$lib/components/ui/ChoiceGroup.svelte';
   import ServiceIcon from './ServiceIcon.svelte';
   import RichContent from './RichContent.svelte';
+  import PostComments from './PostComments.svelte';
+  import { collapseSection } from '$lib/utils/collapseSection';
 
   const scrollContext = getContext<ScrollableContext | undefined>(SCROLLABLE_CONTEXT);
   import PostPoll from './PostPoll.svelte';
@@ -111,7 +112,6 @@
   import IconGrid from '~icons/fluent/grid-24-regular';
   import IconVideo from '~icons/fluent/video-24-regular';
   import IconImage from '~icons/fluent/image-24-regular';
-  import IconComment from '~icons/fluent/comment-24-regular';
   import IconFolder from '~icons/fluent/folder-24-regular';
   import IconFolderZip from '~icons/fluent/folder-zip-24-regular';
   import IconGlobe from '~icons/fluent/globe-24-regular';
@@ -122,7 +122,7 @@
   import CloudFolderModal from '$lib/components/content/CloudFolderModal.svelte';
   import CloudLinkCard from '$lib/components/content/CloudLinkCard.svelte';
   import CodecGuideModal from '$lib/components/content/CodecGuideModal.svelte';
-  import type { ArchiveAttachment, ArchiveOpenResult, CloudFolderResult, CloudLockKind, CloudNode } from '$lib/types/cloud';
+  import type { ArchiveAttachment, ArchiveOpenResult, CloudFolderResult, CloudNode } from '$lib/types/cloud';
   import { providerState } from '$lib/state/providerState.svelte';
   import { notify } from '$lib/utils/toast';
   import { copyText } from '$lib/utils/clipboard';
@@ -529,7 +529,7 @@
     const providerId = activeProviderId && activeProviderId !== 'auto' ? activeProviderId : undefined;
     try {
       await contentState.loadPost(service, creatorId, postId, true, providerId);
-      void loadComments();
+      commentsSection?.reload();
     } catch (error) {
       notify.error(i18n.t('feed.refresh_failed'), error);
     }
@@ -539,22 +539,10 @@
     if (postId) copyText(postId);
   }
 
-  let resolvedCloudAttachments = $state<Attachment[]>([]);
-  let cloudResolving = $state(false);
-  let cloudResolvedVersion = $state(0);
+  const cloud = new PostCloudLinks();
   let activeCloudModalFolder = $state<CloudFolderResult | null>(null);
   let activeCloudModalInitialFolderId = $state<string | null>(null);
   let isCloudModalOpen = $state(false);
-  let cloudFolderResults = $state<Map<string, CloudFolderResult>>(new Map(globalCloudFolderCache));
-  let lockedCloudLinks = $state<{ url: string; kind: CloudLockKind }[]>([]);
-  let unlockedCloudAttachments: Attachment[] = [];
-
-  function withUnlocked(resolved: Attachment[]): Attachment[] {
-    const extra = unlockedCloudAttachments.filter(
-      (att) => !resolved.some((existing) => isSameAttachment(existing, att))
-    );
-    return extra.length > 0 ? [...resolved, ...extra] : resolved;
-  }
 
   let activeArchive = $state<ArchiveOpenResult | null>(null);
   let activeArchiveFile = $state<ArchiveAttachment | null>(null);
@@ -666,10 +654,6 @@
     );
   }
 
-  function markCloudLinkLocked(url: string, kind: CloudLockKind) {
-    lockedCloudLinks = [...lockedCloudLinks.filter((link) => link.url !== url), { url, kind }];
-  }
-
   async function revealLockedCloudLink(url: string) {
     await tick();
     document
@@ -677,33 +661,21 @@
       ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
-  function handleCloudLinkUnlocked(url: string, res: CloudFolderResult) {
-    globalCloudFolderCache.set(url, res);
-    cloudFolderResults.set(url, res);
-    if (!lockedCloudLinks.some((link) => link.url === url)) return;
-    unlockedCloudAttachments = [...unlockedCloudAttachments, ...cloudResultAttachments(res)];
-    resolvedCloudAttachments = withUnlocked(resolvedCloudAttachments);
-    cloudResolvedVersion++;
-  }
-
   async function handleOpenCloudFromText(url: string) {
-    let existing = cloudFolderResults.get(url) || globalCloudFolderCache.get(url);
-    if (!existing && lockedCloudLinks.some((link) => link.url === url)) {
+    let existing = cloud.cached(url);
+    if (!existing && cloud.isLocked(url)) {
       void revealLockedCloudLink(url);
       return;
     }
     if (!existing && configState.settings.cloud_scraping_enabled !== false) {
       const requestedFor = postKey;
       try {
-        existing = await apiResolveCloudLink(url, post ? cloudLinkContext(post) : undefined);
-        cloudFolderResults.set(url, existing);
-        globalCloudFolderCache.set(url, existing);
-        cloudResolvedVersion++;
+        existing = await cloud.fetch(url, post ? cloudLinkContext(post) : undefined);
       } catch (err) {
         const kind = cloudLockKind(err);
         if (kind) {
           if (postKey === requestedFor) {
-            markCloudLinkLocked(url, kind);
+            cloud.markLocked(url, kind);
             void revealLockedCloudLink(url);
           }
           return;
@@ -719,125 +691,10 @@
     }
   }
 
-  function cloudResultAttachments(res: CloudFolderResult): Attachment[] {
-    const fileNodes = res.nodes.filter((n) => !n.is_folder);
-    const nodesToDisplay = fileNodes.length > 0 ? fileNodes : res.nodes;
-    const singleFileSize = nodesToDisplay.length === 1 && res.total_size > 0 ? res.total_size : undefined;
-
-    return nodesToDisplay.map((node): Attachment => {
-      const shared = {
-        name: node.name,
-        server: '',
-        is_cloud: true,
-        is_cloud_folder: node.is_folder,
-        cloud_provider: res.provider,
-        cloud_node_id: node.id,
-        cloud_folder_title: res.title,
-        cloud_folder_result: res
-      };
-      if (node.is_folder) {
-        return {
-          ...shared,
-          path: `cloud_folder:${res.provider}:${node.id}`,
-          size: undefined,
-          cloud_child_count: res.nodes.filter((n) => n.parent_id === node.id).length
-        };
-      }
-      const url = node.stream_url || node.download_url || undefined;
-      return {
-        ...shared,
-        url,
-        path: url || `cloud:${res.provider}:${node.id}`,
-        size: node.size && node.size > 0 ? node.size : singleFileSize
-      };
-    });
-  }
-
-  let lastResolvedKey = '';
-  let cloudResolveRun = 0;
   $effect(() => {
     const currentPostKey = postKey;
     const cloudUrls = configState.settings.cloud_scraping_enabled === false ? [] : post?.cloud_urls || [];
-    const resolveKey = `${currentPostKey}:${cloudUrls.join('|')}`;
-
-    untrack(() => {
-      const sameKey = resolveKey === lastResolvedKey;
-      lastResolvedKey = resolveKey;
-      if (!sameKey) {
-        lockedCloudLinks = [];
-        unlockedCloudAttachments = [];
-      }
-      const cachedNodes = globalPostCloudNodes.get(currentPostKey);
-      const hasMissingCloudSizes = cachedNodes?.some((n) => !n.is_cloud_folder && (!n.size || n.size === 0));
-      if (cachedNodes && cachedNodes.length > 0 && !hasMissingCloudSizes) {
-        cloudResolveRun++;
-        resolvedCloudAttachments = cachedNodes;
-        cloudResolving = false;
-        return;
-      }
-
-      if (cloudUrls.length === 0) {
-        cloudResolveRun++;
-        resolvedCloudAttachments = [];
-        globalPostCloudNodes.delete(currentPostKey);
-        cloudResolving = false;
-        return;
-      }
-
-      if (sameKey && resolvedCloudAttachments.length > 0 && !resolvedCloudAttachments.some((n) => !n.is_cloud_folder && (!n.size || n.size === 0))) {
-        return;
-      }
-      const run = ++cloudResolveRun;
-      const isCurrent = () => run === cloudResolveRun;
-      if (!sameKey) resolvedCloudAttachments = [];
-      cloudResolving = true;
-
-      (async () => {
-        let currentResolved: Attachment[] = [];
-        const context = post ? cloudLinkContext(post) : undefined;
-        const resolveSingleUrl = async (url: string): Promise<Attachment[]> => {
-          try {
-            let res = globalCloudFolderCache.get(url);
-            const resHasMissingSizes = res?.nodes.some((n) => !n.is_folder && (!n.size || n.size === 0));
-            if (!res || resHasMissingSizes) {
-              res = await apiResolveCloudLink(url, context);
-              globalCloudFolderCache.set(url, res);
-              logger.info(`[Cloud] Resolved link: ${url} (${res.nodes.length} items)`);
-            }
-            cloudFolderResults.set(url, res);
-            return cloudResultAttachments(res);
-          } catch (err) {
-            const kind = cloudLockKind(err);
-            if (kind) {
-              if (isCurrent()) markCloudLinkLocked(url, kind);
-            } else {
-              logger.warn(`Failed to auto-resolve cloud link for post gallery: ${url}`, err);
-            }
-            return [];
-          }
-        };
-
-        const byLink: Attachment[][] = cloudUrls.map(() => []);
-        await Promise.allSettled(
-          cloudUrls.map(async (url, linkIndex) => {
-            const nodes = await resolveSingleUrl(url);
-            if (nodes.length > 0 && isCurrent()) {
-              byLink[linkIndex] = nodes;
-              currentResolved = byLink.flat();
-              resolvedCloudAttachments = withUnlocked(currentResolved);
-              cloudResolvedVersion++;
-            }
-          })
-        );
-
-        if (isCurrent()) {
-          if (currentResolved.length > 0 && lockedCloudLinks.length === 0) {
-            globalPostCloudNodes.set(currentPostKey, currentResolved);
-          }
-          cloudResolving = false;
-        }
-      })();
-    });
+    untrack(() => cloud.sync(currentPostKey, cloudUrls, post ? cloudLinkContext(post) : undefined));
   });
 
   function isFileUnarchived(file: Attachment | null | undefined, isDownloaded?: boolean): boolean {
@@ -866,8 +723,8 @@
           }
         }
       }
-      if (resolvedCloudAttachments.length > 0) {
-        for (const att of resolvedCloudAttachments) {
+      if (cloud.resolved.length > 0) {
+        for (const att of cloud.resolved) {
           const stubIndex = items.findIndex(
             (existing) =>
               isFileUnarchived(existing) &&
@@ -880,14 +737,14 @@
           } else {
             const mirrorOf = items.findIndex((existing) => isCloudMirror(existing, att));
             if (mirrorOf >= 0) {
-              items[mirrorOf] = { ...items[mirrorOf], mirrors: [...sourceMirrors(items[mirrorOf]), att] };
+              items[mirrorOf] = { ...items[mirrorOf], mirrors: [...mirrorsOf(items[mirrorOf]), att] };
             } else if (!items.some((existing) => isSameAttachment(existing, att))) {
               items.push(att);
             }
           }
         }
         for (let i = 0; i < items.length; i++) {
-          if (sourceMirrors(items[i]).length > 0) items[i] = pickSource(items[i]);
+          if (mirrorsOf(items[i]).length > 0) items[i] = sources.pick(items[i]);
         }
       }
       const directMedia = extractDirectMediaLinks(post.content || post.substring || '');
@@ -999,7 +856,7 @@
         }
       }
 
-      if (!isDownloaded && failSource(file)) {
+      if (!isDownloaded && sources.fail(file)) {
         logger.warn(`Playback failed on ${file.cloud_provider} for "${file.name}", switching to a mirror`);
         return;
       }
@@ -1041,46 +898,11 @@
 
   let galleryWrapperEl = $state<HTMLElement | null>(null);
   let contentWrapperEl = $state<HTMLElement | null>(null);
-  let commentsWrapperEl = $state<HTMLElement | null>(null);
 
   let galleryScrollBeforeExpand = $state<number | null>(null);
+  let commentsSection = $state<{ reload(): void } | undefined>();
   let contentScrollBeforeExpand = $state<number | null>(null);
-  let commentsScrollBeforeExpand = $state<number | null>(null);
 
-  function smartCollapseSection(
-    setCollapsed: () => void,
-    el: HTMLElement | null,
-    collapsedMaxHeight: number,
-    scrollBeforeExpand: number | null
-  ) {
-    const vp = scrollContext?.viewport;
-    if (!vp || !el) {
-      setCollapsed();
-      return;
-    }
-
-    const rect = el.getBoundingClientRect();
-    const vpRect = vp.getBoundingClientRect();
-    const isAtEnd = rect.bottom <= vpRect.bottom + 80;
-
-    if (isAtEnd) {
-      const currentHeight = rect.height;
-      const collapsedHeight = Math.min(currentHeight, collapsedMaxHeight);
-      const heightDiff = currentHeight - collapsedHeight;
-
-      setCollapsed();
-      if (heightDiff > 0) {
-        vp.scrollTop = Math.max(0, vp.scrollTop - heightDiff);
-      }
-    } else {
-      setCollapsed();
-      if (typeof scrollBeforeExpand === 'number') {
-        vp.scrollTo({ top: scrollBeforeExpand, behavior: 'smooth' });
-      } else {
-        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }
-    }
-  }
 
   $effect(() => {
     if (activeMediaTab) {
@@ -1089,7 +911,7 @@
   });
 
   let isEmbedResolvedToCloud = $derived(Boolean(
-    postEmbed?.url && resolvedCloudAttachments.length > 0
+    postEmbed?.url && cloud.resolved.length > 0
   ));
 
   let isEmbedLinkedPost = $derived(Boolean(
@@ -1494,7 +1316,7 @@
       } as any;
     }
 
-    for (const [_, res] of cloudFolderResults) {
+    for (const [_, res] of cloud.folders) {
       const matchingNode = res.nodes.find((n) => {
         if (n.is_folder) return false;
         const nAtt: Attachment = {
@@ -1533,10 +1355,10 @@
   });
 
   $effect(() => {
-    cloudResolvedVersion;
+    cloud.version;
     const isPostFullyLoaded = entry.loaded && Boolean(post?.detail_fetched);
     const isPostLoading = entry.loading || (!isPostFullyLoaded && !entry.loaded && !entry.error);
-    const isCloudResolving = cloudResolving;
+    const isCloudResolving = cloud.resolving;
     const currentMedia = media;
 
     if (!initialViewerHandled && (openViewer || initialMedia)) {
@@ -1638,68 +1460,11 @@
   let deletingDownloadId = $state<string | null>(null);
   let downloadingAll = $state(false);
   let activeVideoIndexes = $state<Set<number>>(new Set());
-  const SOURCE_CHOICES_KEY = 'pawstash_mirror_sources';
-  let sourceChoices = $state<Record<string, string>>(readSourceChoices());
-  let failedSources = $state<Record<string, string[]>>({});
-
-  function readSourceChoices(): Record<string, string> {
-    try {
-      return JSON.parse(localStorage.getItem(SOURCE_CHOICES_KEY) ?? '{}');
-    } catch {
-      return {};
-    }
-  }
-
-  function sourceMirrors(file: Attachment): Attachment[] {
-    return (file.mirrors as Attachment[] | undefined) ?? [];
-  }
-
-  function sourceKey(file: Attachment): string {
-    return `${postKey}|${String(file.name ?? '').trim().toLowerCase()}|${file.size ?? ''}`;
-  }
-
-  function pickSource(file: Attachment): Attachment {
-    const sources = [file, ...sourceMirrors(file)].map((source): Attachment => ({ ...source, mirrors: undefined }));
-    const key = sourceKey(file);
-    const failed = failedSources[key] ?? [];
-    const usable = sources.filter((source) => !failed.includes(String(source.cloud_provider)));
-    const chosen = usable.find((source) => source.cloud_provider === sourceChoices[key]) ?? usable[0] ?? sources[0];
-    return { ...chosen, mirrors: sources.filter((source) => source !== chosen) };
-  }
-
-  function chooseSource(file: Attachment, provider: string) {
-    const key = sourceKey(file);
-    sourceChoices = { ...sourceChoices, [key]: provider };
-    failedSources = { ...failedSources, [key]: (failedSources[key] ?? []).filter((name) => name !== provider) };
-    localStorage.setItem(SOURCE_CHOICES_KEY, JSON.stringify(sourceChoices));
-  }
-
-  function failSource(file: Attachment): boolean {
-    const key = sourceKey(file);
-    const failed = [...(failedSources[key] ?? []), String(file.cloud_provider)];
-    if (!sourceMirrors(file).some((mirror) => !failed.includes(String(mirror.cloud_provider)))) return false;
-    failedSources = { ...failedSources, [key]: failed };
-    return true;
-  }
-
-  function showSources(event: MouseEvent, file: Attachment) {
-    const failed = failedSources[sourceKey(file)] ?? [];
-    const items: MenuItem[] = [file, ...sourceMirrors(file)].map((source) => {
-      const provider = String(source.cloud_provider);
-      return {
-        label: cloudProviderName(provider) ?? provider,
-        icon: IconCloud,
-        active: source === file,
-        detail: failed.includes(provider) ? i18n.t('post.source_failed') : undefined,
-        onclick: () => chooseSource(file, provider)
-      };
-    });
-    contextMenuState.show(event, i18n.t('post.source'), items);
-  }
+  const sources = new MirrorSources(() => postKey);
 
   async function retryOnMirror(failedJobId: string, file: Attachment) {
-    if (!post || !failSource(file)) return;
-    const next = downloadableMedia.find((item) => sourceKey(item) === sourceKey(file));
+    if (!post || !sources.fail(file)) return;
+    const next = downloadableMedia.find((item) => sources.key(item) === sources.key(file));
     if (!next?.path) return;
     try {
       await downloadState.remove(failedJobId);
@@ -1711,7 +1476,7 @@
 
   $effect(() => {
     for (const file of downloadableMedia) {
-      if (sourceMirrors(file).length === 0) continue;
+      if (mirrorsOf(file).length === 0) continue;
       const job = downloadState.downloads.find(
         (item) => item.service === service && item.creator_id === creatorId && item.post_id === postId && item.media_id === file.path
       );
@@ -1779,7 +1544,6 @@
         lastLoadedPostKey = currentKey;
         probingMediaPaths.clear();
         closeMediaSearch();
-        closeCommentsSearch();
       }
       untrack(() => {
         void contentState.loadPost(currentService, currentCreatorId, currentPostId, true, currentProvider).then(() => {
@@ -2217,77 +1981,6 @@
     }
   });
 
-  let comments = $state<Comment[]>([]);
-  let loadingComments = $state(false);
-  let commentsError = $state<string | null>(null);
-  let commentsExpanded = $state(false);
-  let commentsHeight = $state(0);
-  const MAX_COMMENTS_HEIGHT = 600;
-  let isCommentsOverflowing = $derived(commentsHeight > MAX_COMMENTS_HEIGHT);
-  let commentsSort = $state<'newest' | 'oldest'>('newest');
-  const COMMENT_SEARCH_MIN = 20;
-  let commentsSearchQuery = $state('');
-  let commentsSearchOpen = $state(false);
-  let commentsQuery = $derived(commentsSearchQuery.trim().toLowerCase());
-  let commentSortOptions = $derived([
-    sortOption<'newest' | 'oldest'>('newest', 'published', 'desc'),
-    sortOption<'newest' | 'oldest'>('oldest', 'published', 'asc')
-  ]);
-
-  function closeCommentsSearch() {
-    commentsSearchOpen = false;
-    commentsSearchQuery = '';
-  }
-
-  async function loadComments() {
-    if (!postId) return;
-    loadingComments = true;
-    commentsError = null;
-    try {
-      comments = await apiFetchPostComments(service, creatorId, postId);
-    } catch (err) {
-      const errMsg = String(err);
-      if (errMsg.includes('404') || errMsg.toLowerCase().includes('not found')) {
-        comments = [];
-      } else {
-        logger.error(`Failed to load comments for ${service}:${postId}`, err);
-        commentsError = errMsg;
-      }
-    } finally {
-      loadingComments = false;
-    }
-  }
-
-  $effect(() => {
-    if (postId) {
-      void loadComments();
-    }
-  });
-
-  let rootComments = $derived.by(() => {
-    const ids = new Set(comments.map(c => c.id));
-    const list = comments.filter(c => !c.parent_id || !ids.has(c.parent_id));
-    return list.sort((a, b) => {
-      const timeA = new Date(a.published).getTime();
-      const timeB = new Date(b.published).getTime();
-      return commentsSort === 'newest' ? timeB - timeA : timeA - timeB;
-    });
-  });
-
-  function getReplies(commentId: string) {
-    return comments
-      .filter(c => c.parent_id === commentId)
-      .sort((a, b) => new Date(a.published).getTime() - new Date(b.published).getTime());
-  }
-
-  function threadMatches(comment: Comment): boolean {
-    const author = (comment.commenter_name || comment.commenter || '').toLowerCase();
-    if ((comment.content ?? '').toLowerCase().includes(commentsQuery) || author.includes(commentsQuery)) return true;
-    return getReplies(comment.id).some(threadMatches);
-  }
-
-  let visibleRootComments = $derived(commentsQuery ? rootComments.filter(threadMatches) : rootComments);
-  let commentsCollapsible = $derived(isCommentsOverflowing && !commentsQuery);
 
 </script>
 
@@ -2635,14 +2328,14 @@
         </div>
       {/if}
 
-      {#if lockedCloudLinks.length > 0}
+      {#if cloud.locked.length > 0}
         <div class="locked-cloud-links">
-          {#each lockedCloudLinks as link (link.url)}
+          {#each cloud.locked as link (link.url)}
             <CloudLinkCard
               url={link.url}
               {post}
               lock={link.kind}
-              onresolved={(res) => handleCloudLinkUnlocked(link.url, res)}
+              onresolved={(res) => cloud.unlock(link.url, res)}
             />
           {/each}
         </div>
@@ -2651,7 +2344,7 @@
       {#if media.length > 0 || hasEmbed}
         <div class="media-section">
           {#if showMediaTabs || media.length >= 20 || mediaSearchQuery || media.length > 1}
-            <div class="media-controls-row" class:search-active={mediaSearchOpen}>
+            <div class="media-controls-row post-section-controls" class:search-active={mediaSearchOpen}>
               {#if showMediaTabs}
                 <div class="post-tabs-scroll" use:edgeFade>
                   <ChoiceGroup
@@ -2689,7 +2382,7 @@
           {/if}
 
           {#if filteredMedia.length > 0 || (hasEmbed && isEmbedVisibleInTab && embedMatchesSearch)}
-            <div class="media-gallery-wrapper" bind:this={galleryWrapperEl}>
+            <div class="media-gallery-wrapper section-scroll-anchor" bind:this={galleryWrapperEl}>
               <div class="media-gallery-container" class:is-collapsed={isGalleryOverflowing && !galleryExpanded}>
                 <section class="media-gallery" bind:clientHeight={galleryHeight} aria-label={i18n.t('post.media')}>
                 {#if postEmbed && !isEmbedResolvedToCloud && isEmbedVisibleInTab && embedMatchesSearch}
@@ -3163,10 +2856,10 @@
                 </Button>
               </div>
             {:else if isGalleryOverflowing && galleryExpanded}
-              <div class="gallery-collapse-action">
+              <div class="section-collapse-action">
                 <Button
                   variant="ghost"
-                  onclick={() => smartCollapseSection(() => galleryExpanded = false, galleryWrapperEl, MAX_GALLERY_HEIGHT, galleryScrollBeforeExpand)}
+                  onclick={() => collapseSection(scrollContext?.viewport, galleryWrapperEl, MAX_GALLERY_HEIGHT, galleryScrollBeforeExpand, () => (galleryExpanded = false))}
                   class="gallery-collapse-btn"
                 >
                   <IconChevronUp class="w-[16px] h-[16px]" />
@@ -3186,7 +2879,7 @@
       {/if}
 
       {#if richContent && !isHtmlContentEmpty(richContent)}
-        <section class="post-content" bind:this={contentWrapperEl}>
+        <section class="post-content section-scroll-anchor" bind:this={contentWrapperEl}>
           <div class="html-content-container" class:is-collapsed={isOverflowing && !contentExpanded}>
             <div class="html-content" bind:clientHeight={contentHeight}>
               <RichContent
@@ -3226,10 +2919,10 @@
               </Button>
             </div>
           {:else if isOverflowing && contentExpanded}
-            <div class="content-collapse-action">
+            <div class="section-collapse-action">
               <Button
                 variant="ghost"
-                onclick={() => smartCollapseSection(() => contentExpanded = false, contentWrapperEl, MAX_CONTENT_HEIGHT, contentScrollBeforeExpand)}
+                onclick={() => collapseSection(scrollContext?.viewport, contentWrapperEl, MAX_CONTENT_HEIGHT, contentScrollBeforeExpand, () => (contentExpanded = false))}
                 class="collapse-btn"
               >
                 <IconChevronUp class="w-[16px] h-[16px]" />
@@ -3291,118 +2984,9 @@
         </nav>
       {/if}
 
-      {#snippet commentNode(comment: Comment, depth = 0)}
-        <div class="comment-item">
-          <div class="comment-content-block">
-            <div class="comment-meta">
-              <span class="comment-author" class:is-creator={comment.commenter === creatorId}>
-                {comment.commenter_name || comment.commenter}
-              </span>
-              {#if comment.commenter === creatorId}
-                <span class="creator-badge">{i18n.t('post.creator_badge')}</span>
-              {/if}
-              <span class="comment-date">{formatDate(comment.published)}</span>
-              {#if comment.revisions && comment.revisions.length > 0}
-                <span class="comment-edited" title={comment.revisions.map(r => `${formatDate(r.added)}: ${r.content}`).join('\n')}>
-                  ({i18n.t('post.edited')})
-                </span>
-              {/if}
-            </div>
-            <div class="comment-body">
-              <RichContent html={comment.content} currentService={service} currentCreatorId={creatorId} />
-            </div>
-
-            {#if getReplies(comment.id).length > 0}
-              <div class="comment-replies-container">
-                {#each getReplies(comment.id) as reply (reply.id)}
-                  {@render commentNode(reply, depth + 1)}
-                {/each}
-              </div>
-            {/if}
-          </div>
-        </div>
-      {/snippet}
-
-      <section class="comments-section">
-        <div class="comments-header-row" class:search-active={commentsSearchOpen}>
-          <h2 class="comments-title">
-            <IconComment class="w-[20px] h-[20px] opacity-75" />
-            <span>{i18n.t('post.comments')}</span>
-            <CountBadge count={comments.length} variant="header" />
-          </h2>
-
-          {#if comments.length > 1}
-            <div class="comments-actions">
-              <HeaderActions
-                bind:searchOpen={commentsSearchOpen}
-                bind:searchQuery={commentsSearchQuery}
-                showSearchButton={comments.length >= COMMENT_SEARCH_MIN || Boolean(commentsSearchQuery)}
-                searchPlaceholder={i18n.t('post.search_comments')}
-                onsearchtoggle={(open) => {
-                  if (!open) closeCommentsSearch();
-                }}
-              >
-                <SortControl
-                  variant="standalone"
-                  options={commentSortOptions}
-                  value={commentsSort}
-                  onchange={(value) => (commentsSort = value)}
-                />
-              </HeaderActions>
-            </div>
-          {/if}
-        </div>
-
-        {#if loadingComments}
-          <div class="comments-empty">{i18n.t('feed.loading')}</div>
-        {:else if commentsError}
-          <div class="comments-empty">{commentsError}</div>
-        {:else if comments.length === 0}
-          <div class="comments-empty">{i18n.t('post.no_comments')}</div>
-        {:else if visibleRootComments.length === 0}
-          <div class="comments-empty">{i18n.t('post.no_matching_comments', { query: commentsSearchQuery.trim() })}</div>
-        {:else}
-          <div class="comments-wrapper" bind:this={commentsWrapperEl}>
-            <div
-              class="comments-container"
-              class:is-collapsed={commentsCollapsible && !commentsExpanded}
-              class:is-expanded={commentsExpanded || Boolean(commentsQuery)}
-            >
-              <div class="comments-list" bind:clientHeight={commentsHeight}>
-                {#each visibleRootComments as comment (comment.id)}
-                  {@render commentNode(comment)}
-                {/each}
-              </div>
-            </div>
-
-            {#if commentsCollapsible && !commentsExpanded}
-              <div class="comments-expand-action">
-                <Button
-                  variant="ghost"
-                  onclick={() => {
-                    commentsScrollBeforeExpand = scrollContext?.viewport?.scrollTop ?? null;
-                    commentsExpanded = true;
-                  }}
-                >
-                  <IconChevronDown class="w-[16px] h-[16px]" />
-                  <span>{i18n.t('post.expand_comments')}</span>
-                </Button>
-              </div>
-            {:else if commentsCollapsible && commentsExpanded}
-              <div class="comments-collapse-action">
-                <Button
-                  variant="ghost"
-                  onclick={() => smartCollapseSection(() => commentsExpanded = false, commentsWrapperEl, MAX_COMMENTS_HEIGHT, commentsScrollBeforeExpand)}
-                  class="comments-collapse-btn"
-                >
-                  <IconChevronUp class="w-[16px] h-[16px]" />
-                  <span>{i18n.t('post.collapse_comments')}</span>
-                </Button>
-              </div>
-            {/if}
-          </div>
-        {/if}
-      </section>
+      {#key postKey}
+        <PostComments bind:this={commentsSection} {service} {creatorId} {postId} />
+      {/key}
       {:else if entry.loading || !entry.loaded}
         <div class="detail-loading" role="status" aria-label={i18n.t('feed.loading')}><IconLoading /></div>
       {:else}
@@ -3460,21 +3044,6 @@
     z-index: 2;
     min-width: 0;
     max-width: 100%;
-  }
-
-  .media-controls-row :global(.btn:not(.btn-icon)),
-  .comments-header-row :global(.btn:not(.btn-icon)) {
-    height: calc(var(--control-height, 46px) * var(--ui-scale, 1)) !important;
-    padding: 0 18px !important;
-    font-size: calc(var(--control-font-size, 14px) * var(--ui-scale, 1)) !important;
-    border-radius: var(--radius-full) !important;
-    gap: 8px !important;
-  }
-
-  .media-controls-row :global(.btn svg),
-  .comments-header-row :global(.btn svg) {
-    width: 20px;
-    height: 20px;
   }
 
   .post-creator-avatar {
@@ -4237,50 +3806,6 @@
     pointer-events: auto;
   }
 
-  .media-gallery-wrapper,
-  .post-content,
-  .comments-wrapper {
-    scroll-margin-top: 92px;
-  }
-
-  :global(.page-shell.mobile) .media-gallery-wrapper,
-  :global(.page-shell.mobile) .post-content,
-  :global(.page-shell.mobile) .comments-wrapper {
-    scroll-margin-top: calc(56px + var(--mobile-status-bar-height, 0px) + 12px);
-  }
-
-  .gallery-collapse-action,
-  .content-collapse-action,
-  .comments-collapse-action {
-    position: sticky;
-    bottom: 24px;
-    z-index: 25;
-    display: flex;
-    justify-content: center;
-    margin-top: 14px;
-    pointer-events: none;
-  }
-
-  .gallery-collapse-action :global(.btn),
-  .content-collapse-action :global(.btn),
-  .comments-collapse-action :global(.btn) {
-    pointer-events: auto;
-  }
-
-  :global(.page-shell.mobile) .gallery-collapse-action,
-  :global(.page-shell.mobile) .content-collapse-action,
-  :global(.page-shell.mobile) .comments-collapse-action {
-    bottom: var(--dock-space);
-  }
-
-  @media (max-width: 640px) {
-    .gallery-collapse-action,
-    .content-collapse-action,
-    .comments-collapse-action {
-      bottom: var(--dock-space);
-    }
-  }
-
   .post-content {
     position: relative;
     margin-top: 24px;
@@ -4389,196 +3914,6 @@
     background: var(--bg-card);
     padding: 2px 6px;
     border-radius: var(--radius-sm);
-  }
-
-  .comments-section {
-    margin-top: 48px;
-    padding-top: 32px;
-    border-top: 1px solid rgba(var(--surface-tint-rgb), 0.08);
-  }
-
-  .comments-header-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 24px;
-    gap: 16px;
-  }
-
-  .comments-title {
-    font-family: var(--font-sans);
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--text-primary);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .comments-actions {
-    display: flex;
-    justify-content: flex-end;
-    min-width: 0;
-  }
-
-  :global([data-layout='mobile']) .comments-header-row.search-active .comments-title {
-    display: none;
-  }
-
-  :global([data-layout='mobile']) .comments-header-row.search-active .comments-actions {
-    flex: 1;
-  }
-
-  .comments-wrapper {
-    position: relative;
-    width: 100%;
-  }
-
-  .comments-container {
-    max-height: 600px;
-    overflow: hidden;
-    transition: max-height 0.4s var(--ease-expo);
-  }
-
-  .comments-container.is-expanded {
-    max-height: none;
-  }
-
-  .comments-container.is-collapsed {
-    mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
-    -webkit-mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
-  }
-
-  .comments-expand-action {
-    display: flex;
-    justify-content: center;
-    padding: 24px 0 12px;
-    position: relative;
-    z-index: 10;
-  }
-
-  .comments-list {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-  }
-
-  .comment-item {
-    display: block;
-    position: relative;
-  }
-
-  .comment-content-block {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .comment-meta {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    font-size: 13px;
-    line-height: 1.4;
-  }
-
-  .comment-author {
-    font-weight: 600;
-    color: var(--text-primary);
-    user-select: text;
-    cursor: text;
-  }
-
-  .comment-author.is-creator {
-    color: var(--accent-primary);
-  }
-
-  .creator-badge {
-    padding: 0 8px;
-    border-radius: var(--radius-full);
-    background: var(--accent-container);
-    color: var(--accent-on-container);
-    font-size: var(--type-label-sm-size);
-    line-height: var(--type-label-sm-line);
-    font-weight: 500;
-  }
-
-  .comment-date {
-    color: var(--text-secondary);
-    opacity: 0.5;
-    font-size: 12px;
-    user-select: text;
-    cursor: text;
-  }
-
-  .comment-edited {
-    color: var(--text-secondary);
-    opacity: 0.35;
-    font-size: 11px;
-    font-style: italic;
-    cursor: help;
-    user-select: text;
-  }
-
-  .comment-body {
-    font-size: 14px;
-    line-height: 1.55;
-    color: var(--text-primary);
-    opacity: 0.88;
-    word-break: break-word;
-    user-select: text;
-    cursor: text;
-  }
-
-  .comment-body :global(*) {
-    user-select: text;
-  }
-
-  .comment-body :global(a) {
-    color: var(--accent-primary);
-    text-decoration: none;
-    cursor: pointer;
-  }
-
-  .comment-body :global(a:hover) {
-    text-decoration: underline;
-  }
-
-  .comment-body :global(p) {
-    margin: 0 0 8px;
-  }
-
-  .comment-body :global(p:last-child) {
-    margin-bottom: 0;
-  }
-
-  .comment-replies-container {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    margin-top: 16px;
-    padding-left: 16px;
-    position: relative;
-  }
-
-  .comment-replies-container::before {
-    content: '';
-    position: absolute;
-    left: -8px;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    background: rgba(var(--surface-tint-rgb), 0.06);
-    border-radius: 1px;
-  }
-
-  .comments-empty {
-    text-align: center;
-    padding: 40px;
-    color: var(--text-secondary);
-    opacity: 0.5;
-    font-size: 14px;
   }
 
   .post-footer-toolbar {
