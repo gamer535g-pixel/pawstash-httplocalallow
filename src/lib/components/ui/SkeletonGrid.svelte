@@ -1,15 +1,17 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { configState } from '$lib/state/configState.svelte';
+  import { GRID_RATIOS } from '$lib/state/scaleState.svelte';
 
   interface Props {
     cardWidth: number;
     gap: number;
-    ratio: number;
     rows?: number;
     fading?: boolean;
   }
 
-  let { cardWidth, gap, ratio, rows, fading = false }: Props = $props();
+  let { cardWidth, gap, rows, fading = false }: Props = $props();
+  let ratio = $derived(GRID_RATIOS[configState.settings.grid_aspect_ratio]);
 
   const SK_TILT = Math.tan(Math.PI / 12);
   const SK_SIN = Math.sin((105 * Math.PI) / 180);
@@ -111,7 +113,9 @@
   .skeleton-card {
     position: relative;
     aspect-ratio: var(--sk-ratio);
-    background-color: rgba(var(--surface-tint-rgb), .035);
+    overflow: hidden;
+    border-radius: var(--radius-md);
+    background-color: var(--surface-container);
     background-image: linear-gradient(
       105deg,
       transparent calc(50% - var(--sk-band)),

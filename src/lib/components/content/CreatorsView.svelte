@@ -104,7 +104,6 @@
   let gap = $derived((layoutState.isMobile ? 8 : 10) * scale);
   let targetCardWidth = $derived(baseCardWidth * scale);
   let ratio = $derived(ratios[configState.settings.grid_aspect_ratio]);
-  const ratioValues = { square: 1, portrait: 4 / 5, landscape: 3 / 2, widescreen: 16 / 9 } as const;
 
   const scrollContext = getContext<ScrollableContext | undefined>(SCROLLABLE_CONTEXT);
 
@@ -671,7 +670,6 @@
         <SkeletonGrid
           cardWidth={targetCardWidth}
           {gap}
-          ratio={ratioValues[configState.settings.grid_aspect_ratio]}
           fading={handoff.skeletonFading}
         />
       {/if}

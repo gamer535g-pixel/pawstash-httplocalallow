@@ -7,6 +7,7 @@ type ScaleKind = 'grid' | 'interface';
 export const GRID_SCALE_MIN = 60;
 export const GRID_SCALE_MAX = 160;
 export const GRID_SCALE_STEP = 5;
+export const GRID_RATIOS = { square: 1, portrait: 4 / 5, landscape: 3 / 2, widescreen: 16 / 9 } as const;
 const WHEEL_STEP_DELTA = 50;
 const INDICATOR_MS = 1200;
 const SAVE_DELAY_MS = 300;

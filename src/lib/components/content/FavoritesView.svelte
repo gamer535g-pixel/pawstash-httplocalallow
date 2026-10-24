@@ -342,7 +342,6 @@
   let gap = $derived(Math.round((layoutState.isMobile ? 8 : 10) * scale));
   let targetCardWidth = $derived(Math.round(baseCardWidth * scale));
   let ratio = $derived(({ square: '1 / 1', portrait: '4 / 5', landscape: '3 / 2', widescreen: '16 / 9' } as const)[configState.settings.grid_aspect_ratio]);
-  const ratioValues = { square: 1, portrait: 4 / 5, landscape: 3 / 2, widescreen: 16 / 9 } as const;
 
   function mapFavoritePost(favorite: Favorite, index = 0): Post {
     const rawExtra = (favorite.extra || {}) as any;
@@ -990,7 +989,6 @@
         <SkeletonGrid
           cardWidth={targetCardWidth}
           {gap}
-          ratio={ratioValues[configState.settings.grid_aspect_ratio]}
           fading={creatorsHandoff.skeletonFading}
         />
       {/if}

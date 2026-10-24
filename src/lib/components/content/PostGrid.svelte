@@ -10,7 +10,7 @@
   import type { Post } from '$lib/types/content';
   import { configState } from '$lib/state/configState.svelte';
   import { layoutState } from '$lib/state/layoutState.svelte';
-  import { gridScaleWheel } from '$lib/state/scaleState.svelte';
+  import { GRID_RATIOS, gridScaleWheel } from '$lib/state/scaleState.svelte';
   import { i18n } from '$lib/i18n';
   import { selectionState } from '$lib/state/selectionState.svelte';
   import PostCard from './PostCard.svelte';
@@ -60,7 +60,6 @@
   let pendingScrollRestore = $state<number | null>(null);
   let lastRequestKey = '';
   const ratios = { square: '1 / 1', portrait: '4 / 5', landscape: '3 / 2', widescreen: '16 / 9' } as const;
-  const ratioValues = { square: 1, portrait: 4 / 5, landscape: 3 / 2, widescreen: 16 / 9 } as const;
   const overscanRows = 3;
 
   let postKeys = $derived(posts.map((p) => `${(p.service || '').toLowerCase()}:${p.user}:${p.id}`));
@@ -76,7 +75,7 @@
   let targetCardWidth = $derived(baseCardWidth * scale);
   let columnCount = $derived(Math.max(1, Math.floor((gridWidth + gap) / (targetCardWidth + gap))));
   let cardWidth = $derived(columnCount > 0 ? (gridWidth - gap * (columnCount - 1)) / columnCount : gridWidth);
-  let cardHeight = $derived(Math.round(cardWidth / ratioValues[configState.settings.grid_aspect_ratio]));
+  let cardHeight = $derived(Math.round(cardWidth / GRID_RATIOS[configState.settings.grid_aspect_ratio]));
   let rowStride = $derived(cardHeight + gap);
   let rowCount = $derived(Math.ceil(posts.length / columnCount));
   let virtualHeight = $derived(rowCount > 0 ? rowCount * cardHeight + (rowCount - 1) * gap : 0);
@@ -285,7 +284,6 @@
     <SkeletonGrid
       cardWidth={targetCardWidth}
       {gap}
-      ratio={ratioValues[configState.settings.grid_aspect_ratio]}
       fading={handoff.skeletonFading}
     />
   {/if}

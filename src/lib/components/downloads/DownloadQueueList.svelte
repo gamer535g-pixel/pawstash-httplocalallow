@@ -601,7 +601,6 @@
         <SkeletonGrid
           cardWidth={targetCardWidth}
           {gap}
-          ratio={1}
           fading={handoff.skeletonFading}
         />
       {/if}
