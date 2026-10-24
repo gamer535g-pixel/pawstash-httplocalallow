@@ -24,8 +24,7 @@
     apiFetchAnnouncements,
     apiFetchFancards,
     openExternalUrl,
-    apiResolveCreatorUrl,
-    apiSetPostFavorite
+    apiResolveCreatorUrl
   } from '$lib/utils/ipc';
   import {
     creatorAvatarSrc,
@@ -1006,30 +1005,6 @@
       notify.error(i18n.t('downloads.action_error'), err);
     }
   }
-
-  async function batchFavoritePosts(isFav: boolean) {
-    const items = selectionState.getItems<Post>();
-    if (items.length === 0) return;
-    try {
-      for (const post of items) {
-        await apiSetPostFavorite(post.service, post.user, post.id, isFav);
-        if (isFav) {
-          accountState.addPostFavoriteOptimistic({ id: post.id, service: post.service, user: post.user, title: post.title });
-        } else {
-          accountState.removePostFavoriteOptimistic(post.service, post.user, post.id);
-        }
-      }
-      notify.success(
-        isFav
-          ? i18n.t('selection.favorite')
-          : i18n.t('selection.unfavorite'),
-        i18n.t('counts.posts', { count: items.length })
-      );
-      selectionState.exit();
-    } catch (err) {
-      notify.error(i18n.t('post.favorite_failed'), err);
-    }
-  }
 </script>
 
 {#snippet subscriptionControl()}
@@ -1611,10 +1586,10 @@
   <Button
     variant="ghost"
     class="btn-icon"
-    onclick={() => void batchFavoritePosts(true)}
+    onclick={() => void favoriteActions.favoritePosts(selectionState.getItems<Post>()).then((done) => done && selectionState.exit())}
     title={i18n.t('selection.favorite')}
   >
-    <IconHeartFilled class="text-accent" />
+    <IconHeart />
   </Button>
 {/snippet}
 

@@ -22,7 +22,6 @@
   import { downloadState } from '$lib/state/downloadState.svelte';
   import { providerState } from '$lib/state/providerState.svelte';
   import { formatProviderName } from '$lib/utils/media';
-  import { apiSetPostFavorite } from '$lib/utils/ipc';
   import { notify } from '$lib/utils/toast';
   import { notifyAddedToStash, notifyRemovedFromStash } from '$lib/utils/stashToast';
   import type { Post } from '$lib/types/content';
@@ -44,7 +43,8 @@
   import IconBookmarkAdd from '~icons/fluent/bookmark-add-24-regular';
   import { configState } from '$lib/state/configState.svelte';
   import IconSparkle from '~icons/fluent/sparkle-24-regular';
-  import IconHeartFilled from '~icons/fluent/heart-24-filled';
+  import IconHeart from '~icons/fluent/heart-24-regular';
+  import { favoriteActions } from '$lib/state/favoriteActions.svelte';
 
   let isSelectionActive = $derived(selectionState.active && selectionState.scope === 'posts');
 
@@ -140,24 +140,6 @@
       selectionState.exit();
     } catch (err) {
       notify.error(i18n.t('downloads.action_error'), err);
-    }
-  }
-
-  async function batchFavoritePosts(isFav: boolean) {
-    const items = selectionState.getItems<Post>();
-    if (items.length === 0) return;
-    try {
-      for (const post of items) {
-        await apiSetPostFavorite(post.service, post.user, post.id, isFav);
-      }
-      notify.success(
-        i18n.t(isFav ? 'selection.favorite' : 'selection.unfavorite'),
-        i18n.t('counts.posts', { count: items.length })
-      );
-      await accountState.fetchFavorites('post');
-      selectionState.exit();
-    } catch (err) {
-      notify.error(i18n.t('post.favorite_failed'), err);
     }
   }
 
@@ -709,10 +691,10 @@
   <Button
     variant="ghost"
     class="btn-icon"
-    onclick={() => void batchFavoritePosts(true)}
+    onclick={() => void favoriteActions.favoritePosts(selectionState.getItems<Post>()).then((done) => done && selectionState.exit())}
     title={i18n.t('selection.favorite')}
   >
-    <IconHeartFilled class="text-accent" />
+    <IconHeart />
   </Button>
 {/snippet}
 

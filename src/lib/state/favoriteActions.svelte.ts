@@ -44,6 +44,24 @@ class FavoriteActions {
     }
   }
 
+  async favoritePosts(posts: Post[]): Promise<boolean> {
+    try {
+      for (const post of posts) {
+        if (accountState.isPostFavorite(post.service, post.user, post.id)) continue;
+        await apiSetPostFavorite(post.service, post.user, post.id, true);
+        accountState.addPostFavoriteOptimistic(post);
+      }
+      notify.success(i18n.t('selection.favorite'), {
+        description: i18n.t('counts.posts', { count: posts.length }),
+        glyph: 'favorited'
+      });
+      return true;
+    } catch (error) {
+      notify.error(i18n.t('post.favorite_failed'), error);
+      return false;
+    }
+  }
+
   async toggleCreator(creator: Pick<Creator, 'id' | 'service' | 'name'>) {
     const key = creatorKey(creator);
     if (this.pending[key]) return;

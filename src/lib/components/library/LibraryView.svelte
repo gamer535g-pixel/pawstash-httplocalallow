@@ -31,6 +31,8 @@
   import IconCheckmark from '~icons/fluent/checkmark-20-regular';
   import IconDismiss from '~icons/fluent/dismiss-24-regular';
   import IconDelete from '~icons/fluent/delete-24-regular';
+  import IconHeart from '~icons/fluent/heart-24-regular';
+  import { favoriteActions } from '$lib/state/favoriteActions.svelte';
   import IconLoading from '~icons/svg-spinners/3-dots-fade';
   import IconArrowClockwise from '~icons/fluent/arrow-clockwise-24-regular';
   import IconOptions from '~icons/fluent/options-24-regular';
@@ -794,6 +796,15 @@
     title={i18n.t('selection.download_all')}
   >
     <IconArrowDownload />
+  </Button>
+
+  <Button
+    variant="ghost"
+    class="btn-icon"
+    onclick={() => void favoriteActions.favoritePosts(selectionState.getItems<Post>()).then((done) => done && selectionState.exit())}
+    title={i18n.t('selection.favorite')}
+  >
+    <IconHeart />
   </Button>
 
   <Button
