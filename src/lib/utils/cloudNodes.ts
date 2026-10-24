@@ -1,5 +1,6 @@
 import type { Component } from 'svelte';
-import type { CloudNode } from '$lib/types/cloud';
+import type { CloudFolderResult, CloudNode } from '$lib/types/cloud';
+import type { Attachment } from '$lib/types/content';
 import { isAudioUrl, isCompressedUrl, isDocumentUrl, isImageUrl, isVideoUrl } from '$lib/utils/media';
 import IconFolder from '~icons/fluent/folder-24-filled';
 import IconZip from '~icons/fluent/folder-zip-24-regular';
@@ -48,4 +49,38 @@ export function cloudNodePath(byId: Map<string, CloudNode>, node: CloudNode): st
 
 export function archiveFolderName(name: string): string {
   return name.replace(/\.(zip|cbz|rar|cbr|7z|cb7)(\.\d+)?$/i, '') || name;
+}
+
+export function cloudResultAttachments(res: CloudFolderResult): Attachment[] {
+  const fileNodes = res.nodes.filter((n) => !n.is_folder);
+  const nodesToDisplay = fileNodes.length > 0 ? fileNodes : res.nodes;
+  const singleFileSize = nodesToDisplay.length === 1 && res.total_size > 0 ? res.total_size : undefined;
+
+  return nodesToDisplay.map((node): Attachment => {
+    const shared = {
+      name: node.name,
+      server: '',
+      is_cloud: true,
+      is_cloud_folder: node.is_folder,
+      cloud_provider: res.provider,
+      cloud_node_id: node.id,
+      cloud_folder_title: res.title,
+      cloud_folder_result: res
+    };
+    if (node.is_folder) {
+      return {
+        ...shared,
+        path: `cloud_folder:${res.provider}:${node.id}`,
+        size: undefined,
+        cloud_child_count: res.nodes.filter((n) => n.parent_id === node.id).length
+      };
+    }
+    const url = node.stream_url || node.download_url || undefined;
+    return {
+      ...shared,
+      url,
+      path: url || `cloud:${res.provider}:${node.id}`,
+      size: node.size && node.size > 0 ? node.size : singleFileSize
+    };
+  });
 }
