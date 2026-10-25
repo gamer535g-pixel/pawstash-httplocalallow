@@ -14,6 +14,8 @@ pub struct Attachment {
     pub thumbnail_url: Option<String>,
     #[serde(flatten)]
     pub extra: HashMap<String, Value>,
+    #[serde(default)]
+    pub temp_url: Option<String>,
 }
 
 impl Attachment {
