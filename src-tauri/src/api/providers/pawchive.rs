@@ -1313,6 +1313,24 @@ impl PawchiveProvider {
         }
         post
     }
+
+    // ═══════════════════════════ CHANGE 1 ═══════════════════════════════════
+    /// Returns the signed `temp_url` provided by the Pawchive API if present.
+    ///
+    /// These URLs point at `https://t1.pawchive.pw/f/...` and include
+    /// `?e=...&s=...` (expiry + cryptographic signature). They grant access
+    /// to the best available rendition (full-resolution where archived) and
+    /// bypass the `403 Forbidden` errors that unsigned
+    /// `https://file.pawchive.pw/data/...` URLs now receive.
+    fn attachment_temp_url(attachment: &Attachment) -> Option<String> {
+        attachment
+            .extra
+            .get("temp_url")
+            .and_then(|v| v.as_str())
+            .filter(|s| s.starts_with("http"))
+            .map(str::to_string)
+    }
+    // ═══════════════════════════════════════════════════════════════════════
 }
 
 #[async_trait]
@@ -1778,6 +1796,48 @@ impl SourceProvider for PawchiveProvider {
             .unwrap_or(false)
     }
 
+    // ═══════════════════════════ CHANGE 2 ═══════════════════════════════════
+    /// Overrides the default trait behaviour so that a signed `temp_url`
+    /// (returned by the Pawchive API) takes precedence over both the
+    /// constructed `file.pawchive.pw` URL and the low-quality thumbnail.
+    fn enrich_attachment(&self, attachment: &mut Attachment) {
+        // ── PRIORITY 1 ────────────────────────────────────────────────────
+        // The API returned a signed `temp_url`; use it directly. This is the
+        // full-quality URL served from `t1.pawchive.pw/f/...?e=...&s=...`.
+        // It works even when `preview_only` is true, because the signature
+        // grants access to the best rendition the archive holds.
+        if let Some(temp_url) = Self::attachment_temp_url(attachment) {
+            attachment.url = Some(temp_url);
+            return;
+        }
+
+        // ── PRIORITY 2 ────────────────────────────────────────────────────
+        // No signed URL. Fall back to the legacy behaviour: preview-only
+        // attachments resolve to the public thumbnail; everything else
+        // resolves to a constructed media URL (with thumbnail sidecar).
+        let Some(path) = attachment.path.as_deref().filter(|p| !p.is_empty()) else {
+            return;
+        };
+
+        if self.attachment_uses_thumbnail(attachment) {
+            let thumb = self.resolve_thumbnail_url(path);
+            if !thumb.is_empty() {
+                attachment.thumbnail_url = Some(thumb.clone());
+                attachment.url = Some(thumb);
+            }
+        } else {
+            let thumb = self.resolve_thumbnail_url(path);
+            if !thumb.is_empty() {
+                attachment.thumbnail_url = Some(thumb);
+            }
+            let media = self.resolve_media_url(path, attachment.server.as_deref());
+            if !media.is_empty() {
+                attachment.url = Some(media);
+            }
+        }
+    }
+    // ═══════════════════════════════════════════════════════════════════════
+
     fn resolve_post_url(&self, service: &str, creator_id: &str, post_id: &str) -> String {
         let endpoint = self.get_active_endpoint();
         let base = endpoint.trim_end_matches('/');
@@ -2082,6 +2142,36 @@ mod tests {
             .url
             .is_some_and(|url| url.starts_with("https://img.pawchive.pw/thumbnail/data/")));
     }
+
+    // ═══════════════════════════ CHANGE 3 ═══════════════════════════════════
+    #[test]
+    fn temp_url_attachments_use_signed_high_quality_url() {
+        let signed = "https://t1.pawchive.pw/f/20c5f2411cac0a3d/full.jpg?e=1792981718&s=82679cfe782839b14012b8e199edfca9";
+        let mut attachment = Attachment {
+            name: Some("full.jpg".into()),
+            path: Some(
+                "/e5/76/e576880acb1c7d4d1f01182340816cf0204d2136746b79d87e586b1f1b00321e.jpg"
+                    .into(),
+            ),
+            url: Some("https://stale.invalid/data/full.jpg".into()),
+            extra: HashMap::from([
+                ("preview_only".into(), serde_json::Value::Bool(true)),
+                (
+                    "temp_url".into(),
+                    serde_json::Value::String(signed.to_string()),
+                ),
+            ]),
+            ..Attachment::default()
+        };
+
+        default_provider().enrich_attachment(&mut attachment);
+
+        // The signed t1 URL wins over the thumbnail fallback, even with
+        // `preview_only = true`, because the API explicitly handed us the
+        // best available rendition.
+        assert_eq!(attachment.url.as_deref(), Some(signed));
+    }
+    // ═══════════════════════════════════════════════════════════════════════
 
     #[test]
     fn popular_cards_include_server_favorite_counts() {
