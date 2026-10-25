@@ -111,6 +111,28 @@ pub struct AcceptedRecord {
 
 pub const PULL_PAGE_LIMIT: usize = 500;
 
+/// Plain HTTP is accepted only for loopback and private-network hosts
+/// (localhost, 127.0.0.0/8, 10/8, 172.16/12, 192.168/16, 169.254/16,
+/// 100.64/10 used by Tailscale, and IPv6 ::1 / fc00::/7).
+fn is_plain_http_allowed(host: &str) -> bool {
+    use std::net::IpAddr;
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => {
+            let o = ip.octets();
+            ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || (o[0] == 100 && (o[1] & 0xC0) == 64)
+        }
+        Ok(IpAddr::V6(ip)) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
+        Err(_) => false,
+    }
+}
+
 pub struct SyncHttpClient {
     client: Client,
     base: String,
@@ -118,9 +140,9 @@ pub struct SyncHttpClient {
 impl SyncHttpClient {
     pub fn new(server_url: &str, settings: &AppSettings) -> Result<Self, String> {
         let url = Url::parse(server_url.trim()).map_err(|e| e.to_string())?;
-        let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+        let local = url.host_str().is_some_and(is_plain_http_allowed);
         if url.scheme() != "https" && !local {
-            return Err("Sync server requires HTTPS".to_string());
+            return Err("Sync server requires HTTPS (plain HTTP is only allowed for localhost and private-network addresses)".to_string());
         }
         let builder = crate::net::builder_with_proxy(settings)?
             .timeout(crate::net::defaults().request_timeout);
