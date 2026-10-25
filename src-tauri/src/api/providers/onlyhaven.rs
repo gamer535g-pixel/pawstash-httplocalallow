@@ -375,6 +375,7 @@ impl OnlyHavenPostRow {
                     size: a.bytes,
                     url: None,
                     thumbnail_url: None,
+                    temp_url: None,
                     extra,
                 }
             })
