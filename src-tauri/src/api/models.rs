@@ -166,6 +166,7 @@ impl Post {
                         size: a.size,
                         url: a.url.clone(),
                         thumbnail_url: a.thumbnail_url.clone(),
+                        temp_url: None,
                         extra: HashMap::new(),
                     })
                     .collect()
@@ -177,6 +178,7 @@ impl Post {
                 size: f.size,
                 url: f.url.clone(),
                 thumbnail_url: f.thumbnail_url.clone(),
+                temp_url: f.temp_url.clone(),
                 extra: HashMap::new(),
             }),
             poll: None,
