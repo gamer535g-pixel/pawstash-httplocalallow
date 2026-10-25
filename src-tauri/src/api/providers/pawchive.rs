@@ -2154,11 +2154,16 @@ mod tests {
                     .into(),
             ),
             url: Some("https://stale.invalid/data/full.jpg".into()),
-            extra: HashMap::from([
-                ("preview_only".into(), serde_json::Value::Bool(true)),
-                (
-                    "temp_url".into(),
-                    serde_json::Value::String(signed.to_string()),
+            temp_url: Some(signed.to_string()),      // ← now a real field
+            extra: HashMap::from([(
+                "preview_only".into(),
+                serde_json::Value::Bool(true),
+            )]),
+            ..Attachment::default()
+        };
+
+        default_provider().enrich_attachment(&mut attachment);
+        assert_eq!(attachment.url.as_deref(), Some(signed));
                 ),
             ]),
             ..Attachment::default()
