@@ -2144,9 +2144,16 @@ mod tests {
     }
 
     // ═══════════════════════════ CHANGE 3 ═══════════════════════════════════
-    #[test]
+        #[test]
     fn temp_url_attachments_use_signed_high_quality_url() {
         let signed = "https://t1.pawchive.pw/f/20c5f2411cac0a3d/full.jpg?e=1792981718&s=82679cfe782839b14012b8e199edfca9";
+
+        let mut extra = HashMap::new();
+        extra.insert(
+            "preview_only".to_string(),
+            serde_json::Value::Bool(true),
+        );
+
         let mut attachment = Attachment {
             name: Some("full.jpg".into()),
             path: Some(
@@ -2154,26 +2161,13 @@ mod tests {
                     .into(),
             ),
             url: Some("https://stale.invalid/data/full.jpg".into()),
-            temp_url: Some(signed.to_string()),      // ← now a real field
-            extra: HashMap::from([(
-                "preview_only".into(),
-                serde_json::Value::Bool(true),
-            )]),
-            ..Attachment::default()
-        };
-
-        default_provider().enrich_attachment(&mut attachment);
-        assert_eq!(attachment.url.as_deref(), Some(signed));
-                ),
-            ]),
+            temp_url: Some(signed.to_string()),
+            extra,
             ..Attachment::default()
         };
 
         default_provider().enrich_attachment(&mut attachment);
 
-        // The signed t1 URL wins over the thumbnail fallback, even with
-        // `preview_only = true`, because the API explicitly handed us the
-        // best available rendition.
         assert_eq!(attachment.url.as_deref(), Some(signed));
     }
     // ═══════════════════════════════════════════════════════════════════════
