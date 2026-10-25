@@ -1324,9 +1324,9 @@ impl PawchiveProvider {
     /// `https://file.pawchive.pw/data/...` URLs now receive.
     fn attachment_temp_url(attachment: &Attachment) -> Option<String> {
         attachment
-            .extra
-            .get("temp_url")
-            .and_then(|v| v.as_str())
+            .temp_url
+            .as_deref()
+            .or_else(|| attachment.extra.get("temp_url").and_then(|v| v.as_str()))
             .filter(|s| s.starts_with("http"))
             .map(str::to_string)
     }
